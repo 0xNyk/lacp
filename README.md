@@ -3,6 +3,8 @@
 [![CI](https://github.com/0xNyk/lacp/actions/workflows/ci.yml/badge.svg)](https://github.com/0xNyk/lacp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+![LACP Banner](docs/assets/readme-banner.png)
+
 Local Agent Control Plane for Claude/Codex.
 
 Status: active development (`v0.1.x`).
@@ -171,6 +173,7 @@ Expected:
 
 ## Brand Assets
 
+- README banner image path: `docs/assets/readme-banner.png`
 - README hero banner prompt: `docs/readme-banner-prompt.md`
 
 ## Remote Setup
