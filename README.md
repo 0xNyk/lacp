@@ -26,6 +26,7 @@ Make Claude/Codex operations:
 - `bin/lacp-verify`
 - `bin/lacp-doctor`
 - `bin/lacp-mode`
+- `bin/lacp-status-report`
 
 ### Policy + Routing Layer
 - policy contract: `config/sandbox-policy.json`
@@ -92,6 +93,7 @@ Notes:
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
+- `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`)
 - `bin/lacp-route`: deterministic tier/provider routing with reasons
 - `bin/lacp-sandbox-run`: route + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring
