@@ -124,6 +124,9 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-ops-commands.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-security-controls.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-cache-audit.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-cache-guard.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-skill-audit.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-workflow-run.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
 

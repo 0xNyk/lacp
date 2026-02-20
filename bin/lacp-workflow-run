@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-workflow-run init --task "<text>" [--project <name>] [--json]
+  lacp-workflow-run status --run-id <id> [--json]
+  lacp-workflow-run advance --run-id <id> --stage <name> --actor <role> [--decision approve|reject] [--note <text>] [--json]
+
+Deterministic workflow stages:
+  planner -> developer -> verifier -> tester -> reviewer
+
+Role constraints:
+  planner stage actor must be planner
+  developer stage actor must be developer
+  verifier stage actor must be verifier (approval gate)
+  tester stage actor must be tester (approval gate)
+  reviewer stage actor must be reviewer (final approval gate)
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" ]]; then
+  usage
+  exit 1
+fi
+shift || true
+
+WORKFLOW_ROOT="${LACP_KNOWLEDGE_ROOT}/data/workflows"
+mkdir -p "${WORKFLOW_ROOT}"
+
+init_cmd() {
+  local task=""
+  local project="default"
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task) task="$2"; shift 2 ;;
+      --project) project="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${task}" ]] || die "--task is required"
+
+  local run_id
+  run_id="$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+  local run_dir="${WORKFLOW_ROOT}/${run_id}"
+  mkdir -p "${run_dir}"
+
+  cat > "${run_dir}/CONTEXT.md" <<EOF
+# Shared Context
+
+- run_id: ${run_id}
+- project: ${project}
+- task: ${task}
+
+## Notes
+
+EOF
+
+  python3 - <<'PY' "${run_dir}/state.json" "${run_id}" "${project}" "${task}"
+import datetime as dt
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+run_id = sys.argv[2]
+project = sys.argv[3]
+task = sys.argv[4]
+
+stages = [
+    {"name": "planner", "owner_role": "planner", "requires_approval": False, "status": "pending"},
+    {"name": "developer", "owner_role": "developer", "requires_approval": False, "status": "pending"},
+    {"name": "verifier", "owner_role": "verifier", "requires_approval": True, "status": "pending"},
+    {"name": "tester", "owner_role": "tester", "requires_approval": True, "status": "pending"},
+    {"name": "reviewer", "owner_role": "reviewer", "requires_approval": True, "status": "pending"},
+]
+
+payload = {
+    "run_id": run_id,
+    "project": project,
+    "task": task,
+    "status": "in_progress",
+    "current_stage": "planner",
+    "stages": stages,
+    "history": [
+        {
+            "event": "init",
+            "timestamp_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "detail": "workflow initialized",
+        }
+    ],
+}
+out.write_text(json.dumps(payload, indent=2) + "\n")
+PY
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    jq -n --arg run_id "${run_id}" --arg run_dir "${run_dir}" '{run_id:$run_id,run_dir:$run_dir,ok:true}'
+  else
+    log "workflow initialized run_id=${run_id}"
+    log "run_dir=${run_dir}"
+  fi
+}
+
+status_cmd() {
+  local run_id=""
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run-id) run_id="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${run_id}" ]] || die "--run-id is required"
+  local state_file="${WORKFLOW_ROOT}/${run_id}/state.json"
+  [[ -f "${state_file}" ]] || die "state not found: ${state_file}"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    cat "${state_file}"
+  else
+    jq -r '"run_id=\(.run_id)\nstatus=\(.status)\ncurrent_stage=\(.current_stage)\nstages=\(.stages|map(.name+":"+.status)|join(","))"' "${state_file}"
+  fi
+}
+
+advance_cmd() {
+  local run_id=""
+  local stage=""
+  local actor=""
+  local decision="approve"
+  local note=""
+  local as_json=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run-id) run_id="$2"; shift 2 ;;
+      --stage) stage="$2"; shift 2 ;;
+      --actor) actor="$2"; shift 2 ;;
+      --decision) decision="$2"; shift 2 ;;
+      --note) note="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${run_id}" ]] || die "--run-id is required"
+  [[ -n "${stage}" ]] || die "--stage is required"
+  [[ -n "${actor}" ]] || die "--actor is required"
+  case "${decision}" in approve|reject) ;; *) die "--decision must be approve|reject" ;; esac
+
+  local state_file="${WORKFLOW_ROOT}/${run_id}/state.json"
+  [[ -f "${state_file}" ]] || die "state not found: ${state_file}"
+
+  python3 - <<'PY' "${state_file}" "${stage}" "${actor}" "${decision}" "${note}"
+import datetime as dt
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+stage_name = sys.argv[2]
+actor = sys.argv[3]
+decision = sys.argv[4]
+note = sys.argv[5]
+
+state = json.loads(state_path.read_text())
+
+stages = state["stages"]
+stage_idx = next((i for i, s in enumerate(stages) if s["name"] == stage_name), None)
+if stage_idx is None:
+    raise SystemExit("unknown stage")
+
+current = state.get("current_stage")
+if current != stage_name:
+    raise SystemExit(f"stage out of order: current_stage={current}")
+
+stage = stages[stage_idx]
+if actor != stage["owner_role"]:
+    raise SystemExit(f"actor role mismatch: expected {stage['owner_role']}, got {actor}")
+
+if stage["requires_approval"] and decision not in ("approve", "reject"):
+    raise SystemExit("approval stages require decision approve|reject")
+
+now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+if decision == "reject":
+    stage["status"] = "rejected"
+    state["status"] = "blocked"
+else:
+    stage["status"] = "completed"
+    if stage_idx + 1 < len(stages):
+        state["current_stage"] = stages[stage_idx + 1]["name"]
+    else:
+        state["current_stage"] = "done"
+        state["status"] = "completed"
+
+state["history"].append(
+    {
+        "event": "advance",
+        "timestamp_utc": now,
+        "stage": stage_name,
+        "actor": actor,
+        "decision": decision,
+        "note": note,
+    }
+)
+
+state_path.write_text(json.dumps(state, indent=2) + "\n")
+print(json.dumps({"ok": decision == "approve", "run_status": state["status"], "current_stage": state["current_stage"]}))
+if decision == "reject":
+    raise SystemExit(2)
+PY
+  rc=$?
+  if [[ "${as_json}" -eq 1 ]]; then
+    cat "${state_file}"
+  else
+    jq -r '"status=\(.status)\ncurrent_stage=\(.current_stage)"' "${state_file}"
+  fi
+  return "${rc}"
+}
+
+case "${sub}" in
+  init) init_cmd "$@" ;;
+  status) status_cmd "$@" ;;
+  advance) advance_cmd "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
