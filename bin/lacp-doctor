@@ -103,6 +103,7 @@ check_file "${E2B_RUNNER}" "runner_file:e2b"
 check_file "${LACP_ROOT}/bin/lacp-remote-setup" "bin:lacp-remote-setup"
 check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
 check_file "${LACP_ROOT}/bin/lacp-mode" "bin:lacp-mode"
+check_file "${LACP_ROOT}/bin/lacp-status-report" "bin:lacp-status-report"
 add_check "policy:allow_external_remote" "PASS" "${LACP_ALLOW_EXTERNAL_REMOTE}"
 
 if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then

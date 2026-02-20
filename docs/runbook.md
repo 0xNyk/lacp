@@ -25,6 +25,7 @@ Expected outputs:
 cd ~/control/frameworks/lacp
 bin/lacp-doctor
 bin/lacp-doctor --json
+bin/lacp-status-report
 ```
 
 ## Operating Mode
