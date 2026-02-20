@@ -48,6 +48,13 @@ require_cmd jq
 
 if [[ "${QUICK}" -eq 1 ]]; then
   log "Running quick test suite"
+  tmp_root="$(mktemp -d)"
+  trap 'rm -rf "${tmp_root}"' EXIT
+  export LACP_AUTOMATION_ROOT="${tmp_root}/automation"
+  export LACP_KNOWLEDGE_ROOT="${tmp_root}/knowledge"
+  export LACP_DRAFTS_ROOT="${tmp_root}/drafts"
+  mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+  "${ROOT}/bin/lacp-install" --profile starter >/dev/null
   "${ROOT}/bin/lacp-doctor" --json | jq -e '.ok == true' >/dev/null
   "${ROOT}/bin/lacp-knowledge-doctor" --json >/dev/null || true
   "${ROOT}/scripts/ci/test-route-policy.sh"
