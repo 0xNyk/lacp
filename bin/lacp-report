@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-report [--hours N] [--json]
+
+Build a compact operational summary from local artifacts:
+- recent sandbox run outcomes
+- block reasons (review/critical/budget)
+- latest benchmark and snapshot paths
+EOF
+}
+
+HOURS="${LACP_VERIFY_HOURS}"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd jq
+require_cmd python3
+
+RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+LATEST_BENCH="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
+LATEST_SNAPSHOT="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
+
+report_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${LATEST_BENCH}" "${LATEST_SNAPSHOT}"
+import datetime as dt
+import glob
+import json
+import pathlib
+import sys
+
+runs_dir = pathlib.Path(sys.argv[1])
+hours = int(sys.argv[2])
+latest_bench = sys.argv[3]
+latest_snapshot = sys.argv[4]
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(hours=hours)
+
+runs = []
+if runs_dir.exists():
+    for p in runs_dir.glob("run-*.json"):
+        try:
+            payload = json.loads(p.read_text())
+            ts = payload.get("started_at_utc")
+            if not ts:
+                continue
+            started = dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+            if started >= cutoff:
+                runs.append(payload)
+        except Exception:
+            continue
+
+total = len(runs)
+executed = sum(1 for r in runs if r.get("executed") is True)
+success = sum(1 for r in runs if int(r.get("exit_code", 1)) == 0)
+blocked_review = sum(1 for r in runs if int(r.get("exit_code", 0)) == 8)
+blocked_critical = sum(1 for r in runs if int(r.get("exit_code", 0)) == 9)
+blocked_budget = sum(1 for r in runs if int(r.get("exit_code", 0)) == 10)
+
+benchmark = {}
+if latest_bench:
+    try:
+        b = json.loads(pathlib.Path(latest_bench).read_text())
+        benchmark = {
+            "path": latest_bench,
+            "gate_ok": bool(b.get("gate_ok", False)),
+            "summary": b.get("summary", {}),
+        }
+    except Exception:
+        benchmark = {"path": latest_bench, "gate_ok": None, "summary": {}}
+else:
+    benchmark = {"path": None, "gate_ok": None, "summary": {}}
+
+payload = {
+    "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "window_hours": hours,
+    "runs": {
+        "total": total,
+        "executed": executed,
+        "success": success,
+        "blocked_review": blocked_review,
+        "blocked_critical": blocked_critical,
+        "blocked_budget": blocked_budget,
+    },
+    "artifacts": {
+        "latest_benchmark": benchmark,
+        "latest_snapshot": latest_snapshot or None,
+    },
+}
+print(json.dumps(payload, indent=2))
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${report_json}"
+else
+  echo "${report_json}" | jq -r '
+    "LACP Report",
+    "  generated_at_utc=\(.generated_at_utc)",
+    "  window_hours=\(.window_hours)",
+    "  runs.total=\(.runs.total) runs.executed=\(.runs.executed) runs.success=\(.runs.success)",
+    "  blocked.review=\(.runs.blocked_review) blocked.critical=\(.runs.blocked_critical) blocked.budget=\(.runs.blocked_budget)",
+    "  benchmark.path=\(.artifacts.latest_benchmark.path // "<none>")",
+    "  benchmark.gate_ok=\(.artifacts.latest_benchmark.gate_ok)",
+    "  snapshot.path=\(.artifacts.latest_snapshot // "<none>")"
+  '
+fi

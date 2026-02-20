@@ -135,6 +135,18 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
   --with-verify true
 ```
 
+### Verified release install (recommended for production)
+
+```bash
+VERSION="0.1.0"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
+grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "lacp-${VERSION}.tar.gz"
+cd "lacp-${VERSION}"
+bin/lacp-install --profile starter --with-verify
+```
+
 ## Who It Is For
 
 Use LACP if you want:
@@ -210,6 +222,8 @@ Notes:
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-test`: one-command local test suite (`--quick` supported)
+- `bin/lacp-report`: summarize recent run outcomes and latest artifact health
+- `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
@@ -252,6 +266,7 @@ cd ~/control/frameworks/lacp
 ./scripts/ci/test-route-policy.sh
 ./scripts/ci/test-mode-and-gates.sh
 ./scripts/ci/test-knowledge-doctor.sh
+./scripts/ci/test-ops-commands.sh
 ./scripts/ci/test-install.sh
 ./scripts/ci/smoke.sh
 ```
