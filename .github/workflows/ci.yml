@@ -40,3 +40,9 @@ jobs:
           set -euo pipefail
           chmod +x scripts/ci/test-route-policy.sh
           ./scripts/ci/test-route-policy.sh
+
+      - name: Mode and gate unit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-mode-and-gates.sh
+          ./scripts/ci/test-mode-and-gates.sh

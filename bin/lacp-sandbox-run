@@ -21,6 +21,12 @@ Routing options:
 Execution options:
   --dry-run      Do not execute the command
   --json         Emit JSON result
+  --confirm-critical true|false
+                 Required=true when route risk_tier is critical.
+  --estimated-cost-usd <number>
+                 Estimated cost of this run used for per-tier budget gates.
+  --confirm-budget true|false
+                 Allow explicit override when estimated cost exceeds tier ceiling.
 
 Environment:
   LACP_LOCAL_SANDBOX_RUNNER   Optional executable for local_sandbox tier. Called as:
@@ -48,6 +54,84 @@ print(int(time.time() * 1000))
 PY
 }
 
+approval_state_json() {
+  local approval_file="${LACP_REMOTE_APPROVAL_FILE}"
+  local now_epoch expires_epoch expires_at_utc ttl_min valid status reason
+
+  if [[ ! -f "${approval_file}" ]]; then
+    jq -n --arg file "${approval_file}" '{
+      file: $file,
+      status: "missing",
+      valid: false,
+      reason: "approval file missing"
+    }'
+    return 0
+  fi
+
+  if ! jq -e . "${approval_file}" >/dev/null 2>&1; then
+    jq -n --arg file "${approval_file}" '{
+      file: $file,
+      status: "invalid",
+      valid: false,
+      reason: "approval file is not valid json"
+    }'
+    return 0
+  fi
+
+  expires_at_utc="$(jq -r '.expires_at_utc // ""' "${approval_file}")"
+  ttl_min="$(jq -r '.ttl_min // 0' "${approval_file}")"
+  if [[ -z "${expires_at_utc}" ]]; then
+    jq -n \
+      --arg file "${approval_file}" \
+      --argjson ttl_min "${ttl_min}" \
+      '{
+        file: $file,
+        status: "invalid",
+        valid: false,
+        ttl_min: $ttl_min,
+        reason: "expires_at_utc missing in approval file"
+      }'
+    return 0
+  fi
+
+  if python3 - <<'PY' "${expires_at_utc}"
+import datetime as dt
+import sys
+
+try:
+    expires = dt.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+except Exception:
+    raise SystemExit(1)
+now = dt.datetime.now(dt.timezone.utc)
+raise SystemExit(0 if expires > now else 1)
+PY
+  then
+    valid="true"
+    status="active"
+    reason="approval valid"
+  else
+    valid="false"
+    status="expired"
+    reason="approval expired"
+  fi
+
+  jq -n \
+    --arg file "${approval_file}" \
+    --arg status "${status}" \
+    --arg reason "${reason}" \
+    --arg expires_at_utc "${expires_at_utc}" \
+    --argjson ttl_min "${ttl_min}" \
+    --argjson valid "$([[ "${valid}" == "true" ]] && echo true || echo false)" \
+    '{
+      file: $file,
+      status: $status,
+      valid: $valid,
+      expires_at_utc: $expires_at_utc,
+      ttl_min: $ttl_min,
+      reason: $reason
+    }'
+}
+
 TASK=""
 REPO_TRUST="unknown"
 INTERNET="false"
@@ -58,6 +142,9 @@ LONG_RUN="false"
 REMOTE_PROVIDER_OVERRIDE="auto"
 DRY_RUN=0
 AS_JSON=0
+CONFIRM_CRITICAL="false"
+ESTIMATED_COST_USD="0"
+CONFIRM_BUDGET="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -101,6 +188,18 @@ while [[ $# -gt 0 ]]; do
       AS_JSON=1
       shift
       ;;
+    --confirm-critical)
+      CONFIRM_CRITICAL="$(as_bool "$2")"
+      shift 2
+      ;;
+    --estimated-cost-usd)
+      ESTIMATED_COST_USD="$2"
+      shift 2
+      ;;
+    --confirm-budget)
+      CONFIRM_BUDGET="$(as_bool "$2")"
+      shift 2
+      ;;
     --)
       shift
       break
@@ -143,7 +242,13 @@ ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
 
 ROUTE="$(printf '%s' "${ROUTE_JSON}" | jq -r '.route')"
 REMOTE_PROVIDER="$(printf '%s' "${ROUTE_JSON}" | jq -r '.remote_provider // empty')"
+RISK_TIER="$(printf '%s' "${ROUTE_JSON}" | jq -r '.risk_tier // "review"')"
+COST_CEILING_USD="$(printf '%s' "${ROUTE_JSON}" | jq -r '.cost_ceiling_usd // 0')"
 REASONS_JSON="$(printf '%s' "${ROUTE_JSON}" | jq -c '.reasons')"
+
+if ! [[ "${ESTIMATED_COST_USD}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  die "--estimated-cost-usd must be a non-negative number"
+fi
 
 RUNNER_TYPE=""
 RUNNER_PATH=""
@@ -152,6 +257,32 @@ EXECUTED=0
 ERROR_MSG=""
 START_MS="$(now_ms)"
 STARTED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+APPROVAL_JSON="null"
+
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  if [[ "${RISK_TIER}" == "critical" && "${CONFIRM_CRITICAL}" != "true" ]]; then
+    EXEC_RC=9
+    ERROR_MSG="blocked by risk_tier=critical: pass --confirm-critical true"
+  elif ! python3 - <<'PY' "${ESTIMATED_COST_USD}" "${COST_CEILING_USD}"
+import sys
+estimated = float(sys.argv[1])
+ceiling = float(sys.argv[2])
+raise SystemExit(0 if estimated <= ceiling else 1)
+PY
+  then
+    if [[ "${CONFIRM_BUDGET}" != "true" ]]; then
+      EXEC_RC=10
+      ERROR_MSG="blocked by budget gate: estimated_cost_usd=${ESTIMATED_COST_USD} exceeds ceiling=${COST_CEILING_USD} for risk_tier=${RISK_TIER}; pass --confirm-budget true to override"
+    fi
+  elif [[ "${RISK_TIER}" == "review" && "${ROUTE}" != "trusted_local" ]]; then
+    APPROVAL_JSON="$(approval_state_json)"
+    APPROVAL_VALID="$(printf '%s' "${APPROVAL_JSON}" | jq -r '.valid // false')"
+    if [[ "${APPROVAL_VALID}" != "true" ]]; then
+      EXEC_RC=8
+      ERROR_MSG="blocked by review approval TTL: $(printf '%s' "${APPROVAL_JSON}" | jq -r '.reason // "missing approval"'). renew with: bin/lacp-mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
+    fi
+  fi
+fi
 
 run_direct() {
   local -a cmd=("$@")
@@ -166,6 +297,8 @@ run_with_runner() {
 }
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
+  EXECUTED=0
+elif [[ "${EXEC_RC}" -ne 0 ]]; then
   EXECUTED=0
 else
   case "${ROUTE}" in
@@ -259,10 +392,15 @@ jq -n \
   --argjson duration_ms "${DURATION_MS}" \
   --arg task "${TASK}" \
   --arg route "${ROUTE}" \
+  --arg risk_tier "${RISK_TIER}" \
+  --argjson cost_ceiling_usd "${COST_CEILING_USD}" \
+  --argjson estimated_cost_usd "${ESTIMATED_COST_USD}" \
+  --argjson budget_confirmed "$([[ "${CONFIRM_BUDGET}" == "true" ]] && echo true || echo false)" \
   --argjson reasons "${REASONS_JSON}" \
   --arg remote_provider "${REMOTE_PROVIDER}" \
   --argjson route_decision "${ROUTE_JSON}" \
   --argjson provider_metadata "${PROVIDER_META_JSON}" \
+  --argjson remote_approval "${APPROVAL_JSON}" \
   --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
   --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
   --arg runner_type "${RUNNER_TYPE}" \
@@ -278,10 +416,15 @@ jq -n \
     duration_ms: $duration_ms,
     task: $task,
     route: $route,
+    risk_tier: $risk_tier,
+    cost_ceiling_usd: $cost_ceiling_usd,
+    estimated_cost_usd: $estimated_cost_usd,
+    budget_confirmed: $budget_confirmed,
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
     route_decision: $route_decision,
     provider_metadata: $provider_metadata,
+    remote_approval: $remote_approval,
     dry_run: $dry_run,
     executed: $executed,
     runner: {
@@ -298,6 +441,10 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --arg schema_version "1.1.0" \
     --arg run_file "${RUN_FILE}" \
     --arg route "${ROUTE}" \
+    --arg risk_tier "${RISK_TIER}" \
+    --argjson cost_ceiling_usd "${COST_CEILING_USD}" \
+    --argjson estimated_cost_usd "${ESTIMATED_COST_USD}" \
+    --argjson budget_confirmed "$([[ "${CONFIRM_BUDGET}" == "true" ]] && echo true || echo false)" \
     --argjson exit_code "${EXEC_RC}" \
     --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
@@ -307,17 +454,23 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --arg started_at "${STARTED_AT_UTC}" \
     --arg completed_at "${COMPLETED_AT_UTC}" \
     --argjson provider_metadata "${PROVIDER_META_JSON}" \
+    --argjson remote_approval "${APPROVAL_JSON}" \
     --arg error "${ERROR_MSG}" \
     '{
       schema_version: $schema_version,
       run_file: $run_file,
       route: $route,
+      risk_tier: $risk_tier,
+      cost_ceiling_usd: $cost_ceiling_usd,
+      estimated_cost_usd: $estimated_cost_usd,
+      budget_confirmed: $budget_confirmed,
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,
       started_at_utc: $started_at,
       completed_at_utc: $completed_at,
       duration_ms: $duration_ms,
       provider_metadata: $provider_metadata,
+      remote_approval: $remote_approval,
       dry_run: $dry_run,
       executed: $executed,
       exit_code: $exit_code,

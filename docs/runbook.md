@@ -34,7 +34,8 @@ bin/lacp-status-report
 cd ~/control/frameworks/lacp
 bin/lacp-mode show
 bin/lacp-mode local-only
-bin/lacp-mode remote-enabled
+bin/lacp-mode remote-enabled --ttl-min 30
+bin/lacp-mode revoke-approval
 ```
 
 ## Sandbox Routing
@@ -77,6 +78,7 @@ bin/lacp-sandbox-run \
   --repo-trust unknown \
   --internet true \
   --external-code true \
+  --confirm-critical true \
   -- echo "local-sandbox-ok"
 
 # Remote route dry-run (safe when remote runner is not configured yet)
@@ -84,6 +86,7 @@ bin/lacp-sandbox-run \
   --task "quant gpu backtest with long runtime" \
   --cpu-heavy true \
   --long-run true \
+  --estimated-cost-usd 3.5 \
   --dry-run \
   --json
 ```
@@ -100,7 +103,9 @@ echo 'LACP_ALLOW_EXTERNAL_REMOTE="false"' >> .env
 Behavior:
 - routing still classifies remote tasks
 - `--dry-run` remote checks still work
-- live remote execution is blocked until explicitly enabled
+- live remote execution is blocked until explicitly enabled and approval TTL is valid
+- risk tier `critical` always requires `--confirm-critical true`
+- runs are blocked when `--estimated-cost-usd` exceeds tier budget unless `--confirm-budget true` is passed
 
 ## Daytona Runner (Remote Execution)
 
