@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Cache audit upgraded to parse provider-native schemas (`.codex/sessions` token_count and `.claude/projects` assistant usage).
 - `bin/lacp-cache-guard` to enforce minimum cache hit-rate and usage-event thresholds.
 - `bin/lacp-skill-audit` to detect high-risk skill supply-chain patterns (`curl|bash`, reverse shell signatures, etc.).
+- `bin/lacp-release-gate` for one-command pre-live go/no-go checks across tests, doctor, cache, and skill audit.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.

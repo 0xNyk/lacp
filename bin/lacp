@@ -21,6 +21,7 @@ Ops:
   cache-audit   Analyze prompt cache effectiveness from local histories
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
+  release-gate  Run strict pre-live go/no-go gates
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
@@ -86,6 +87,9 @@ case "${cmd}" in
     ;;
   skill-audit)
     exec "${ROOT}/bin/lacp-skill-audit" "$@"
+    ;;
+  release-gate)
+    exec "${ROOT}/bin/lacp-release-gate" "$@"
     ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"
