@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+log "Running bootstrap checks"
+
+require_cmd bash
+require_cmd python3
+require_cmd rg
+require_cmd jq
+
+require_dir "${LACP_AUTOMATION_ROOT}"
+require_dir "${LACP_KNOWLEDGE_ROOT}"
+require_dir "${LACP_DRAFTS_ROOT}"
+
+require_file "$(automation_script run_shared_memory.sh)"
+require_file "$(automation_script run_memory_benchmark_suite.sh)"
+require_file "$(automation_script run_memory_pipeline.sh)"
+require_file "$(automation_script capture_snapshot.py)"
+
+mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
+mkdir -p "${LACP_AUTOMATION_ROOT}/data/snapshots"
+
+log "Bootstrap OK"
+echo "LACP_AUTOMATION_ROOT=${LACP_AUTOMATION_ROOT}"
+echo "LACP_KNOWLEDGE_ROOT=${LACP_KNOWLEDGE_ROOT}"
+echo "LACP_DRAFTS_ROOT=${LACP_DRAFTS_ROOT}"

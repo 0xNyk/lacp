@@ -1,0 +1,13 @@
+*.log
+*.tmp
+*.swp
+.DS_Store
+
+# Local environment overrides
+.env
+.env.local
+
+# Python artifacts
+__pycache__/
+*.pyc
+
