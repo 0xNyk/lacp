@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Homebrew formula (`Formula/lacp.rb`) for tap-based installs.
 - cURL installer (`install.sh`) with ref/profile/verify options.
 - `bin/lacp-test` one-command validation runner.
+- `bin/lacp-test --isolated` for temporary-root safety when testing on active local setups.
 - `bin/lacp-install` first-time installer with `starter` scaffolding profile.
 - Install workflow CI coverage via `scripts/ci/test-install.sh`.
 - Local agent control-plane baseline with onboarding, verify, doctor, mode, and status reporting commands.
