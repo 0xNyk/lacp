@@ -38,6 +38,8 @@ bin/lacp knowledge-doctor
 bin/lacp knowledge-doctor --json
 bin/lacp report --hours 24
 bin/lacp cache-audit --hours 24 --json
+bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
+bin/lacp skill-audit --json
 bin/lacp migrate --json
 bin/lacp status
 ```
@@ -112,6 +114,19 @@ bin/lacp-sandbox-run \
 cd ~/control/frameworks/lacp
 bin/lacp incident-drill --scenario retrieval-regression
 bin/lacp incident-drill --scenario sandbox-gate-bypass --execute
+```
+
+## Deterministic Team Workflow
+
+```bash
+cd ~/control/frameworks/lacp
+run_id="$(bin/lacp workflow-run init --task 'Add OAuth auth' --project auth --json | jq -r '.run_id')"
+bin/lacp workflow-run advance --run-id "$run_id" --stage planner --actor planner
+bin/lacp workflow-run advance --run-id "$run_id" --stage developer --actor developer
+bin/lacp workflow-run advance --run-id "$run_id" --stage verifier --actor verifier --decision approve
+bin/lacp workflow-run advance --run-id "$run_id" --stage tester --actor tester --decision approve
+bin/lacp workflow-run advance --run-id "$run_id" --stage reviewer --actor reviewer --decision approve
+bin/lacp workflow-run status --run-id "$run_id" --json | jq '.status,.current_stage'
 ```
 
 ## Zero-External Mode

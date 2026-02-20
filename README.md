@@ -227,8 +227,11 @@ Notes:
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
+- `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
+- `bin/lacp-skill-audit`: detect risky skill patterns before install/use
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
+- `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
