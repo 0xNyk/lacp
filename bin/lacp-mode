@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-mode [show|local-only|remote-enabled] [--json]
+
+Modes:
+- show: print current mode based on LACP_ALLOW_EXTERNAL_REMOTE
+- local-only: set LACP_ALLOW_EXTERNAL_REMOTE=false
+- remote-enabled: set LACP_ALLOW_EXTERNAL_REMOTE=true
+
+Notes:
+- Updates local .env in this repository.
+- Does not run provider login automatically.
+EOF
+}
+
+MODE="${1:-show}"
+AS_JSON=0
+
+if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -gt 1 ]]; then
+  case "${2:-}" in
+    --json) AS_JSON=1 ;;
+    *) die "Unknown argument: ${2:-}" ;;
+  esac
+fi
+
+case "${MODE}" in
+  show|local-only|remote-enabled) ;;
+  *) die "Mode must be one of: show, local-only, remote-enabled" ;;
+esac
+
+ENV_FILE="${ROOT}/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  cp "${ROOT}/config/lacp.env.example" "${ENV_FILE}"
+fi
+
+set_kv() {
+  local file="$1"
+  local key="$2"
+  local val="$3"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v k="${key}" -v v="${val}" '
+    BEGIN { done=0 }
+    $0 ~ "^" k "=" {
+      print k "=\"" v "\""
+      done=1
+      next
+    }
+    { print }
+    END {
+      if (!done) print k "=\"" v "\""
+    }
+  ' "${file}" > "${tmp}"
+  mv "${tmp}" "${file}"
+}
+
+current="$(awk -F= '/^LACP_ALLOW_EXTERNAL_REMOTE=/{gsub(/"/, "", $2); print $2}' "${ENV_FILE}" | tail -n1 || true)"
+if [[ -z "${current}" ]]; then
+  current="false"
+fi
+
+updated="false"
+target="${current}"
+
+if [[ "${MODE}" == "local-only" ]]; then
+  target="false"
+  set_kv "${ENV_FILE}" "LACP_ALLOW_EXTERNAL_REMOTE" "${target}"
+  updated="true"
+elif [[ "${MODE}" == "remote-enabled" ]]; then
+  target="true"
+  set_kv "${ENV_FILE}" "LACP_ALLOW_EXTERNAL_REMOTE" "${target}"
+  updated="true"
+fi
+
+effective_mode="local-only"
+if [[ "${target}" == "true" ]]; then
+  effective_mode="remote-enabled"
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg mode "${effective_mode}" \
+    --arg value "${target}" \
+    --arg env_file "${ENV_FILE}" \
+    --argjson updated "$([[ "${updated}" == "true" ]] && echo true || echo false)" \
+    '{
+      mode: $mode,
+      allow_external_remote: $value,
+      env_file: $env_file,
+      updated: $updated
+    }'
+else
+  log "mode=${effective_mode} allow_external_remote=${target} env_file=${ENV_FILE} updated=${updated}"
+fi

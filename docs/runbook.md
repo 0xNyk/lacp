@@ -27,6 +27,15 @@ bin/lacp-doctor
 bin/lacp-doctor --json
 ```
 
+## Operating Mode
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp-mode show
+bin/lacp-mode local-only
+bin/lacp-mode remote-enabled
+```
+
 ## Sandbox Routing
 
 ```bash
