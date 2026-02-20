@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold]
+
+Bootstraps LACP for first-time users.
+
+Profiles:
+  starter   Create safe local stub automation scripts when missing.
+  existing  Do not scaffold automation scripts.
+
+Notes:
+  - Creates .env from config/lacp.env.example if missing.
+  - Ensures root/data directories exist.
+  - Runs lacp-onboard at the end (optionally with verify).
+EOF
+}
+
+PROFILE="starter"
+WITH_VERIFY=0
+HOURS="${LACP_VERIFY_HOURS}"
+FORCE_SCAFFOLD=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
+    --with-verify)
+      WITH_VERIFY=1
+      shift
+      ;;
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    --force-scaffold)
+      FORCE_SCAFFOLD=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+case "${PROFILE}" in
+  starter|existing) ;;
+  *) die "--profile must be starter|existing" ;;
+esac
+
+if [[ ! -f "${ROOT}/.env" ]]; then
+  cp "${ROOT}/config/lacp.env.example" "${ROOT}/.env"
+  log "Created ${ROOT}/.env from template"
+fi
+
+mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+mkdir -p "${LACP_AUTOMATION_ROOT}/scripts"
+mkdir -p "${LACP_AUTOMATION_ROOT}/data/snapshots"
+mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
+mkdir -p "${LACP_KNOWLEDGE_ROOT}/data"
+
+write_stub_if_needed() {
+  local path="$1"
+  local mode="$2"
+  local content="$3"
+  if [[ -f "${path}" && "${FORCE_SCAFFOLD}" -eq 0 ]]; then
+    log "Keeping existing file: ${path}"
+    return 0
+  fi
+  printf '%s\n' "${content}" > "${path}"
+  chmod "${mode}" "${path}"
+  log "Wrote stub: ${path}"
+}
+
+if [[ "${PROFILE}" == "starter" ]]; then
+  write_stub_if_needed "$(automation_script run_shared_memory.sh)" "755" '#!/usr/bin/env bash
+set -euo pipefail
+echo "[lacp-stub] run_shared_memory.sh noop"
+'
+
+  # shellcheck disable=SC2016
+  write_stub_if_needed "$(automation_script run_memory_pipeline.sh)" "755" '#!/usr/bin/env bash
+set -euo pipefail
+HOURS="${1:-24}"
+K="${4:-8}"
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
+mkdir -p "${KNOWLEDGE_ROOT}/data/benchmarks"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="${KNOWLEDGE_ROOT}/data/benchmarks/benchmark-${TS}.json"
+cat > "${OUT}" <<JSON
+{
+  "gate_ok": true,
+  "hours": ${HOURS},
+  "summary": {
+    "hit_rate_at_k": 1.0,
+    "mrr_at_k": 1.0,
+    "ndcg_at_k": 1.0,
+    "precision_at_k": 1.0,
+    "recall_at_k": 1.0
+  },
+  "config": {
+    "top_k": ${K}
+  }
+}
+JSON
+echo "[lacp-stub] wrote benchmark: ${OUT}"
+'
+
+  # shellcheck disable=SC2016
+  write_stub_if_needed "$(automation_script run_memory_benchmark_suite.sh)" "755" '#!/usr/bin/env bash
+set -euo pipefail
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
+mkdir -p "${KNOWLEDGE_ROOT}/data"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [lacp-stub] benchmark suite refresh" >> "${KNOWLEDGE_ROOT}/data/benchmark.log"
+echo "[lacp-stub] benchmark log updated"
+'
+
+  write_stub_if_needed "$(automation_script capture_snapshot.py)" "755" '#!/usr/bin/env python3
+import argparse
+import datetime as dt
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--hours", default="24")
+parser.add_argument("--timing-runs", default="3")
+args = parser.parse_args()
+
+automation_root = Path(os.environ.get("LACP_AUTOMATION_ROOT", str(Path.home() / "control/automation/ai-dev-optimization")))
+snapshots = automation_root / "data" / "snapshots"
+snapshots.mkdir(parents=True, exist_ok=True)
+ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+out = snapshots / f"snapshot-{ts}.json"
+payload = {
+    "captured_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "hours": int(args.hours),
+    "timing_runs": int(args.timing_runs),
+    "source": "lacp-stub",
+}
+out.write_text(json.dumps(payload, indent=2) + "\n")
+print("{}")
+'
+fi
+
+ONBOARD_ARGS=()
+if [[ "${WITH_VERIFY}" -eq 1 ]]; then
+  ONBOARD_ARGS+=(--with-verify --hours "${HOURS}")
+fi
+
+"${ROOT}/bin/lacp-onboard" "${ONBOARD_ARGS[@]}"
+
+log "Install complete (profile=${PROFILE})"
+log "Next: bin/lacp-doctor --json | jq"
