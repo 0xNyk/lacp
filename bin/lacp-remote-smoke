@@ -19,6 +19,13 @@ Default command (if omitted):
 EOF
 }
 
+now_ms() {
+  python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+}
+
 PROVIDER=""
 DRY_RUN=0
 AS_JSON=0
@@ -69,6 +76,8 @@ if [[ ${#CMD[@]} -eq 0 ]]; then
 fi
 
 SETUP_PREVIEW="$("${ROOT}/bin/lacp-remote-setup" --provider "${PROVIDER}" --dry-run --json)"
+START_MS="$(now_ms)"
+STARTED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 RUN_ARGS=(
   --task "lacp-remote-smoke:${PROVIDER}"
@@ -86,6 +95,9 @@ set +e
 RUN_RESULT="$("${ROOT}/bin/lacp-sandbox-run" "${RUN_ARGS[@]}")"
 RUN_RC=$?
 set -e
+END_MS="$(now_ms)"
+COMPLETED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DURATION_MS="$((END_MS - START_MS))"
 
 SMOKE_DIR="${LACP_KNOWLEDGE_ROOT}/data/remote-smoke"
 mkdir -p "${SMOKE_DIR}"
@@ -93,7 +105,11 @@ RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 SMOKE_FILE="${SMOKE_DIR}/smoke-${RUN_TAG}.json"
 
 jq -n \
+  --arg schema_version "1.1.0" \
   --arg timestamp "${RUN_TAG}" \
+  --arg started_at "${STARTED_AT_UTC}" \
+  --arg completed_at "${COMPLETED_AT_UTC}" \
+  --argjson duration_ms "${DURATION_MS}" \
   --arg provider "${PROVIDER}" \
   --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
   --argjson command "$(printf '%s\n' "${CMD[@]}" | jq -R . | jq -s .)" \
@@ -101,7 +117,11 @@ jq -n \
   --argjson run_result "${RUN_RESULT}" \
   --argjson run_exit_code "${RUN_RC}" \
   '{
+    schema_version: $schema_version,
     timestamp: $timestamp,
+    started_at_utc: $started_at,
+    completed_at_utc: $completed_at,
+    duration_ms: $duration_ms,
     provider: $provider,
     dry_run: $dry_run,
     command: $command,
@@ -112,15 +132,23 @@ jq -n \
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \
+    --arg schema_version "1.1.0" \
     --arg smoke_file "${SMOKE_FILE}" \
     --arg provider "${PROVIDER}" \
     --argjson run_exit_code "${RUN_RC}" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    --arg started_at "${STARTED_AT_UTC}" \
+    --arg completed_at "${COMPLETED_AT_UTC}" \
+    --argjson duration_ms "${DURATION_MS}" \
     --argjson run_result "${RUN_RESULT}" \
     '{
+      schema_version: $schema_version,
       smoke_file: $smoke_file,
       provider: $provider,
       dry_run: $dry_run,
+      started_at_utc: $started_at,
+      completed_at_utc: $completed_at,
+      duration_ms: $duration_ms,
       run_exit_code: $run_exit_code,
       run_result: $run_result
     }'

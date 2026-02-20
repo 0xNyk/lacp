@@ -79,6 +79,11 @@ LACP is in good shape as a local control plane MVP. The next improvements should
 3. Add policy tests:
 - deterministic fixtures for route decisions
 
+Status update (2026-02-20):
+- `schema_version`, `duration_ms`, and provider metadata are now implemented in:
+  - `bin/lacp-sandbox-run` artifacts
+  - `bin/lacp-remote-smoke` artifacts
+
 ### P2
 
 1. E2B lifecycle runner:

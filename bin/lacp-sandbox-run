@@ -41,6 +41,13 @@ json_escape_cmd() {
   printf '%s\0' "$@" | xargs -0 -n1 printf '%s\n' | jq -R . | jq -s .
 }
 
+now_ms() {
+  python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+}
+
 TASK=""
 REPO_TRUST="unknown"
 INTERNET="false"
@@ -143,6 +150,8 @@ RUNNER_PATH=""
 EXEC_RC=0
 EXECUTED=0
 ERROR_MSG=""
+START_MS="$(now_ms)"
+STARTED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 run_direct() {
   local -a cmd=("$@")
@@ -207,6 +216,29 @@ RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
 mkdir -p "${RUNS_DIR}"
 RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 RUN_FILE="${RUNS_DIR}/run-${RUN_TAG}.json"
+END_MS="$(now_ms)"
+COMPLETED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DURATION_MS="$((END_MS - START_MS))"
+
+PROVIDER_META_JSON="null"
+if [[ "${ROUTE}" == "remote_sandbox" && -n "${REMOTE_PROVIDER}" ]]; then
+  case "${REMOTE_PROVIDER}" in
+    daytona)
+      if command -v daytona >/dev/null 2>&1; then
+        DAYTONA_BIN="$(command -v daytona)"
+        DAYTONA_VER="$(daytona version 2>/dev/null | head -n 1 || true)"
+        PROVIDER_META_JSON="$(jq -n --arg provider "daytona" --arg cli_path "${DAYTONA_BIN}" --arg cli_version "${DAYTONA_VER}" '{provider:$provider, cli_path:$cli_path, cli_version:$cli_version}')"
+      fi
+      ;;
+    e2b)
+      if command -v e2b >/dev/null 2>&1; then
+        E2B_BIN="$(command -v e2b)"
+        E2B_VER="$(e2b --version 2>/dev/null | head -n 1 || true)"
+        PROVIDER_META_JSON="$(jq -n --arg provider "e2b" --arg cli_path "${E2B_BIN}" --arg cli_version "${E2B_VER}" '{provider:$provider, cli_path:$cli_path, cli_version:$cli_version}')"
+      fi
+      ;;
+  esac
+fi
 
 CMD_JSON="[]"
 if [[ ${#CMD[@]} -gt 0 ]]; then
@@ -214,11 +246,17 @@ if [[ ${#CMD[@]} -gt 0 ]]; then
 fi
 
 jq -n \
+  --arg schema_version "1.1.0" \
   --arg timestamp "${RUN_TAG}" \
+  --arg started_at "${STARTED_AT_UTC}" \
+  --arg completed_at "${COMPLETED_AT_UTC}" \
+  --argjson duration_ms "${DURATION_MS}" \
   --arg task "${TASK}" \
   --arg route "${ROUTE}" \
   --argjson reasons "${REASONS_JSON}" \
   --arg remote_provider "${REMOTE_PROVIDER}" \
+  --argjson route_decision "${ROUTE_JSON}" \
+  --argjson provider_metadata "${PROVIDER_META_JSON}" \
   --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
   --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
   --arg runner_type "${RUNNER_TYPE}" \
@@ -227,11 +265,17 @@ jq -n \
   --argjson exit_code "${EXEC_RC}" \
   --argjson command "${CMD_JSON}" \
   '{
+    schema_version: $schema_version,
     timestamp: $timestamp,
+    started_at_utc: $started_at,
+    completed_at_utc: $completed_at,
+    duration_ms: $duration_ms,
     task: $task,
     route: $route,
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
+    route_decision: $route_decision,
+    provider_metadata: $provider_metadata,
     dry_run: $dry_run,
     executed: $executed,
     runner: {
@@ -245,6 +289,7 @@ jq -n \
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \
+    --arg schema_version "1.1.0" \
     --arg run_file "${RUN_FILE}" \
     --arg route "${ROUTE}" \
     --argjson exit_code "${EXEC_RC}" \
@@ -252,12 +297,21 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
     --argjson reasons "${REASONS_JSON}" \
     --arg remote_provider "${REMOTE_PROVIDER}" \
+    --argjson duration_ms "${DURATION_MS}" \
+    --arg started_at "${STARTED_AT_UTC}" \
+    --arg completed_at "${COMPLETED_AT_UTC}" \
+    --argjson provider_metadata "${PROVIDER_META_JSON}" \
     --arg error "${ERROR_MSG}" \
     '{
+      schema_version: $schema_version,
       run_file: $run_file,
       route: $route,
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,
+      started_at_utc: $started_at,
+      completed_at_utc: $completed_at,
+      duration_ms: $duration_ms,
+      provider_metadata: $provider_metadata,
       dry_run: $dry_run,
       executed: $executed,
       exit_code: $exit_code,
