@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-cache-audit [--hours N] [--json]
+
+Analyze local Claude/Codex history logs for prompt-cache effectiveness.
+
+Default inputs:
+  ~/.claude/history.jsonl
+  ~/.codex/history.jsonl
+  ~/.codex/sessions/**/*.jsonl
+EOF
+}
+
+HOURS=24
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[lacp] ERROR: Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if ! [[ "${HOURS}" =~ ^[0-9]+$ ]]; then
+  echo "[lacp] ERROR: --hours must be a non-negative integer" >&2
+  exit 1
+fi
+
+python3 - <<'PY' "${HOURS}" "${AS_JSON}"
+import datetime as dt
+import glob
+import json
+import os
+import sys
+from pathlib import Path
+
+hours = int(sys.argv[1])
+as_json = int(sys.argv[2]) == 1
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(hours=hours)
+
+paths = [
+    Path.home() / ".claude" / "history.jsonl",
+    Path.home() / ".codex" / "history.jsonl",
+]
+paths.extend(Path(p) for p in glob.glob(str(Path.home() / ".codex" / "sessions" / "**" / "*.jsonl"), recursive=True))
+paths = [p for p in paths if p.exists() and p.is_file()]
+
+def iter_numbers(obj, key):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == key and isinstance(v, (int, float)):
+                yield float(v)
+            yield from iter_numbers(v, key)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from iter_numbers(item, key)
+
+def parse_ts(obj):
+    # Try common timestamp fields.
+    for k in ("timestamp", "created_at", "time", "ts"):
+        v = obj.get(k) if isinstance(obj, dict) else None
+        if not isinstance(v, str):
+            continue
+        text = v.replace("Z", "+00:00")
+        try:
+            t = dt.datetime.fromisoformat(text)
+            return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+        except Exception:
+            pass
+    return None
+
+stats = {
+    "files_scanned": len(paths),
+    "records_total": 0,
+    "records_in_window": 0,
+    "prompt_tokens": 0.0,
+    "cached_tokens": 0.0,
+    "cache_read_tokens": 0.0,
+    "cache_creation_tokens": 0.0,
+}
+
+for path in paths:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                stats["records_total"] += 1
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+
+                ts = parse_ts(obj)
+                if ts is not None and ts < cutoff:
+                    continue
+                stats["records_in_window"] += 1
+
+                # Provider-agnostic extraction by key name.
+                stats["prompt_tokens"] += sum(iter_numbers(obj, "prompt_tokens"))
+                stats["cached_tokens"] += sum(iter_numbers(obj, "cached_tokens"))
+                stats["cache_read_tokens"] += sum(iter_numbers(obj, "cache_read_input_tokens"))
+                stats["cache_creation_tokens"] += sum(iter_numbers(obj, "cache_creation_input_tokens"))
+    except Exception:
+        continue
+
+effective_cached = stats["cached_tokens"] + stats["cache_read_tokens"]
+hit_rate = (effective_cached / stats["prompt_tokens"]) if stats["prompt_tokens"] > 0 else 0.0
+
+payload = {
+    "window_hours": hours,
+    "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "files_scanned": stats["files_scanned"],
+    "records_total": stats["records_total"],
+    "records_in_window": stats["records_in_window"],
+    "prompt_tokens": int(stats["prompt_tokens"]),
+    "cached_tokens": int(stats["cached_tokens"]),
+    "cache_read_tokens": int(stats["cache_read_tokens"]),
+    "cache_creation_tokens": int(stats["cache_creation_tokens"]),
+    "cache_hit_rate_estimate": round(hit_rate, 4),
+}
+
+if as_json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(f"[lacp] cache_audit window_hours={payload['window_hours']}")
+    print(f"files_scanned={payload['files_scanned']}")
+    print(f"records_in_window={payload['records_in_window']}")
+    print(f"prompt_tokens={payload['prompt_tokens']}")
+    print(f"cached_tokens={payload['cached_tokens']}")
+    print(f"cache_read_tokens={payload['cache_read_tokens']}")
+    print(f"cache_creation_tokens={payload['cache_creation_tokens']}")
+    print(f"cache_hit_rate_estimate={payload['cache_hit_rate_estimate']}")
+PY

@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `bin/lacp` top-level CLI dispatcher (`start/install/doctor/test/...`).
+- `bin/lacp-incident-drill` for scenario-based incident readiness checks with artifacts.
+- `bin/lacp-cache-audit` to track prompt cache effectiveness from local Claude/Codex history logs.
+- MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.
 - `bin/lacp-report` for recent execution and artifact summaries.
 - `bin/lacp-migrate` for existing-stack `.env` migration (dry-run/apply).
@@ -33,5 +36,6 @@ All notable changes to this project will be documented in this file.
 - Default-deny posture for remote execution.
 - Approval TTL and explicit confirmation gates for higher-risk operations.
 - `lacp-test --isolated` now enforces `.env` integrity and fails on mutation.
+- Structured input-contract gate for risky sandbox runs (`--input-contract`, exit code `11` on violation).
 
 [0.1.0]: https://github.com/0xNyk/lacp/releases/tag/v0.1.0

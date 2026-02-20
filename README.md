@@ -226,7 +226,9 @@ Notes:
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
+- `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
+- `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
@@ -247,11 +249,13 @@ Notes:
 - External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Risk-tier gating (`safe/review/critical`) with TTL and per-run confirmation controls
 - Explicit runner guardrails for remote execution
+- Structured input-contract gate for risky runs (`--input-contract ...`)
 - Artifact logs for auditable runs
 
 See:
 - `docs/framework-scope.md`
 - `docs/runbook.md`
+- `docs/incident-response.md`
 - `CONTRIBUTING.md`
 - `SECURITY.md`
 
