@@ -26,6 +26,7 @@ bin/lacp-verify --hours 24
 bin/lacp-doctor
 bin/lacp-route --task "run quant backtest with gpu" --cpu-heavy true --long-run true --json
 bin/lacp-sandbox-run --task "run internal checks" --repo-trust trusted -- echo "ok"
+bin/lacp-remote-setup --provider daytona
 ```
 
 ## Defaults
@@ -65,6 +66,10 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - runs command via policy-selected execution tier
   - writes run artifacts to `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
   - local sandbox can use optional runner; remote sandbox requires explicit runner config
+- `bin/lacp-remote-setup`
+  - one-command provider setup for remote execution lane (`daytona` or `e2b`)
+  - can update policy + `.env` and report auth/next steps
+  - dry-run mode: `bin/lacp-remote-setup --provider daytona --dry-run --json`
 
 ## Daytona Remote Runner Setup
 
