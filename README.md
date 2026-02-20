@@ -65,6 +65,26 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - writes run artifacts to `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
   - local sandbox can use optional runner; remote sandbox requires explicit runner config
 
+## Daytona Remote Runner Setup
+
+```bash
+cd ~/control/frameworks/lacp
+daytona login
+
+# add to .env
+LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/daytona-runner.sh"
+```
+
+Example:
+
+```bash
+bin/lacp-sandbox-run \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true \
+  -- python3 -V
+```
+
 ## Artifact Paths
 
 - Benchmark reports: `~/control/knowledge/knowledge-memory/data/benchmarks/*.json`
