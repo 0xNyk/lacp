@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-onboard [--with-verify] [--hours N]
+
+Initial setup helper:
+- creates .env from config/lacp.env.example when missing
+- runs bootstrap checks
+- optionally runs a full verify cycle
+EOF
+}
+
+WITH_VERIFY=0
+HOURS="${LACP_VERIFY_HOURS}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-verify)
+      WITH_VERIFY=1
+      shift
+      ;;
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if [[ ! -f "${ROOT}/.env" ]]; then
+  cp "${ROOT}/config/lacp.env.example" "${ROOT}/.env"
+  log "Created ${ROOT}/.env from template"
+else
+  log "Using existing ${ROOT}/.env"
+fi
+
+log "Running bootstrap checks"
+"${ROOT}/bin/lacp-bootstrap"
+
+if [[ "${WITH_VERIFY}" -eq 1 ]]; then
+  log "Running verify cycle"
+  "${ROOT}/bin/lacp-verify" --hours "${HOURS}"
+else
+  log "Skipped full verify. Run: bin/lacp-verify --hours ${HOURS}"
+fi
+
+log "Onboarding complete"

@@ -21,8 +21,9 @@ It does not replace agent runtimes. It standardizes operations, evidence, and re
 ```bash
 cd ~/control/frameworks/lacp
 cp config/lacp.env.example .env
-bin/lacp-bootstrap
+bin/lacp-onboard
 bin/lacp-verify --hours 24
+bin/lacp-doctor
 ```
 
 ## Defaults
@@ -35,6 +36,10 @@ These defaults are used unless overridden by env vars in `.env` or shell:
 
 ## Commands
 
+- `bin/lacp-onboard`
+  - creates `.env` from template if missing
+  - runs bootstrap checks
+  - optional full verification: `bin/lacp-onboard --with-verify`
 - `bin/lacp-bootstrap`
   - validates command dependencies
   - validates expected directory roots
@@ -44,6 +49,11 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - runs retrieval benchmark suite with gates
   - captures a fresh system snapshot
   - prints latest benchmark and snapshot artifacts
+- `bin/lacp-doctor`
+  - validates required commands/paths/scripts
+  - checks Ollama endpoint reachability
+  - inspects latest benchmark/snapshot artifacts
+  - machine-readable output: `bin/lacp-doctor --json`
 
 ## Artifact Paths
 

@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-doctor [--json]
+
+Runs path and health diagnostics for LACP dependencies and recent artifacts.
+Exits non-zero if required checks fail.
+EOF
+}
+
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+checks_tmp="$(mktemp)"
+trap 'rm -f "${checks_tmp}"' EXIT
+
+add_check() {
+  local name="$1"
+  local status="$2"
+  local detail="$3"
+  printf '%s\t%s\t%s\n' "${status}" "${name}" "${detail}" >> "${checks_tmp}"
+}
+
+check_cmd() {
+  local cmd="$1"
+  if command -v "${cmd}" >/dev/null 2>&1; then
+    add_check "cmd:${cmd}" "PASS" "$(command -v "${cmd}")"
+  else
+    add_check "cmd:${cmd}" "FAIL" "missing"
+  fi
+}
+
+check_file() {
+  local path="$1"
+  local label="$2"
+  if [[ -f "${path}" ]]; then
+    add_check "${label}" "PASS" "${path}"
+  else
+    add_check "${label}" "FAIL" "${path}"
+  fi
+}
+
+check_dir() {
+  local path="$1"
+  local label="$2"
+  if [[ -d "${path}" ]]; then
+    add_check "${label}" "PASS" "${path}"
+  else
+    add_check "${label}" "FAIL" "${path}"
+  fi
+}
+
+check_cmd bash
+check_cmd python3
+check_cmd rg
+check_cmd jq
+check_cmd curl
+
+check_dir "${LACP_AUTOMATION_ROOT}" "root:automation"
+check_dir "${LACP_KNOWLEDGE_ROOT}" "root:knowledge"
+check_dir "${LACP_DRAFTS_ROOT}" "root:drafts"
+
+check_file "$(automation_script run_shared_memory.sh)" "script:run_shared_memory.sh"
+check_file "$(automation_script run_memory_pipeline.sh)" "script:run_memory_pipeline.sh"
+check_file "$(automation_script run_memory_benchmark_suite.sh)" "script:run_memory_benchmark_suite.sh"
+check_file "$(automation_script capture_snapshot.py)" "script:capture_snapshot.py"
+
+if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
+  add_check "health:ollama" "PASS" "http://127.0.0.1:11434/api/version"
+else
+  add_check "health:ollama" "WARN" "unreachable"
+fi
+
+latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
+if [[ -n "${latest_bench}" ]]; then
+  gate_ok="$(jq -r '.gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
+  if [[ "${gate_ok}" == "true" ]]; then
+    add_check "artifact:latest_benchmark" "PASS" "${latest_bench}"
+  else
+    add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok}"
+  fi
+else
+  add_check "artifact:latest_benchmark" "WARN" "missing"
+fi
+
+latest_snapshot="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
+if [[ -n "${latest_snapshot}" ]]; then
+  add_check "artifact:latest_snapshot" "PASS" "${latest_snapshot}"
+else
+  add_check "artifact:latest_snapshot" "WARN" "missing"
+fi
+
+fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
+warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
+pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  python3 - <<'PY' "${checks_tmp}" "${fail_count}" "${warn_count}" "${pass_count}"
+import json
+import sys
+from pathlib import Path
+
+checks_path = Path(sys.argv[1])
+fail_count = int(sys.argv[2])
+warn_count = int(sys.argv[3])
+pass_count = int(sys.argv[4])
+
+checks = []
+for line in checks_path.read_text().splitlines():
+    status, name, detail = line.split("\t", 2)
+    checks.append({"status": status, "name": name, "detail": detail})
+
+payload = {
+    "ok": fail_count == 0,
+    "summary": {
+        "pass": pass_count,
+        "warn": warn_count,
+        "fail": fail_count,
+    },
+    "checks": checks,
+}
+print(json.dumps(payload, indent=2))
+PY
+else
+  log "Doctor summary: pass=${pass_count} warn=${warn_count} fail=${fail_count}"
+  while IFS=$'\t' read -r status name detail; do
+    printf '%-5s %-34s %s\n' "${status}" "${name}" "${detail}"
+  done < "${checks_tmp}"
+fi
+
+if [[ "${fail_count}" -gt 0 ]]; then
+  exit 1
+fi

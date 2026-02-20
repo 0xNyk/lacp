@@ -4,8 +4,7 @@
 
 ```bash
 cd ~/control/frameworks/lacp
-cp config/lacp.env.example .env
-bin/lacp-bootstrap
+bin/lacp-onboard
 ```
 
 ## Standard Verification Cycle
@@ -19,6 +18,14 @@ Expected outputs:
 - latest benchmark JSON path
 - latest snapshot JSON path
 - benchmark log path
+
+## Health Diagnostics
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp-doctor
+bin/lacp-doctor --json
+```
 
 ## Troubleshooting
 
