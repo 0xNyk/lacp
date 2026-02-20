@@ -230,6 +230,7 @@ Notes:
 - `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
 - `bin/lacp-release-gate`: run strict pre-live go/no-go checks (tests + doctor + cache + skills)
+- `bin/lacp-orchestrate`: optional tmux/dmux orchestration adapter (still routed through LACP gates)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
@@ -292,6 +293,15 @@ bin/lacp-test --isolated
 
 # pre-live gate
 bin/lacp release-gate --quick
+
+# optional orchestration (dry-run)
+bin/lacp orchestrate run \
+  --task "parallel coding swarm kickoff" \
+  --backend tmux \
+  --session "lacp-swarm" \
+  --command "echo hello" \
+  --repo-trust trusted \
+  --dry-run
 
 # preferred
 bin/lacp test

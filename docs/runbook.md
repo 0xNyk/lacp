@@ -41,6 +41,7 @@ bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp skill-audit --json
 bin/lacp release-gate --quick
+bin/lacp orchestrate doctor --json
 bin/lacp migrate --json
 bin/lacp status
 ```
@@ -64,6 +65,34 @@ Useful options:
 - `--cache-min-events <n>`
 - `--skill-path <path>` (repeatable)
 - `--json`
+
+## Optional Orchestrator Adapter (tmux/dmux)
+
+Use orchestration as an optional layer while keeping LACP as the gatekeeper:
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp orchestrate doctor --json | jq
+
+# tmux (safe dry-run)
+bin/lacp orchestrate run \
+  --task "start swarm session" \
+  --backend tmux \
+  --session "lacp-swarm" \
+  --command "claude --help" \
+  --repo-trust trusted \
+  --dry-run \
+  --json | jq
+
+# dmux live execution requires a template
+export LACP_DMUX_RUN_TEMPLATE='dmux run --session "{session}" --command "{command}"'
+bin/lacp orchestrate run \
+  --task "start dmux swarm" \
+  --backend dmux \
+  --session "lacp-dmux" \
+  --command "codex --help" \
+  --repo-trust trusted
+```
 
 ## Operating Mode
 

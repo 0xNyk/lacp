@@ -89,6 +89,12 @@ jobs:
           chmod +x scripts/ci/test-skill-audit.sh
           ./scripts/ci/test-skill-audit.sh
 
+      - name: Orchestrate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-orchestrate.sh
+          ./scripts/ci/test-orchestrate.sh
+
       - name: Release gate tests
         run: |
           set -euo pipefail
