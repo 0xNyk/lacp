@@ -57,6 +57,11 @@ bin/lacp-verify --hours 24
 
 ## Remote Setup
 
+By default, LACP runs in **zero-external mode**:
+- `LACP_ALLOW_EXTERNAL_REMOTE="false"`
+- remote routes can still be planned/tested via `--dry-run`
+- live remote execution is blocked unless explicitly enabled
+
 ### Daytona
 
 ```bash
@@ -94,6 +99,7 @@ Notes:
 - No secrets in repo configuration files
 - Environment-driven configuration in `.env`
 - Policy-driven remote routing
+- External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Explicit runner guardrails for remote execution
 - Artifact logs for auditable runs
 

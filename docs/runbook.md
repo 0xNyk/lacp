@@ -78,6 +78,20 @@ bin/lacp-sandbox-run \
   --json
 ```
 
+## Zero-External Mode
+
+Default recommended mode:
+
+```bash
+cd ~/control/frameworks/lacp
+echo 'LACP_ALLOW_EXTERNAL_REMOTE="false"' >> .env
+```
+
+Behavior:
+- routing still classifies remote tasks
+- `--dry-run` remote checks still work
+- live remote execution is blocked until explicitly enabled
+
 ## Daytona Runner (Remote Execution)
 
 ```bash

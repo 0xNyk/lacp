@@ -188,21 +188,27 @@ else
       fi
       ;;
     remote_sandbox)
-      RUNNER_TYPE="remote_sandbox_runner"
-      RUNNER_PATH="${LACP_REMOTE_SANDBOX_RUNNER:-}"
-      if [[ -z "${RUNNER_PATH}" ]]; then
-        case "${REMOTE_PROVIDER}" in
-          daytona) RUNNER_PATH="${ROOT}/scripts/runners/daytona-runner.sh" ;;
-          e2b) RUNNER_PATH="${ROOT}/scripts/runners/e2b-runner.sh" ;;
-          *) RUNNER_PATH="" ;;
-        esac
-      fi
-      if [[ -n "${RUNNER_PATH}" ]]; then
-        run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
-        EXECUTED=1
+      if [[ "${LACP_ALLOW_EXTERNAL_REMOTE}" != "true" ]]; then
+        EXEC_RC=7
+        ERROR_MSG="route=remote_sandbox blocked by policy: set LACP_ALLOW_EXTERNAL_REMOTE=true to enable external remote execution"
+        EXECUTED=0
       else
-        EXEC_RC=3
-        ERROR_MSG="route=remote_sandbox but no runner resolved (provider=${REMOTE_PROVIDER:-unknown})"
+        RUNNER_TYPE="remote_sandbox_runner"
+        RUNNER_PATH="${LACP_REMOTE_SANDBOX_RUNNER:-}"
+        if [[ -z "${RUNNER_PATH}" ]]; then
+          case "${REMOTE_PROVIDER}" in
+            daytona) RUNNER_PATH="${ROOT}/scripts/runners/daytona-runner.sh" ;;
+            e2b) RUNNER_PATH="${ROOT}/scripts/runners/e2b-runner.sh" ;;
+            *) RUNNER_PATH="" ;;
+          esac
+        fi
+        if [[ -n "${RUNNER_PATH}" ]]; then
+          run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
+          EXECUTED=1
+        else
+          EXEC_RC=3
+          ERROR_MSG="route=remote_sandbox but no runner resolved (provider=${REMOTE_PROVIDER:-unknown})"
+        fi
       fi
       ;;
     *)
