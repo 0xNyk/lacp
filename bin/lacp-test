@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-test [--quick]
+
+Runs local LACP validation suites.
+
+Default:
+  - shell syntax checks
+  - route policy tests
+  - mode and gate tests
+  - knowledge doctor tests
+  - smoke tests
+
+--quick:
+  - doctor checks
+  - knowledge doctor checks
+  - route policy tests
+EOF
+}
+
+QUICK=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick)
+      QUICK=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd bash
+require_cmd jq
+
+if [[ "${QUICK}" -eq 1 ]]; then
+  log "Running quick test suite"
+  "${ROOT}/bin/lacp-doctor" --json | jq -e '.ok == true' >/dev/null
+  "${ROOT}/bin/lacp-knowledge-doctor" --json >/dev/null || true
+  "${ROOT}/scripts/ci/test-route-policy.sh"
+  log "Quick suite passed"
+  exit 0
+fi
+
+log "Running full test suite"
+for f in "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh; do
+  bash -n "$f"
+done
+
+"/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-knowledge-doctor.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
+"/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
+
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh
+fi
+
+log "Full suite passed"
