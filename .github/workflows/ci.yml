@@ -58,3 +58,9 @@ jobs:
           set -euo pipefail
           chmod +x scripts/ci/test-install.sh
           ./scripts/ci/test-install.sh
+
+      - name: Ops command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-ops-commands.sh
+          ./scripts/ci/test-ops-commands.sh

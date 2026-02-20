@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-doctor [--json]
+Usage: lacp-doctor [--json] [--fix]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
 Exits non-zero if required checks fail.
@@ -15,11 +15,16 @@ EOF
 }
 
 AS_JSON=0
+FIX=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json)
       AS_JSON=1
+      shift
+      ;;
+    --fix)
+      FIX=1
       shift
       ;;
     -h|--help)
@@ -31,6 +36,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${FIX}" -eq 1 ]]; then
+  mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+  mkdir -p "${LACP_AUTOMATION_ROOT}/data/snapshots"
+  mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
+  mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/approvals"
+
+  if [[ ! -f "${LACP_ROOT}/.env" && -f "${LACP_ROOT}/config/lacp.env.example" ]]; then
+    cp "${LACP_ROOT}/config/lacp.env.example" "${LACP_ROOT}/.env"
+  fi
+fi
 
 checks_tmp="$(mktemp)"
 trap 'rm -f "${checks_tmp}"' EXIT

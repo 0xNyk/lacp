@@ -32,8 +32,11 @@ Expected outputs:
 cd ~/control/frameworks/lacp
 bin/lacp-doctor
 bin/lacp-doctor --json
+bin/lacp-doctor --fix
 bin/lacp-knowledge-doctor
 bin/lacp-knowledge-doctor --json
+bin/lacp-report --hours 24
+bin/lacp-migrate --json
 bin/lacp-status-report
 ```
 

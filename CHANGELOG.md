@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0] - 2026-02-20
 
 ### Added
+- Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.
+- `bin/lacp-report` for recent execution and artifact summaries.
+- `bin/lacp-migrate` for existing-stack `.env` migration (dry-run/apply).
+- `bin/lacp-doctor --fix` safe remediations for common setup drift.
+- Ops command CI coverage via `scripts/ci/test-ops-commands.sh`.
 - Homebrew formula (`Formula/lacp.rb`) for tap-based installs.
 - cURL installer (`install.sh`) with ref/profile/verify options.
 - `bin/lacp-test` one-command validation runner.
