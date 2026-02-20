@@ -93,6 +93,26 @@ elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
   add_check "config:sandbox_policy_json" "FAIL" "invalid json"
 fi
 
+if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
+  if command -v "${LACP_LOCAL_SANDBOX_RUNNER}" >/dev/null 2>&1; then
+    add_check "runner:local_sandbox" "PASS" "${LACP_LOCAL_SANDBOX_RUNNER}"
+  else
+    add_check "runner:local_sandbox" "WARN" "configured but not found: ${LACP_LOCAL_SANDBOX_RUNNER}"
+  fi
+else
+  add_check "runner:local_sandbox" "WARN" "unset (local_sandbox uses direct fallback)"
+fi
+
+if [[ -n "${LACP_REMOTE_SANDBOX_RUNNER:-}" ]]; then
+  if command -v "${LACP_REMOTE_SANDBOX_RUNNER}" >/dev/null 2>&1; then
+    add_check "runner:remote_sandbox" "PASS" "${LACP_REMOTE_SANDBOX_RUNNER}"
+  else
+    add_check "runner:remote_sandbox" "WARN" "configured but not found: ${LACP_REMOTE_SANDBOX_RUNNER}"
+  fi
+else
+  add_check "runner:remote_sandbox" "WARN" "unset (remote_sandbox execution blocked)"
+fi
+
 if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
   add_check "health:ollama" "PASS" "http://127.0.0.1:11434/api/version"
 else

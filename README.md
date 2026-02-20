@@ -25,6 +25,7 @@ bin/lacp-onboard
 bin/lacp-verify --hours 24
 bin/lacp-doctor
 bin/lacp-route --task "run quant backtest with gpu" --cpu-heavy true --long-run true --json
+bin/lacp-sandbox-run --task "run internal checks" --repo-trust trusted -- echo "ok"
 ```
 
 ## Defaults
@@ -59,6 +60,10 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - applies sandbox routing policy (`trusted_local | local_sandbox | remote_sandbox`)
   - returns explainable routing reasons
   - machine-readable output: `bin/lacp-route --task "<...>" --json`
+- `bin/lacp-sandbox-run`
+  - runs command via policy-selected execution tier
+  - writes run artifacts to `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
+  - local sandbox can use optional runner; remote sandbox requires explicit runner config
 
 ## Artifact Paths
 
