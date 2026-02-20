@@ -28,6 +28,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
 - [5 Minute Smoke Test](#5-minute-smoke-test)
+- [Brand Assets](#brand-assets)
 - [Remote Setup](#remote-setup)
 - [Command Reference](#command-reference)
 - [Security Model](#security-model)
@@ -167,6 +168,10 @@ Expected:
 - `lacp-test --quick` exits `0`
 - doctor reports `"ok": true`
 - status report includes mode + doctor + artifact fields
+
+## Brand Assets
+
+- README hero banner prompt: `docs/readme-banner-prompt.md`
 
 ## Remote Setup
 
