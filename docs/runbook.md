@@ -4,7 +4,7 @@
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp-onboard
+bin/lacp-install --profile starter --with-verify
 ```
 
 ## Standard Verification Cycle

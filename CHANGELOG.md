@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0] - 2026-02-20
 
 ### Added
+- `bin/lacp-install` first-time installer with `starter` scaffolding profile.
+- Install workflow CI coverage via `scripts/ci/test-install.sh`.
 - Local agent control-plane baseline with onboarding, verify, doctor, mode, and status reporting commands.
 - Policy-based route engine with tiered execution (`trusted_local`, `local_sandbox`, `remote_sandbox`).
 - Remote runner support for Daytona and E2B with setup and smoke commands.

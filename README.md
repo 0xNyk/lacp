@@ -21,6 +21,7 @@ Make Claude/Codex operations:
 ## Architecture
 
 ### Control-Plane Layer
+- `bin/lacp-install`
 - `bin/lacp-onboard`
 - `bin/lacp-bootstrap`
 - `bin/lacp-verify`
@@ -63,8 +64,7 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 
 ```bash
 cd ~/control/frameworks/lacp
-cp config/lacp.env.example .env
-bin/lacp-onboard
+bin/lacp-install --profile starter --with-verify
 bin/lacp-mode show
 bin/lacp-mode remote-enabled --ttl-min 30
 bin/lacp-doctor
@@ -103,6 +103,7 @@ Notes:
 ## Command Reference
 
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
+- `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
@@ -145,6 +146,7 @@ cd ~/control/frameworks/lacp
 ./scripts/ci/test-route-policy.sh
 ./scripts/ci/test-mode-and-gates.sh
 ./scripts/ci/test-knowledge-doctor.sh
+./scripts/ci/test-install.sh
 ./scripts/ci/smoke.sh
 ```
 
