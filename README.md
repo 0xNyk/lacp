@@ -33,6 +33,7 @@ Make Claude/Codex operations:
 
 ### Remote Provider Layer
 - setup helper: `bin/lacp-remote-setup`
+- remote smoke helper: `bin/lacp-remote-smoke`
 - Daytona runner: `scripts/runners/daytona-runner.sh`
 - E2B runner: `scripts/runners/e2b-runner.sh`
 
@@ -62,6 +63,7 @@ bin/lacp-verify --hours 24
 cd ~/control/frameworks/lacp
 bin/lacp-remote-setup --provider daytona
 daytona login
+bin/lacp-remote-smoke --provider daytona --json
 ```
 
 ### E2B
@@ -69,6 +71,7 @@ daytona login
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-sandbox-id>"
+bin/lacp-remote-smoke --provider e2b --json
 ```
 
 ## Command Reference
@@ -80,6 +83,7 @@ bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-sandbox-id>"
 - `bin/lacp-route`: deterministic tier/provider routing with reasons
 - `bin/lacp-sandbox-run`: route + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring
+- `bin/lacp-remote-smoke`: provider-aware smoke test with artifact output
 
 ## Security Model
 
@@ -100,6 +104,7 @@ See:
 - benchmark reports: `~/control/knowledge/knowledge-memory/data/benchmarks/*.json`
 - snapshots: `~/control/automation/ai-dev-optimization/data/snapshots/*.json`
 - sandbox runs: `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
+- remote smoke runs: `~/control/knowledge/knowledge-memory/data/remote-smoke/*.json`
 
 ## Optimization Backlog
 

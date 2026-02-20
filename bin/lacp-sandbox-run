@@ -16,6 +16,7 @@ Routing options:
   --sensitive-data true|false              (default: false)
   --cpu-heavy true|false                   (default: false)
   --long-run true|false                    (default: false)
+  --remote-provider auto|daytona|e2b       (default: auto)
 
 Execution options:
   --dry-run      Do not execute the command
@@ -47,6 +48,7 @@ EXTERNAL_CODE="false"
 SENSITIVE_DATA="false"
 CPU_HEAVY="false"
 LONG_RUN="false"
+REMOTE_PROVIDER_OVERRIDE="auto"
 DRY_RUN=0
 AS_JSON=0
 
@@ -80,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       LONG_RUN="$(as_bool "$2")"
       shift 2
       ;;
+    --remote-provider)
+      REMOTE_PROVIDER_OVERRIDE="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -107,6 +113,10 @@ case "${REPO_TRUST}" in
   trusted|unknown|untrusted) ;;
   *) die "--repo-trust must be trusted|unknown|untrusted" ;;
 esac
+case "${REMOTE_PROVIDER_OVERRIDE}" in
+  auto|daytona|e2b) ;;
+  *) die "--remote-provider must be auto|daytona|e2b" ;;
+esac
 
 if [[ "${DRY_RUN}" -eq 0 && $# -eq 0 ]]; then
   die "No command provided. Use -- <command> [args...]"
@@ -121,6 +131,7 @@ ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
   --sensitive-data "${SENSITIVE_DATA}" \
   --cpu-heavy "${CPU_HEAVY}" \
   --long-run "${LONG_RUN}" \
+  --remote-provider "${REMOTE_PROVIDER_OVERRIDE}" \
   --json)"
 
 ROUTE="$(printf '%s' "${ROUTE_JSON}" | jq -r '.route')"
