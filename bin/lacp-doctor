@@ -275,10 +275,15 @@ add_check "config:remote_provider" "PASS" "${REMOTE_PROVIDER}"
 
 DAYTONA_RUNNER="${LACP_ROOT}/scripts/runners/daytona-runner.sh"
 E2B_RUNNER="${LACP_ROOT}/scripts/runners/e2b-runner.sh"
+TMUX_RUNNER="${LACP_ROOT}/scripts/runners/tmux-runner.sh"
+DMUX_RUNNER="${LACP_ROOT}/scripts/runners/dmux-runner.sh"
 check_file "${DAYTONA_RUNNER}" "runner_file:daytona"
 check_file "${E2B_RUNNER}" "runner_file:e2b"
+check_file "${TMUX_RUNNER}" "runner_file:tmux"
+check_file "${DMUX_RUNNER}" "runner_file:dmux"
 check_file "${LACP_ROOT}/bin/lacp-remote-setup" "bin:lacp-remote-setup"
 check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
+check_file "${LACP_ROOT}/bin/lacp-orchestrate" "bin:lacp-orchestrate"
 check_file "${LACP_ROOT}/bin/lacp-mode" "bin:lacp-mode"
 check_file "${LACP_ROOT}/bin/lacp-knowledge-doctor" "bin:lacp-knowledge-doctor"
 check_file "${LACP_ROOT}/bin/lacp-status-report" "bin:lacp-status-report"
@@ -338,6 +343,18 @@ if command -v daytona >/dev/null 2>&1; then
   add_check "cli:daytona" "PASS" "$(command -v daytona)"
 else
   add_check "cli:daytona" "WARN" "missing"
+fi
+
+if command -v tmux >/dev/null 2>&1; then
+  add_check "cli:tmux" "PASS" "$(command -v tmux)"
+else
+  add_check "cli:tmux" "WARN" "missing (optional unless using tmux orchestration)"
+fi
+
+if command -v dmux >/dev/null 2>&1; then
+  add_check "cli:dmux" "PASS" "$(command -v dmux)"
+else
+  add_check "cli:dmux" "WARN" "missing (optional unless using dmux orchestration)"
 fi
 
 if command -v e2b >/dev/null 2>&1; then
