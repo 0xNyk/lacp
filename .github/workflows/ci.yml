@@ -89,6 +89,12 @@ jobs:
           chmod +x scripts/ci/test-skill-audit.sh
           ./scripts/ci/test-skill-audit.sh
 
+      - name: Release gate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-release-gate.sh
+          ./scripts/ci/test-release-gate.sh
+
       - name: Workflow run tests
         run: |
           set -euo pipefail

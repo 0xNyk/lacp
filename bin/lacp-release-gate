@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-release-gate [options]
+
+Runs strict pre-live checks and exits non-zero on any failed gate.
+
+Options:
+  --quick                   Use quick test mode
+  --skip-tests              Skip test gate
+  --skip-doctor             Skip doctor gate
+  --skip-cache              Skip cache guard gate
+  --skip-skill-audit        Skip skill audit gate
+  --skill-path <path>       Override skill root for audit (repeatable)
+  --cache-min-hit-rate <n>  Minimum cache hit rate (default: 0.70)
+  --cache-min-events <n>    Minimum cache usage events (default: 100)
+  --cache-hours <n>         Cache audit lookback hours (default: 72)
+  --json                    Output JSON summary
+  -h, --help                Show this help
+EOF
+}
+
+AS_JSON=0
+QUICK=0
+RUN_TESTS=1
+RUN_DOCTOR=1
+RUN_CACHE=1
+RUN_SKILL_AUDIT=1
+CACHE_MIN_HIT_RATE="0.70"
+CACHE_MIN_EVENTS="100"
+CACHE_HOURS="72"
+declare -a SKILL_PATHS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick)
+      QUICK=1
+      shift
+      ;;
+    --skip-tests)
+      RUN_TESTS=0
+      shift
+      ;;
+    --skip-doctor)
+      RUN_DOCTOR=0
+      shift
+      ;;
+    --skip-cache)
+      RUN_CACHE=0
+      shift
+      ;;
+    --skip-skill-audit)
+      RUN_SKILL_AUDIT=0
+      shift
+      ;;
+    --skill-path)
+      SKILL_PATHS+=("$2")
+      shift 2
+      ;;
+    --cache-min-hit-rate)
+      CACHE_MIN_HIT_RATE="$2"
+      shift 2
+      ;;
+    --cache-min-events)
+      CACHE_MIN_EVENTS="$2"
+      shift 2
+      ;;
+    --cache-hours)
+      CACHE_HOURS="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+declare -a CHECKS=()
+FAILURES=0
+
+run_check() {
+  local name="$1"
+  shift
+  local output rc
+
+  set +e
+  output="$("$@" 2>&1)"
+  rc=$?
+  set -e
+
+  local status
+  if [[ "${rc}" -eq 0 ]]; then
+    status="PASS"
+  else
+    status="FAIL"
+    FAILURES=$((FAILURES + 1))
+  fi
+
+  CHECKS+=("${name}	${status}	${rc}	${output}")
+  if [[ "${AS_JSON}" -eq 0 ]]; then
+    log "gate=${name} status=${status} rc=${rc}"
+    if [[ "${status}" == "FAIL" ]]; then
+      printf '%s\n' "${output}" >&2
+    fi
+  fi
+}
+
+if [[ "${RUN_TESTS}" -eq 1 ]]; then
+  if [[ "${QUICK}" -eq 1 ]]; then
+    run_check "tests" "${ROOT}/bin/lacp-test" --quick
+  else
+    run_check "tests" "${ROOT}/bin/lacp-test"
+  fi
+fi
+
+if [[ "${RUN_DOCTOR}" -eq 1 ]]; then
+  run_check "doctor" "${ROOT}/bin/lacp-doctor"
+fi
+
+if [[ "${RUN_CACHE}" -eq 1 ]]; then
+  run_check "cache_guard" "${ROOT}/bin/lacp-cache-guard" \
+    --hours "${CACHE_HOURS}" \
+    --min-hit-rate "${CACHE_MIN_HIT_RATE}" \
+    --min-usage-events "${CACHE_MIN_EVENTS}" \
+    --json
+fi
+
+if [[ "${RUN_SKILL_AUDIT}" -eq 1 ]]; then
+  if [[ "${#SKILL_PATHS[@]}" -gt 0 ]]; then
+    declare -a skill_args=()
+    for path in "${SKILL_PATHS[@]}"; do
+      skill_args+=(--path "${path}")
+    done
+    run_check "skill_audit" "${ROOT}/bin/lacp-skill-audit" "${skill_args[@]}" --json
+  else
+    run_check "skill_audit" "${ROOT}/bin/lacp-skill-audit" --json
+  fi
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  {
+    printf '{'
+    printf '"ok":%s,' "$([[ "${FAILURES}" -eq 0 ]] && echo true || echo false)"
+    printf '"summary":{"checks":%d,"failed":%d},' "${#CHECKS[@]}" "${FAILURES}"
+    printf '"checks":['
+    first=1
+    for row in "${CHECKS[@]}"; do
+      name="$(printf '%s' "${row}" | awk -F '\t' '{print $1}')"
+      status="$(printf '%s' "${row}" | awk -F '\t' '{print $2}')"
+      rc="$(printf '%s' "${row}" | awk -F '\t' '{print $3}')"
+      detail="$(printf '%s' "${row}" | awk -F '\t' '{print $4}')"
+      escaped_detail="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<<"${detail}")"
+      [[ "${first}" -eq 1 ]] || printf ','
+      first=0
+      printf '{"name":"%s","status":"%s","exit_code":%s,"detail":%s}' "${name}" "${status}" "${rc}" "${escaped_detail}"
+    done
+    printf ']}'
+    printf '\n'
+  }
+fi
+
+if [[ "${FAILURES}" -gt 0 ]]; then
+  die "release gate failed (${FAILURES} checks failed)"
+fi
+
+if [[ "${AS_JSON}" -eq 0 ]]; then
+  log "release gate passed"
+fi
+

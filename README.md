@@ -229,6 +229,7 @@ Notes:
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
 - `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
+- `bin/lacp-release-gate`: run strict pre-live go/no-go checks (tests + doctor + cache + skills)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
@@ -288,6 +289,9 @@ Or use:
 bin/lacp-test
 bin/lacp-test --quick
 bin/lacp-test --isolated
+
+# pre-live gate
+bin/lacp release-gate --quick
 
 # preferred
 bin/lacp test
