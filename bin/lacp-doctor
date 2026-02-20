@@ -102,6 +102,7 @@ check_file "${DAYTONA_RUNNER}" "runner_file:daytona"
 check_file "${E2B_RUNNER}" "runner_file:e2b"
 check_file "${LACP_ROOT}/bin/lacp-remote-setup" "bin:lacp-remote-setup"
 check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
+add_check "policy:allow_external_remote" "PASS" "${LACP_ALLOW_EXTERNAL_REMOTE}"
 
 if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
   if command -v "${LACP_LOCAL_SANDBOX_RUNNER}" >/dev/null 2>&1; then
