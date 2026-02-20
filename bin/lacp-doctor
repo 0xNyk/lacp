@@ -93,6 +93,14 @@ elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
   add_check "config:sandbox_policy_json" "FAIL" "invalid json"
 fi
 
+REMOTE_PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}" 2>/dev/null || echo "daytona")"
+add_check "config:remote_provider" "PASS" "${REMOTE_PROVIDER}"
+
+DAYTONA_RUNNER="${LACP_ROOT}/scripts/runners/daytona-runner.sh"
+E2B_RUNNER="${LACP_ROOT}/scripts/runners/e2b-runner.sh"
+check_file "${DAYTONA_RUNNER}" "runner_file:daytona"
+check_file "${E2B_RUNNER}" "runner_file:e2b"
+
 if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
   if command -v "${LACP_LOCAL_SANDBOX_RUNNER}" >/dev/null 2>&1; then
     add_check "runner:local_sandbox" "PASS" "${LACP_LOCAL_SANDBOX_RUNNER}"
@@ -110,7 +118,19 @@ if [[ -n "${LACP_REMOTE_SANDBOX_RUNNER:-}" ]]; then
     add_check "runner:remote_sandbox" "WARN" "configured but not found: ${LACP_REMOTE_SANDBOX_RUNNER}"
   fi
 else
-  add_check "runner:remote_sandbox" "WARN" "unset (remote_sandbox execution blocked)"
+  add_check "runner:remote_sandbox" "WARN" "unset (uses provider default: ${REMOTE_PROVIDER})"
+fi
+
+if command -v daytona >/dev/null 2>&1; then
+  add_check "cli:daytona" "PASS" "$(command -v daytona)"
+else
+  add_check "cli:daytona" "WARN" "missing"
+fi
+
+if command -v e2b >/dev/null 2>&1; then
+  add_check "cli:e2b" "PASS" "$(command -v e2b)"
+else
+  add_check "cli:e2b" "WARN" "missing"
 fi
 
 if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then

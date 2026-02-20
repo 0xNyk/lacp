@@ -12,6 +12,7 @@
     }
   },
   "routing": {
+    "remote_provider": "daytona",
     "remote_keywords": [
       "rl",
       "finetune",

@@ -58,6 +58,7 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - machine-readable output: `bin/lacp-doctor --json`
 - `bin/lacp-route`
   - applies sandbox routing policy (`trusted_local | local_sandbox | remote_sandbox`)
+  - resolves remote provider (`daytona | e2b`) for remote routes
   - returns explainable routing reasons
   - machine-readable output: `bin/lacp-route --task "<...>" --json`
 - `bin/lacp-sandbox-run`
@@ -83,6 +84,19 @@ bin/lacp-sandbox-run \
   --cpu-heavy true \
   --long-run true \
   -- python3 -V
+```
+
+## E2B Remote Runner Setup
+
+```bash
+cd ~/control/frameworks/lacp
+
+# set policy provider if desired
+# (edit config/sandbox-policy.json -> routing.remote_provider = "e2b")
+
+# optional explicit override:
+LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/e2b-runner.sh"
+E2B_SANDBOX_ID="<running-sandbox-id>"
 ```
 
 ## Artifact Paths
