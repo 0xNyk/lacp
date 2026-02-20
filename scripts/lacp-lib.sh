@@ -51,5 +51,15 @@ automation_script() {
 
 latest_file() {
   local glob_path="$1"
-  ls -1t ${glob_path} 2>/dev/null | head -n 1
+  python3 - <<'PY' "${glob_path}"
+import glob
+import os
+import sys
+
+matches = [p for p in glob.glob(sys.argv[1]) if os.path.isfile(p)]
+if not matches:
+    raise SystemExit(0)
+latest = max(matches, key=lambda p: os.path.getmtime(p))
+print(latest)
+PY
 }

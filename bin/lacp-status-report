@@ -60,7 +60,7 @@ DOCTOR_OK="$(echo "${DOCTOR_JSON}" | jq -r '.ok')"
 latest_or_none() {
   local pattern="$1"
   local found
-  found="$(ls -1t ${pattern} 2>/dev/null | head -n 1 || true)"
+  found="$(latest_file "${pattern}" || true)"
   if [[ -z "${found}" ]]; then
     echo ""
   else
