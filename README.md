@@ -2,6 +2,8 @@
 
 Local Agent Control Plane for Claude/Codex.
 
+Status: active development (`v0.1.x`).
+
 LACP turns local agent operations into an auditable system with:
 - reproducible onboarding
 - verification gates
@@ -10,6 +12,25 @@ LACP turns local agent operations into an auditable system with:
 
 LACP is **not** a new runtime. It is a control plane around your existing local automation and agent tooling.
 
+## Table of Contents
+
+- [End Goal](#end-goal)
+- [Prerequisites](#prerequisites)
+- [Architecture](#architecture)
+- [Execution Tiers](#execution-tiers)
+- [Risk Tiers](#risk-tiers)
+- [Budget Gates](#budget-gates)
+- [Quick Start](#quick-start)
+- [Install Options](#install-options)
+- [What Install Does](#what-install-does)
+- [Remote Setup](#remote-setup)
+- [Command Reference](#command-reference)
+- [Security Model](#security-model)
+- [Artifacts](#artifacts)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Optimization Backlog](#optimization-backlog)
+
 ## End Goal
 
 Make Claude/Codex operations:
@@ -17,6 +38,17 @@ Make Claude/Codex operations:
 - reliable (verification loops, explicit pass/fail gates)
 - safe (tiered execution with sandbox policy)
 - reproducible (one-command setup and runbook workflows)
+
+## Prerequisites
+
+Required:
+- `bash`
+- `python3`
+- `jq`
+- `rg` (`ripgrep`)
+
+Recommended:
+- `shellcheck`
 
 ## Architecture
 
@@ -94,6 +126,15 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
   --profile starter \
   --with-verify true
 ```
+
+## What Install Does
+
+`bin/lacp-install --profile starter --with-verify`:
+- creates `.env` from template when missing
+- ensures required root/data paths exist
+- scaffolds safe starter automation scripts when missing
+- runs onboarding preflight checks
+- runs verification and produces baseline artifacts
 
 ## Remote Setup
 
@@ -181,6 +222,14 @@ Or use:
 bin/lacp-test
 bin/lacp-test --quick
 ```
+
+## Troubleshooting
+
+- `bootstrap failed missing script`: run `bin/lacp-install --profile starter --force-scaffold`
+- remote `exit_code=8`: run `bin/lacp-mode remote-enabled --ttl-min 30`
+- budget `exit_code=10`: lower `--estimated-cost-usd` or pass `--confirm-budget true`
+- critical `exit_code=9`: pass `--confirm-critical true`
+- doctor path errors: check `.env` roots and rerun `bin/lacp-doctor --json`
 
 ## Optimization Backlog
 
