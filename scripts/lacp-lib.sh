@@ -3,7 +3,7 @@ set -euo pipefail
 
 LACP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ -f "${LACP_ROOT}/.env" ]]; then
+if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
   # shellcheck disable=SC1091
   source "${LACP_ROOT}/.env"
 fi

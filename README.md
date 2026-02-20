@@ -92,6 +92,8 @@ bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-sandbox-id>"
 See:
 - `docs/framework-scope.md`
 - `docs/runbook.md`
+- `CONTRIBUTING.md`
+- `SECURITY.md`
 
 ## Artifacts
 
