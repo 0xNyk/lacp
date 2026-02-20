@@ -25,6 +25,7 @@ Make Claude/Codex operations:
 - `bin/lacp-bootstrap`
 - `bin/lacp-verify`
 - `bin/lacp-doctor`
+- `bin/lacp-mode`
 
 ### Policy + Routing Layer
 - policy contract: `config/sandbox-policy.json`
@@ -51,6 +52,7 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 cd ~/control/frameworks/lacp
 cp config/lacp.env.example .env
 bin/lacp-onboard
+bin/lacp-mode show
 bin/lacp-doctor
 bin/lacp-verify --hours 24
 ```
@@ -89,6 +91,7 @@ Notes:
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
+- `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-route`: deterministic tier/provider routing with reasons
 - `bin/lacp-sandbox-run`: route + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring
