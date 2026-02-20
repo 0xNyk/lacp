@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck jq
+
+      - name: Shell syntax checks
+        run: |
+          set -euo pipefail
+          for f in bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh; do
+            bash -n "$f"
+          done
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          shellcheck bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh
+
+      - name: Smoke tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/smoke.sh
+          ./scripts/ci/smoke.sh
