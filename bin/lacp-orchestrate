@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-orchestrate doctor [--json]
+  lacp-orchestrate run --task <text> --backend tmux|dmux --session <name> --command <cmd> [options]
+
+Options (run):
+  --repo-trust trusted|unknown    Default: unknown
+  --internet true|false           Default: false
+  --external-code true|false      Default: false
+  --cpu-heavy true|false          Default: false
+  --long-run true|false           Default: false
+  --estimated-cost-usd <n>        Optional budget estimate
+  --confirm-budget true           Optional budget override
+  --confirm-critical true         Required for critical-risk tasks
+  --input-contract <json>         Structured contract for risky runs
+  --dry-run                       Plan-only execution
+  --json                          Output structured JSON
+EOF
+}
+
+bool_arg() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+cmd_doctor() {
+  local as_json="$1"
+  local tmux_path dmux_path default_backend
+
+  tmux_path="$(command -v tmux || true)"
+  dmux_path="$(command -v dmux || true)"
+  default_backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}"
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --arg default_backend "${default_backend}" \
+      --arg tmux_path "${tmux_path}" \
+      --arg dmux_path "${dmux_path}" \
+      '{
+        ok: true,
+        default_backend: $default_backend,
+        backends: {
+          tmux: {
+            available: ($tmux_path != ""),
+            command: (if $tmux_path == "" then null else $tmux_path end)
+          },
+          dmux: {
+            available: ($dmux_path != ""),
+            command: (if $dmux_path == "" then null else $dmux_path end)
+          }
+        }
+      }'
+    return 0
+  fi
+
+  log "default_backend=${default_backend}"
+  if [[ -n "${tmux_path}" ]]; then
+    log "tmux=available (${tmux_path})"
+  else
+    log "tmux=missing"
+  fi
+  if [[ -n "${dmux_path}" ]]; then
+    log "dmux=available (${dmux_path})"
+  else
+    log "dmux=missing"
+  fi
+}
+
+cmd_run() {
+  local task="" backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}" session="" command_text=""
+  local repo_trust="unknown" internet="false" external_code="false" cpu_heavy="false" long_run="false"
+  local estimated_cost_usd="" confirm_budget="false" confirm_critical="false" input_contract=""
+  local dry_run="false" as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task) task="$2"; shift 2 ;;
+      --backend) backend="$2"; shift 2 ;;
+      --session) session="$2"; shift 2 ;;
+      --command) command_text="$2"; shift 2 ;;
+      --repo-trust) repo_trust="$2"; shift 2 ;;
+      --internet) internet="$(bool_arg "$2")"; shift 2 ;;
+      --external-code) external_code="$(bool_arg "$2")"; shift 2 ;;
+      --cpu-heavy) cpu_heavy="$(bool_arg "$2")"; shift 2 ;;
+      --long-run) long_run="$(bool_arg "$2")"; shift 2 ;;
+      --estimated-cost-usd) estimated_cost_usd="$2"; shift 2 ;;
+      --confirm-budget) confirm_budget="$(bool_arg "$2")"; shift 2 ;;
+      --confirm-critical) confirm_critical="$(bool_arg "$2")"; shift 2 ;;
+      --input-contract) input_contract="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${task}" ]] || die "--task is required"
+  [[ -n "${session}" ]] || die "--session is required"
+  [[ -n "${command_text}" ]] || die "--command is required"
+  [[ "${repo_trust}" == "trusted" || "${repo_trust}" == "unknown" ]] || die "--repo-trust must be trusted|unknown"
+  [[ "${backend}" == "tmux" || "${backend}" == "dmux" ]] || die "--backend must be tmux|dmux"
+
+  local runner="${ROOT}/scripts/runners/${backend}-runner.sh"
+  require_file "${runner}"
+
+  export LACP_ORCH_BACKEND="${backend}"
+  export LACP_ORCH_SESSION_NAME="${session}"
+  export LACP_ORCH_COMMAND="${command_text}"
+  export LACP_ORCH_DRY_RUN="${dry_run}"
+
+  local -a run_args=(
+    --task "${task}"
+    --repo-trust "${repo_trust}"
+    --internet "${internet}"
+    --external-code "${external_code}"
+    --cpu-heavy "${cpu_heavy}"
+    --long-run "${long_run}"
+  )
+
+  if [[ -n "${estimated_cost_usd}" ]]; then
+    run_args+=(--estimated-cost-usd "${estimated_cost_usd}")
+  fi
+  if [[ "${confirm_budget}" == "true" ]]; then
+    run_args+=(--confirm-budget true)
+  fi
+  if [[ "${confirm_critical}" == "true" ]]; then
+    run_args+=(--confirm-critical true)
+  fi
+  if [[ -n "${input_contract}" ]]; then
+    run_args+=(--input-contract "${input_contract}")
+  fi
+  if [[ "${dry_run}" == "true" ]]; then
+    run_args+=(--dry-run)
+  fi
+  if [[ "${as_json}" == "true" ]]; then
+    run_args+=(--json)
+  fi
+
+  "${ROOT}/bin/lacp-sandbox-run" "${run_args[@]}" -- "${runner}"
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 0; }
+  local sub="$1"
+  shift || true
+
+  case "${sub}" in
+    doctor)
+      local as_json="false"
+      if [[ "${1:-}" == "--json" ]]; then
+        as_json="true"
+        shift
+      fi
+      [[ $# -eq 0 ]] || die "Unknown doctor argument: $1"
+      cmd_doctor "${as_json}"
+      ;;
+    run)
+      cmd_run "$@"
+      ;;
+    -h|--help|help)
+      usage
+      ;;
+    *)
+      die "Unknown subcommand: ${sub}"
+      ;;
+  esac
+}
+
+main "$@"
+

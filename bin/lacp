@@ -22,6 +22,7 @@ Ops:
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
   release-gate  Run strict pre-live go/no-go gates
+  orchestrate   Run optional tmux/dmux orchestration through LACP gates
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
@@ -90,6 +91,9 @@ case "${cmd}" in
     ;;
   release-gate)
     exec "${ROOT}/bin/lacp-release-gate" "$@"
+    ;;
+  orchestrate)
+    exec "${ROOT}/bin/lacp-orchestrate" "$@"
     ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"
