@@ -99,12 +99,14 @@ bin/lacp-sandbox-run \
 
 ## E2B Runner (Remote Execution)
 
-Current integration mode executes inside an existing sandbox id.
+Default integration mode uses non-interactive lifecycle (`create -> exec -> kill`) via E2B SDK.
+Existing-sandbox mode remains available with `E2B_SANDBOX_ID`.
 
 ```bash
 cd ~/control/frameworks/lacp
 
-bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-e2b-sandbox-id>"
+bin/lacp-remote-setup --provider e2b
+export E2B_API_KEY="<your-api-key>"
 bin/lacp-remote-smoke --provider e2b --json
 
 bin/lacp-sandbox-run \
@@ -112,6 +114,12 @@ bin/lacp-sandbox-run \
   --cpu-heavy true \
   --long-run true \
   -- python3 -V
+```
+
+Existing sandbox mode:
+
+```bash
+bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-e2b-sandbox-id>"
 ```
 
 Preview only:

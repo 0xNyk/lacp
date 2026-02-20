@@ -74,6 +74,10 @@ bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-sandbox-id>"
 bin/lacp-remote-smoke --provider e2b --json
 ```
 
+Notes:
+- Default mode is non-interactive lifecycle (`create -> exec -> kill`) using E2B SDK.
+- `E2B_SANDBOX_ID` enables existing-sandbox mode via e2b CLI.
+
 ## Command Reference
 
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify

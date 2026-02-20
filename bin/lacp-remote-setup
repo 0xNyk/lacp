@@ -139,7 +139,7 @@ case "${PROVIDER}" in
     runner_path="${ROOT}/scripts/runners/e2b-runner.sh"
     cli_name="e2b"
     install_name="e2b"
-    auth_hint="Set E2B_API_KEY and, for current adapter mode, E2B_SANDBOX_ID"
+    auth_hint="Set E2B_API_KEY (lifecycle mode). Optional: E2B_SANDBOX_ID for existing sandbox mode."
     ;;
 esac
 
@@ -179,8 +179,13 @@ if [[ "${PROVIDER}" == "e2b" ]]; then
     auth_ok="false"
     next_steps+=("Set E2B_API_KEY in shell or .env")
   fi
-  if [[ -z "${E2B_SANDBOX_ID_VALUE}" ]]; then
-    next_steps+=("Provide --e2b-sandbox-id <id> or set E2B_SANDBOX_ID in .env")
+  if [[ -n "${E2B_SANDBOX_ID_VALUE}" && "${cli_found}" != "true" ]]; then
+    next_steps+=("Install e2b CLI for E2B_SANDBOX_ID mode")
+  fi
+  if command -v node >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
+    :
+  else
+    next_steps+=("Install node+npx or set E2B_NODE_LAUNCHER for lifecycle mode")
   fi
 fi
 

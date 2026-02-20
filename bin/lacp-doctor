@@ -132,7 +132,13 @@ fi
 if command -v e2b >/dev/null 2>&1; then
   add_check "cli:e2b" "PASS" "$(command -v e2b)"
 else
-  add_check "cli:e2b" "WARN" "missing"
+  add_check "cli:e2b" "WARN" "missing (optional unless using E2B_SANDBOX_ID mode)"
+fi
+
+if command -v node >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
+  add_check "runtime:e2b_lifecycle" "PASS" "node/npx available"
+else
+  add_check "runtime:e2b_lifecycle" "WARN" "node/npx missing for E2B lifecycle mode"
 fi
 
 if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then

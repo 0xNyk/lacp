@@ -92,6 +92,11 @@ Status update (2026-02-20):
 2. Optional OpenTelemetry export:
 - spans for route decision, runner dispatch, command execution
 
+Status update (2026-02-20):
+- E2B lifecycle runner implemented in `scripts/runners/e2b-runner.sh` with:
+  - lifecycle mode (SDK-based create/exec/kill)
+  - existing-sandbox fallback mode via `E2B_SANDBOX_ID`
+
 ## Sources
 
 - GitHub Docs (README / project guidance): https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes
