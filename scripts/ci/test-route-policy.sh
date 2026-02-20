@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+assert_eq() {
+  local actual="$1"
+  local expected="$2"
+  local label="$3"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "[route-test] FAIL ${label}: expected='${expected}' actual='${actual}'" >&2
+    exit 1
+  fi
+  echo "[route-test] PASS ${label}: ${actual}"
+}
+
+run_case() {
+  local label="$1"
+  local expected_route="$2"
+  local expected_provider="$3"
+  shift 3
+
+  local out
+  out="$("${ROOT}/bin/lacp-route" "$@" --json)"
+
+  local actual_route
+  actual_route="$(echo "${out}" | jq -r '.route')"
+  assert_eq "${actual_route}" "${expected_route}" "${label}:route"
+
+  local actual_provider
+  actual_provider="$(echo "${out}" | jq -r '.remote_provider // "null"')"
+  assert_eq "${actual_provider}" "${expected_provider}" "${label}:provider"
+}
+
+require_bin() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "[route-test] missing required binary: $1" >&2
+    exit 1
+  }
+}
+
+require_bin jq
+
+# Case 1: trusted low-risk task stays local.
+run_case \
+  "trusted-local" \
+  "trusted_local" \
+  "null" \
+  --task "run memory benchmark on internal repo" \
+  --repo-trust trusted
+
+# Case 2: unknown + external/internet task routes to local sandbox.
+run_case \
+  "local-sandbox" \
+  "local_sandbox" \
+  "null" \
+  --task "run third-party scraper on unknown repo" \
+  --repo-trust unknown \
+  --internet true \
+  --external-code true
+
+# Case 3: heavy long-running task routes remote and uses policy provider.
+run_case \
+  "remote-policy-provider" \
+  "remote_sandbox" \
+  "daytona" \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true
+
+# Case 4: remote provider override must be honored.
+run_case \
+  "remote-provider-override" \
+  "remote_sandbox" \
+  "e2b" \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true \
+  --remote-provider e2b
+
+echo "[route-test] all route policy tests passed"
