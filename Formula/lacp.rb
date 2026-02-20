@@ -25,6 +25,8 @@ class Lacp < Formula
       lacp-sandbox-run
       lacp-remote-setup
       lacp-remote-smoke
+      lacp-report
+      lacp-migrate
       lacp-test
     ].each do |cmd|
       (bin/cmd).write_env_script(libexec/"bin/#{cmd}")
