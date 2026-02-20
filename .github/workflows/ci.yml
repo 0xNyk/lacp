@@ -46,3 +46,9 @@ jobs:
           set -euo pipefail
           chmod +x scripts/ci/test-mode-and-gates.sh
           ./scripts/ci/test-mode-and-gates.sh
+
+      - name: Knowledge doctor tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-knowledge-doctor.sh
+          ./scripts/ci/test-knowledge-doctor.sh
