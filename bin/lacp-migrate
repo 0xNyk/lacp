@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-migrate [--automation-root PATH] [--knowledge-root PATH] [--drafts-root PATH] [--apply] [--json]
+
+Prepare migration of an existing local stack into LACP .env settings.
+Default mode is dry-run preview. Use --apply to persist updates.
+EOF
+}
+
+AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT}"
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT}"
+DRAFTS_ROOT="${LACP_DRAFTS_ROOT}"
+APPLY=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --automation-root)
+      AUTOMATION_ROOT="$2"
+      shift 2
+      ;;
+    --knowledge-root)
+      KNOWLEDGE_ROOT="$2"
+      shift 2
+      ;;
+    --drafts-root)
+      DRAFTS_ROOT="$2"
+      shift 2
+      ;;
+    --apply)
+      APPLY=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+ENV_FILE="${ROOT}/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  cp "${ROOT}/config/lacp.env.example" "${ENV_FILE}"
+fi
+
+exists_json="$(python3 - <<'PY' "${AUTOMATION_ROOT}" "${KNOWLEDGE_ROOT}" "${DRAFTS_ROOT}"
+import json
+import pathlib
+import sys
+
+items = [
+    ("automation_root_exists", sys.argv[1]),
+    ("knowledge_root_exists", sys.argv[2]),
+    ("drafts_root_exists", sys.argv[3]),
+]
+payload = {}
+for key, val in items:
+    payload[key] = pathlib.Path(val).expanduser().exists()
+print(json.dumps(payload))
+PY
+)"
+
+set_kv() {
+  local file="$1"
+  local key="$2"
+  local val="$3"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v k="${key}" -v v="${val}" '
+    BEGIN { done=0 }
+    $0 ~ "^" k "=" {
+      print k "=\"" v "\""
+      done=1
+      next
+    }
+    { print }
+    END {
+      if (!done) print k "=\"" v "\""
+    }
+  ' "${file}" > "${tmp}"
+  mv "${tmp}" "${file}"
+}
+
+if [[ "${APPLY}" -eq 1 ]]; then
+  set_kv "${ENV_FILE}" "LACP_AUTOMATION_ROOT" "${AUTOMATION_ROOT}"
+  set_kv "${ENV_FILE}" "LACP_KNOWLEDGE_ROOT" "${KNOWLEDGE_ROOT}"
+  set_kv "${ENV_FILE}" "LACP_KNOWLEDGE_GRAPH_ROOT" "${KNOWLEDGE_ROOT}"
+  set_kv "${ENV_FILE}" "LACP_DRAFTS_ROOT" "${DRAFTS_ROOT}"
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg env_file "${ENV_FILE}" \
+    --arg automation_root "${AUTOMATION_ROOT}" \
+    --arg knowledge_root "${KNOWLEDGE_ROOT}" \
+    --arg drafts_root "${DRAFTS_ROOT}" \
+    --argjson exists "${exists_json}" \
+    --argjson apply "$([[ "${APPLY}" -eq 1 ]] && echo true || echo false)" \
+    '{
+      apply: $apply,
+      env_file: $env_file,
+      targets: {
+        automation_root: $automation_root,
+        knowledge_root: $knowledge_root,
+        drafts_root: $drafts_root
+      },
+      exists: $exists
+    }'
+else
+  log "migration_preview apply=${APPLY} env_file=${ENV_FILE}"
+  log "automation_root=${AUTOMATION_ROOT}"
+  log "knowledge_root=${KNOWLEDGE_ROOT}"
+  log "drafts_root=${DRAFTS_ROOT}"
+  echo "${exists_json}" | jq -r '
+    "exists.automation_root=\(.automation_root_exists)",
+    "exists.knowledge_root=\(.knowledge_root_exists)",
+    "exists.drafts_root=\(.drafts_root_exists)"
+  '
+  if [[ "${APPLY}" -eq 0 ]]; then
+    log "dry-run only. use --apply to persist .env changes"
+  else
+    log "applied .env migration settings"
+  fi
+fi

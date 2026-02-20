@@ -16,6 +16,7 @@ Default:
   - route policy tests
   - mode and gate tests
   - knowledge doctor tests
+  - ops command tests
   - smoke tests
 
 --quick:
@@ -62,6 +63,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-knowledge-doctor.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-ops-commands.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
 
