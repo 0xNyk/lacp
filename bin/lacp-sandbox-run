@@ -56,7 +56,7 @@ PY
 
 approval_state_json() {
   local approval_file="${LACP_REMOTE_APPROVAL_FILE}"
-  local now_epoch expires_epoch expires_at_utc ttl_min valid status reason
+  local expires_at_utc ttl_min valid status reason
 
   if [[ ! -f "${approval_file}" ]]; then
     jq -n --arg file "${approval_file}" '{
