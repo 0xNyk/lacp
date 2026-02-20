@@ -71,15 +71,98 @@ check_dir() {
   fi
 }
 
+check_canonical_dir() {
+  local path="$1"
+  local label="$2"
+  if [[ -d "${path}" ]]; then
+    local canonical
+    canonical="$(cd "${path}" && pwd -P)"
+    add_check "${label}" "PASS" "${path} -> ${canonical}"
+  else
+    add_check "${label}" "FAIL" "${path}"
+  fi
+}
+
+check_latest_file_age_hours() {
+  local glob_path="$1"
+  local label="$2"
+  local max_hours="$3"
+  local latest_file latest_epoch now_epoch age_hours
+  latest_file="$(latest_file "${glob_path}" || true)"
+  if [[ -z "${latest_file}" ]]; then
+    add_check "${label}" "WARN" "missing"
+    return 0
+  fi
+  latest_epoch="$(stat -f %m "${latest_file}" 2>/dev/null || echo 0)"
+  now_epoch="$(date -u +%s)"
+  if [[ "${latest_epoch}" -le 0 ]]; then
+    add_check "${label}" "WARN" "${latest_file} (unable to read mtime)"
+    return 0
+  fi
+  age_hours="$(((now_epoch - latest_epoch) / 3600))"
+  if [[ "${age_hours}" -le "${max_hours}" ]]; then
+    add_check "${label}" "PASS" "${latest_file} age_hours=${age_hours}"
+  else
+    add_check "${label}" "WARN" "${latest_file} age_hours=${age_hours} (>${max_hours})"
+  fi
+}
+
 check_cmd bash
 check_cmd python3
 check_cmd rg
 check_cmd jq
 check_cmd curl
 
-check_dir "${LACP_AUTOMATION_ROOT}" "root:automation"
-check_dir "${LACP_KNOWLEDGE_ROOT}" "root:knowledge"
-check_dir "${LACP_DRAFTS_ROOT}" "root:drafts"
+check_canonical_dir "${LACP_AUTOMATION_ROOT}" "root:automation"
+check_canonical_dir "${LACP_KNOWLEDGE_ROOT}" "root:knowledge"
+check_canonical_dir "${LACP_DRAFTS_ROOT}" "root:drafts"
+
+if [[ -f "${LACP_ROOT}/.env" ]]; then
+  add_check "config:env_file" "PASS" "${LACP_ROOT}/.env"
+else
+  add_check "config:env_file" "WARN" "missing (copy from config/lacp.env.example)"
+fi
+
+if [[ -n "${LACP_DRAFTS_ROOT}" ]]; then
+  LEGACY_DRAFTS_ROOT="${HOME}/docs/ai-dev-optimization/articles"
+  if [[ -d "${LEGACY_DRAFTS_ROOT}" ]]; then
+    canonical_latest="$(python3 - <<'PY' "${LACP_DRAFTS_ROOT}"
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = [p for p in root.rglob("*.md") if p.is_file()]
+if files:
+    newest = max(files, key=lambda p: p.stat().st_mtime)
+    print(str(newest))
+PY
+)"
+    legacy_latest="$(python3 - <<'PY' "${LEGACY_DRAFTS_ROOT}"
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = [p for p in root.rglob("*.md") if p.is_file()]
+if files:
+    newest = max(files, key=lambda p: p.stat().st_mtime)
+    print(str(newest))
+PY
+)"
+    if [[ -n "${canonical_latest}" && -n "${legacy_latest}" ]]; then
+      canonical_epoch="$(stat -f %m "${canonical_latest}" 2>/dev/null || echo 0)"
+      legacy_epoch="$(stat -f %m "${legacy_latest}" 2>/dev/null || echo 0)"
+      if [[ "${legacy_epoch}" -gt "${canonical_epoch}" ]]; then
+        add_check "drift:drafts_root" "WARN" "legacy path newer than canonical; review sync source (${LEGACY_DRAFTS_ROOT})"
+      else
+        add_check "drift:drafts_root" "PASS" "canonical path is freshest"
+      fi
+    else
+      add_check "drift:drafts_root" "PASS" "no conflicting legacy drafts detected"
+    fi
+  else
+    add_check "drift:drafts_root" "PASS" "legacy drafts path absent"
+  fi
+fi
 
 check_file "$(automation_script run_shared_memory.sh)" "script:run_shared_memory.sh"
 check_file "$(automation_script run_memory_pipeline.sh)" "script:run_memory_pipeline.sh"
@@ -91,6 +174,28 @@ if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FIL
   add_check "config:sandbox_policy_json" "PASS" "valid json"
 elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
   add_check "config:sandbox_policy_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq -e '.routing.risk_tiers' "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
+  invalid_tiers="$(jq -r '.routing.risk_tiers | to_entries[] | select(.value != "safe" and .value != "review" and .value != "critical") | "\(.key)=\(.value)"' "${LACP_SANDBOX_POLICY_FILE}" | tr '\n' ',' | sed 's/,$//')"
+  if [[ -z "${invalid_tiers}" ]]; then
+    add_check "config:risk_tiers" "PASS" "safe/review/critical"
+  else
+    add_check "config:risk_tiers" "FAIL" "invalid tiers: ${invalid_tiers}"
+  fi
+else
+  add_check "config:risk_tiers" "WARN" "missing routing.risk_tiers (defaults will be used)"
+fi
+
+if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq -e '.routing.cost_ceiling_usd_by_risk_tier' "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
+  invalid_costs="$(jq -r '.routing.cost_ceiling_usd_by_risk_tier | to_entries[] | select((.value|type) != "number" or .value < 0) | "\(.key)=\(.value)"' "${LACP_SANDBOX_POLICY_FILE}" | tr '\n' ',' | sed 's/,$//')"
+  if [[ -z "${invalid_costs}" ]]; then
+    add_check "config:cost_ceilings" "PASS" "numeric non-negative per tier"
+  else
+    add_check "config:cost_ceilings" "FAIL" "invalid values: ${invalid_costs}"
+  fi
+else
+  add_check "config:cost_ceilings" "WARN" "missing routing.cost_ceiling_usd_by_risk_tier (defaults to 0)"
 fi
 
 REMOTE_PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}" 2>/dev/null || echo "daytona")"
@@ -105,6 +210,36 @@ check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
 check_file "${LACP_ROOT}/bin/lacp-mode" "bin:lacp-mode"
 check_file "${LACP_ROOT}/bin/lacp-status-report" "bin:lacp-status-report"
 add_check "policy:allow_external_remote" "PASS" "${LACP_ALLOW_EXTERNAL_REMOTE}"
+
+if [[ "${LACP_ALLOW_EXTERNAL_REMOTE}" == "true" ]]; then
+  if [[ -f "${LACP_REMOTE_APPROVAL_FILE}" ]] && jq -e . "${LACP_REMOTE_APPROVAL_FILE}" >/dev/null 2>&1; then
+    expires_at_utc="$(jq -r '.expires_at_utc // ""' "${LACP_REMOTE_APPROVAL_FILE}")"
+    if [[ -n "${expires_at_utc}" ]]; then
+      if python3 - <<'PY' "${expires_at_utc}"
+import datetime as dt
+import sys
+
+try:
+    expires = dt.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+except Exception:
+    raise SystemExit(1)
+now = dt.datetime.now(dt.timezone.utc)
+raise SystemExit(0 if expires > now else 1)
+PY
+      then
+        add_check "policy:remote_approval" "PASS" "${LACP_REMOTE_APPROVAL_FILE} expires_at_utc=${expires_at_utc}"
+      else
+        add_check "policy:remote_approval" "FAIL" "${LACP_REMOTE_APPROVAL_FILE} expired_at_utc=${expires_at_utc}; renew via bin/lacp-mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
+      fi
+    else
+      add_check "policy:remote_approval" "FAIL" "${LACP_REMOTE_APPROVAL_FILE} missing expires_at_utc"
+    fi
+  else
+    add_check "policy:remote_approval" "FAIL" "missing/invalid ${LACP_REMOTE_APPROVAL_FILE}; grant via bin/lacp-mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
+  fi
+else
+  add_check "policy:remote_approval" "PASS" "not required in local-only mode"
+fi
 
 if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
   if command -v "${LACP_LOCAL_SANDBOX_RUNNER}" >/dev/null 2>&1; then
@@ -168,6 +303,9 @@ if [[ -n "${latest_snapshot}" ]]; then
 else
   add_check "artifact:latest_snapshot" "WARN" "missing"
 fi
+
+check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json" "artifact:latest_sandbox_run_age" 72
+check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
 
 fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
 warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"

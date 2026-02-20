@@ -13,6 +13,30 @@
   },
   "routing": {
     "remote_provider": "daytona",
+    "risk_tiers": {
+      "trusted_local": "safe",
+      "local_sandbox": "review",
+      "remote_sandbox": "review"
+    },
+    "cost_ceiling_usd_by_risk_tier": {
+      "safe": 1.0,
+      "review": 5.0,
+      "critical": 10.0
+    },
+    "critical_signals": {
+      "sensitive_data": true,
+      "repo_trust_untrusted": true,
+      "internet_and_external_code": true,
+      "task_keywords": [
+        "production",
+        "prod",
+        "migrate",
+        "delete",
+        "wallet",
+        "private key",
+        "payment"
+      ]
+    },
     "remote_keywords": [
       "rl",
       "finetune",
