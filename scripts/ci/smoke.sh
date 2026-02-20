@@ -33,6 +33,7 @@ export LACP_DRAFTS_ROOT="${DRAFTS_ROOT}"
 export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
 export LACP_SKIP_DOTENV="1"
 export LACP_REMOTE_APPROVAL_FILE="${TMP}/remote-approval.json"
+INPUT_CONTRACT='{"source":"smoke-test","intent":"exercise sandbox routes safely","allowed_actions":["echo","python3 -V"],"denied_actions":["delete prod data"],"confidence":0.95}'
 
 REMOTE_RUNNER="${TMP}/remote-runner.sh"
 cat > "${REMOTE_RUNNER}" <<'EOF'
@@ -100,7 +101,7 @@ fi
 "${ROOT}/bin/lacp-sandbox-run" --task "remote quant test" --cpu-heavy true --long-run true --estimated-cost-usd 99 --confirm-budget true -- /bin/echo "budget-confirmed-ok" >/dev/null
 
 # Critical tier always requires explicit confirm, regardless of TTL approval.
-if "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --cpu-heavy true --long-run true --sensitive-data true -- /bin/echo "blocked-without-critical-confirm"; then
+if "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --cpu-heavy true --long-run true --sensitive-data true --input-contract "${INPUT_CONTRACT}" -- /bin/echo "blocked-without-critical-confirm"; then
   echo "[smoke] expected critical run to fail without --confirm-critical true" >&2
   exit 1
 else
@@ -111,4 +112,4 @@ else
   fi
 fi
 
-"${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --cpu-heavy true --long-run true --sensitive-data true --confirm-critical true -- /bin/echo "critical-confirmed-ok" >/dev/null
+"${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --cpu-heavy true --long-run true --sensitive-data true --input-contract "${INPUT_CONTRACT}" --confirm-critical true -- /bin/echo "critical-confirmed-ok" >/dev/null

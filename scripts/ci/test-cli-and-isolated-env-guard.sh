@@ -24,6 +24,8 @@ fi
 "${ROOT}/bin/lacp" --help >/dev/null
 "${ROOT}/bin/lacp" doctor --help >/dev/null
 "${ROOT}/bin/lacp" test --help >/dev/null
+"${ROOT}/bin/lacp" incident-drill --help >/dev/null
+"${ROOT}/bin/lacp" cache-audit --help >/dev/null
 
 # Pin .env to sentinel values and assert isolated runs do not mutate it.
 cat > "${ENV_FILE}" <<'EOF'

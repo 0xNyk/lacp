@@ -185,11 +185,67 @@ check_file "$(automation_script run_memory_pipeline.sh)" "script:run_memory_pipe
 check_file "$(automation_script run_memory_benchmark_suite.sh)" "script:run_memory_benchmark_suite.sh"
 check_file "$(automation_script capture_snapshot.py)" "script:capture_snapshot.py"
 check_file "${LACP_SANDBOX_POLICY_FILE}" "config:sandbox_policy"
+check_file "${LACP_MCP_AUTH_POLICY_FILE}" "config:mcp_auth_policy"
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
   add_check "config:sandbox_policy_json" "PASS" "valid json"
 elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
   add_check "config:sandbox_policy_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_MCP_AUTH_POLICY_FILE}" ]] && jq empty "${LACP_MCP_AUTH_POLICY_FILE}" >/dev/null 2>&1; then
+  add_check "config:mcp_auth_policy_json" "PASS" "valid json"
+else
+  add_check "config:mcp_auth_policy_json" "FAIL" "invalid or missing json"
+fi
+
+if [[ -f "${LACP_MCP_AUTH_POLICY_FILE}" ]] && jq -e '.auth.require_pkce == true' "${LACP_MCP_AUTH_POLICY_FILE}" >/dev/null 2>&1; then
+  add_check "policy:mcp_pkce" "PASS" "require_pkce=true"
+else
+  add_check "policy:mcp_pkce" "FAIL" "require_pkce must be true"
+fi
+
+if [[ -f "${LACP_MCP_AUTH_POLICY_FILE}" ]]; then
+  mcp_token_ttl="$(jq -r '.auth.token_ttl_max_minutes // 0' "${LACP_MCP_AUTH_POLICY_FILE}" 2>/dev/null || echo 0)"
+  if [[ "${mcp_token_ttl}" =~ ^[0-9]+$ ]] && [[ "${mcp_token_ttl}" -gt 0 ]] && [[ "${mcp_token_ttl}" -le 60 ]]; then
+    add_check "policy:mcp_token_ttl" "PASS" "token_ttl_max_minutes=${mcp_token_ttl}"
+  else
+    add_check "policy:mcp_token_ttl" "FAIL" "token_ttl_max_minutes must be 1..60 (got ${mcp_token_ttl})"
+  fi
+
+  mcp_refresh_ttl_days="$(jq -r '.auth.refresh_token_ttl_max_days // 0' "${LACP_MCP_AUTH_POLICY_FILE}" 2>/dev/null || echo 0)"
+  if [[ "${mcp_refresh_ttl_days}" =~ ^[0-9]+$ ]] && [[ "${mcp_refresh_ttl_days}" -gt 0 ]] && [[ "${mcp_refresh_ttl_days}" -le 30 ]]; then
+    add_check "policy:mcp_refresh_ttl" "PASS" "refresh_token_ttl_max_days=${mcp_refresh_ttl_days}"
+  else
+    add_check "policy:mcp_refresh_ttl" "FAIL" "refresh_token_ttl_max_days must be 1..30 (got ${mcp_refresh_ttl_days})"
+  fi
+
+  mcp_rotation_days="$(jq -r '.auth.rotation_interval_days // 0' "${LACP_MCP_AUTH_POLICY_FILE}" 2>/dev/null || echo 0)"
+  if [[ "${mcp_rotation_days}" =~ ^[0-9]+$ ]] && [[ "${mcp_rotation_days}" -gt 0 ]] && [[ "${mcp_rotation_days}" -le 30 ]]; then
+    add_check "policy:mcp_rotation" "PASS" "rotation_interval_days=${mcp_rotation_days}"
+  else
+    add_check "policy:mcp_rotation" "FAIL" "rotation_interval_days must be 1..30 (got ${mcp_rotation_days})"
+  fi
+
+  if jq -e '.auth.allow_implicit_flow == false' "${LACP_MCP_AUTH_POLICY_FILE}" >/dev/null 2>&1; then
+    add_check "policy:mcp_implicit_flow" "PASS" "allow_implicit_flow=false"
+  else
+    add_check "policy:mcp_implicit_flow" "FAIL" "allow_implicit_flow must be false"
+  fi
+fi
+
+if [[ -f "${LACP_ROOT}/.env" ]]; then
+  mcp_token_lines="$(rg -n '^[A-Za-z0-9_]*MCP[A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*=' "${LACP_ROOT}/.env" || true)"
+  allow_static_tokens="$(jq -r '.auth.allow_static_tokens_in_env // false' "${LACP_MCP_AUTH_POLICY_FILE}" 2>/dev/null || echo false)"
+  if [[ -n "${mcp_token_lines}" ]]; then
+    if [[ "${allow_static_tokens}" == "true" ]]; then
+      add_check "policy:mcp_static_tokens_env" "WARN" "MCP token variables found in .env and policy allows it"
+    else
+      add_check "policy:mcp_static_tokens_env" "FAIL" "MCP token variables found in .env; move to keychain/secret manager"
+    fi
+  else
+    add_check "policy:mcp_static_tokens_env" "PASS" "no MCP token vars in .env"
+  fi
 fi
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq -e '.routing.risk_tiers' "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then

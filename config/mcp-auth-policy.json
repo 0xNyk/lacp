@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "auth": {
+    "require_pkce": true,
+    "token_ttl_max_minutes": 60,
+    "refresh_token_ttl_max_days": 30,
+    "rotation_interval_days": 30,
+    "allow_implicit_flow": false,
+    "allow_static_tokens_in_env": false
+  }
+}

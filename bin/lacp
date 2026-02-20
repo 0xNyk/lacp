@@ -18,7 +18,9 @@ Core:
 
 Ops:
   report        Summarize recent run/artifact health
+  cache-audit   Analyze prompt cache effectiveness from local histories
   migrate       Migrate roots into .env
+  incident-drill Run incident readiness checklist/drill
   route         Show routing decision
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
@@ -73,8 +75,14 @@ case "${cmd}" in
   report)
     exec "${ROOT}/bin/lacp-report" "$@"
     ;;
+  cache-audit)
+    exec "${ROOT}/bin/lacp-cache-audit" "$@"
+    ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"
+    ;;
+  incident-drill)
+    exec "${ROOT}/bin/lacp-incident-drill" "$@"
     ;;
   route)
     exec "${ROOT}/bin/lacp-route" "$@"
