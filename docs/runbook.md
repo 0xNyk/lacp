@@ -84,6 +84,7 @@ bin/lacp-sandbox-run \
 cd ~/control/frameworks/lacp
 bin/lacp-remote-setup --provider daytona
 daytona login
+bin/lacp-remote-smoke --provider daytona --json
 ```
 
 Run:
@@ -104,6 +105,7 @@ Current integration mode executes inside an existing sandbox id.
 cd ~/control/frameworks/lacp
 
 bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-e2b-sandbox-id>"
+bin/lacp-remote-smoke --provider e2b --json
 
 bin/lacp-sandbox-run \
   --task "remote research batch" \
@@ -117,6 +119,12 @@ Preview only:
 ```bash
 bin/lacp-remote-setup --provider daytona --dry-run --json
 bin/lacp-remote-setup --provider e2b --dry-run --json
+```
+
+Remote smoke with custom command:
+
+```bash
+bin/lacp-remote-smoke --provider daytona -- python3 -V
 ```
 
 ## Troubleshooting

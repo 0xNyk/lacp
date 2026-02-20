@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-remote-smoke [options] [-- <command> [args...]]
+
+Options:
+  --provider daytona|e2b   Remote provider for this smoke run (default: policy)
+  --dry-run                Route and record only; do not execute remote command
+  --json                   Emit machine-readable summary
+
+Default command (if omitted):
+  python3 -V
+EOF
+}
+
+PROVIDER=""
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --provider)
+      PROVIDER="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd jq
+require_file "${LACP_SANDBOX_POLICY_FILE}"
+jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null
+
+if [[ -z "${PROVIDER}" ]]; then
+  PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}")"
+fi
+case "${PROVIDER}" in
+  daytona|e2b) ;;
+  *) die "--provider must be daytona|e2b" ;;
+esac
+
+CMD=("$@")
+if [[ ${#CMD[@]} -eq 0 ]]; then
+  CMD=(python3 -V)
+fi
+
+SETUP_PREVIEW="$("${ROOT}/bin/lacp-remote-setup" --provider "${PROVIDER}" --dry-run --json)"
+
+RUN_ARGS=(
+  --task "lacp-remote-smoke:${PROVIDER}"
+  --cpu-heavy true
+  --long-run true
+  --remote-provider "${PROVIDER}"
+  --json
+)
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  RUN_ARGS+=(--dry-run)
+fi
+RUN_ARGS+=(-- "${CMD[@]}")
+
+set +e
+RUN_RESULT="$("${ROOT}/bin/lacp-sandbox-run" "${RUN_ARGS[@]}")"
+RUN_RC=$?
+set -e
+
+SMOKE_DIR="${LACP_KNOWLEDGE_ROOT}/data/remote-smoke"
+mkdir -p "${SMOKE_DIR}"
+RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
+SMOKE_FILE="${SMOKE_DIR}/smoke-${RUN_TAG}.json"
+
+jq -n \
+  --arg timestamp "${RUN_TAG}" \
+  --arg provider "${PROVIDER}" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson command "$(printf '%s\n' "${CMD[@]}" | jq -R . | jq -s .)" \
+  --argjson setup_preview "${SETUP_PREVIEW}" \
+  --argjson run_result "${RUN_RESULT}" \
+  --argjson run_exit_code "${RUN_RC}" \
+  '{
+    timestamp: $timestamp,
+    provider: $provider,
+    dry_run: $dry_run,
+    command: $command,
+    setup_preview: $setup_preview,
+    run_result: $run_result,
+    run_exit_code: $run_exit_code
+  }' > "${SMOKE_FILE}"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg smoke_file "${SMOKE_FILE}" \
+    --arg provider "${PROVIDER}" \
+    --argjson run_exit_code "${RUN_RC}" \
+    --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    --argjson run_result "${RUN_RESULT}" \
+    '{
+      smoke_file: $smoke_file,
+      provider: $provider,
+      dry_run: $dry_run,
+      run_exit_code: $run_exit_code,
+      run_result: $run_result
+    }'
+else
+  log "remote smoke complete provider=${PROVIDER} exit_code=${RUN_RC}"
+  log "smoke_file=${SMOKE_FILE}"
+fi
+
+exit "${RUN_RC}"
