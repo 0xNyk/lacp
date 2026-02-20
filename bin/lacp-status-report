@@ -49,6 +49,8 @@ DOCTOR_JSON="$("${ROOT}/bin/lacp-doctor" --json)"
 POLICY_PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}")"
 ALLOW_REMOTE="$(echo "${MODE_JSON}" | jq -r '.allow_external_remote')"
 MODE_NAME="$(echo "${MODE_JSON}" | jq -r '.mode')"
+APPROVAL_VALID="$(echo "${MODE_JSON}" | jq -r '.remote_approval.valid // false')"
+APPROVAL_EXPIRES_AT="$(echo "${MODE_JSON}" | jq -r '.remote_approval.expires_at_utc // ""')"
 
 PASS_COUNT="$(echo "${DOCTOR_JSON}" | jq -r '.summary.pass')"
 WARN_COUNT="$(echo "${DOCTOR_JSON}" | jq -r '.summary.warn')"
@@ -87,6 +89,8 @@ if [[ "${FORMAT}" == "json" ]]; then
     --arg mode "${MODE_NAME}" \
     --arg allow_remote "${ALLOW_REMOTE}" \
     --arg remote_provider "${POLICY_PROVIDER}" \
+    --arg approval_valid "${APPROVAL_VALID}" \
+    --arg approval_expires_at "${APPROVAL_EXPIRES_AT}" \
     --argjson doctor_ok "$([[ "${DOCTOR_OK}" == "true" ]] && echo true || echo false)" \
     --argjson pass_count "${PASS_COUNT}" \
     --argjson warn_count "${WARN_COUNT}" \
@@ -102,6 +106,10 @@ if [[ "${FORMAT}" == "json" ]]; then
       mode: $mode,
       allow_external_remote: $allow_remote,
       remote_provider: $remote_provider,
+      remote_approval: {
+        valid: $approval_valid,
+        expires_at_utc: (if $approval_expires_at == "" then null else $approval_expires_at end)
+      },
       doctor: {
         ok: $doctor_ok,
         pass: $pass_count,
@@ -130,6 +138,8 @@ Generated (UTC): \`${REPORT_TIME_UTC}\`
 - Mode: \`${MODE_NAME}\`
 - External remote allowed: \`${ALLOW_REMOTE}\`
 - Policy remote provider: \`${POLICY_PROVIDER}\`
+- Remote approval valid: \`${APPROVAL_VALID}\`
+- Remote approval expires: \`${APPROVAL_EXPIRES_AT:-<none>}\`
 
 ## Doctor
 

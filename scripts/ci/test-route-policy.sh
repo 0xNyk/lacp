@@ -18,7 +18,9 @@ run_case() {
   local label="$1"
   local expected_route="$2"
   local expected_provider="$3"
-  shift 3
+  local expected_tier="$4"
+  local expected_ceiling="$5"
+  shift 5
 
   local out
   out="$("${ROOT}/bin/lacp-route" "$@" --json)"
@@ -30,6 +32,14 @@ run_case() {
   local actual_provider
   actual_provider="$(echo "${out}" | jq -r '.remote_provider // "null"')"
   assert_eq "${actual_provider}" "${expected_provider}" "${label}:provider"
+
+  local actual_tier
+  actual_tier="$(echo "${out}" | jq -r '.risk_tier')"
+  assert_eq "${actual_tier}" "${expected_tier}" "${label}:risk_tier"
+
+  local actual_ceiling
+  actual_ceiling="$(echo "${out}" | jq -r '.cost_ceiling_usd')"
+  assert_eq "${actual_ceiling}" "${expected_ceiling}" "${label}:cost_ceiling_usd"
 }
 
 require_bin() {
@@ -46,6 +56,8 @@ run_case \
   "trusted-local" \
   "trusted_local" \
   "null" \
+  "safe" \
+  "1.0" \
   --task "run memory benchmark on internal repo" \
   --repo-trust trusted
 
@@ -54,6 +66,8 @@ run_case \
   "local-sandbox" \
   "local_sandbox" \
   "null" \
+  "critical" \
+  "10.0" \
   --task "run third-party scraper on unknown repo" \
   --repo-trust unknown \
   --internet true \
@@ -64,6 +78,8 @@ run_case \
   "remote-policy-provider" \
   "remote_sandbox" \
   "daytona" \
+  "review" \
+  "5.0" \
   --task "quant gpu backtest with long runtime" \
   --cpu-heavy true \
   --long-run true
@@ -73,9 +89,22 @@ run_case \
   "remote-provider-override" \
   "remote_sandbox" \
   "e2b" \
+  "review" \
+  "5.0" \
   --task "quant gpu backtest with long runtime" \
   --cpu-heavy true \
   --long-run true \
   --remote-provider e2b
+
+# Case 5: sensitive data should escalate to critical.
+run_case \
+  "critical-sensitive-data" \
+  "local_sandbox" \
+  "null" \
+  "critical" \
+  "10.0" \
+  --task "analyze private customer export" \
+  --repo-trust trusted \
+  --sensitive-data true
 
 echo "[route-test] all route policy tests passed"

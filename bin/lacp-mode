@@ -7,38 +7,54 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-mode [show|local-only|remote-enabled] [--json]
+Usage: lacp-mode [show|local-only|remote-enabled|revoke-approval] [--json] [--ttl-min <minutes>]
 
 Modes:
 - show: print current mode based on LACP_ALLOW_EXTERNAL_REMOTE
 - local-only: set LACP_ALLOW_EXTERNAL_REMOTE=false
-- remote-enabled: set LACP_ALLOW_EXTERNAL_REMOTE=true
+- remote-enabled: set LACP_ALLOW_EXTERNAL_REMOTE=true and grant time-bound remote approval
+- revoke-approval: revoke current remote approval without changing mode
 
 Notes:
 - Updates local .env in this repository.
-- Does not run provider login automatically.
+- Writes approval state to LACP_REMOTE_APPROVAL_FILE.
 EOF
 }
 
-MODE="${1:-show}"
+MODE="show"
 AS_JSON=0
+TTL_MIN=""
 
-if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
+if [[ $# -gt 0 && ( "${1}" == "-h" || "${1}" == "--help" ) ]]; then
   usage
   exit 0
 fi
 
-if [[ $# -gt 1 ]]; then
-  case "${2:-}" in
-    --json) AS_JSON=1 ;;
-    *) die "Unknown argument: ${2:-}" ;;
-  esac
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+  MODE="$1"
+  shift
 fi
 
 case "${MODE}" in
-  show|local-only|remote-enabled) ;;
-  *) die "Mode must be one of: show, local-only, remote-enabled" ;;
+  show|local-only|remote-enabled|revoke-approval) ;;
+  *) die "Mode must be one of: show, local-only, remote-enabled, revoke-approval" ;;
 esac
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    --ttl-min)
+      TTL_MIN="$2"
+      shift 2
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
 
 ENV_FILE="${ROOT}/.env"
 if [[ ! -f "${ENV_FILE}" ]]; then
@@ -71,17 +87,57 @@ if [[ -z "${current}" ]]; then
   current="false"
 fi
 
+if [[ -z "${TTL_MIN}" ]]; then
+  TTL_MIN="${LACP_REMOTE_APPROVAL_TTL_MIN}"
+fi
+[[ "${TTL_MIN}" =~ ^[0-9]+$ ]] || die "--ttl-min must be a non-negative integer"
+
 updated="false"
 target="${current}"
+approval_action="none"
+
+approval_file="${LACP_REMOTE_APPROVAL_FILE}"
+approval_dir="$(dirname "${approval_file}")"
+mkdir -p "${approval_dir}"
 
 if [[ "${MODE}" == "local-only" ]]; then
   target="false"
   set_kv "${ENV_FILE}" "LACP_ALLOW_EXTERNAL_REMOTE" "${target}"
   updated="true"
+  rm -f "${approval_file}" || true
+  approval_action="revoked"
 elif [[ "${MODE}" == "remote-enabled" ]]; then
   target="true"
   set_kv "${ENV_FILE}" "LACP_ALLOW_EXTERNAL_REMOTE" "${target}"
   updated="true"
+  approved_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expires_at_utc="$(python3 - <<'PY' "${TTL_MIN}"
+import datetime as dt
+import sys
+
+ttl_min = int(sys.argv[1])
+expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=ttl_min)
+print(expires.strftime("%Y-%m-%dT%H:%M:%SZ"))
+PY
+)"
+  jq -n \
+    --arg approved_at_utc "${approved_at_utc}" \
+    --arg expires_at_utc "${expires_at_utc}" \
+    --argjson ttl_min "${TTL_MIN}" \
+    --arg mode "${MODE}" \
+    --arg env_file "${ENV_FILE}" \
+    '{
+      approved_at_utc: $approved_at_utc,
+      expires_at_utc: $expires_at_utc,
+      ttl_min: $ttl_min,
+      source: "lacp-mode",
+      mode: $mode,
+      env_file: $env_file
+    }' > "${approval_file}"
+  approval_action="granted"
+elif [[ "${MODE}" == "revoke-approval" ]]; then
+  rm -f "${approval_file}" || true
+  approval_action="revoked"
 fi
 
 effective_mode="local-only"
@@ -89,18 +145,51 @@ if [[ "${target}" == "true" ]]; then
   effective_mode="remote-enabled"
 fi
 
+approval_valid="false"
+approval_expires_at=""
+approval_ttl_min=0
+if [[ -f "${approval_file}" ]] && jq -e . "${approval_file}" >/dev/null 2>&1; then
+  approval_expires_at="$(jq -r '.expires_at_utc // ""' "${approval_file}")"
+  approval_ttl_min="$(jq -r '.ttl_min // 0' "${approval_file}")"
+  if [[ -n "${approval_expires_at}" ]]; then
+    if python3 - <<'PY' "${approval_expires_at}"
+import datetime as dt
+import sys
+
+expires = dt.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+now = dt.datetime.now(dt.timezone.utc)
+raise SystemExit(0 if expires > now else 1)
+PY
+    then
+      approval_valid="true"
+    fi
+  fi
+fi
+
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \
     --arg mode "${effective_mode}" \
     --arg value "${target}" \
     --arg env_file "${ENV_FILE}" \
+    --arg approval_file "${approval_file}" \
+    --arg approval_action "${approval_action}" \
+    --arg approval_expires_at_utc "${approval_expires_at}" \
+    --argjson approval_ttl_min "${approval_ttl_min}" \
+    --argjson approval_valid "$([[ "${approval_valid}" == "true" ]] && echo true || echo false)" \
     --argjson updated "$([[ "${updated}" == "true" ]] && echo true || echo false)" \
     '{
       mode: $mode,
       allow_external_remote: $value,
       env_file: $env_file,
+      remote_approval: {
+        file: $approval_file,
+        action: $approval_action,
+        valid: $approval_valid,
+        expires_at_utc: (if $approval_expires_at_utc == "" then null else $approval_expires_at_utc end),
+        ttl_min: $approval_ttl_min
+      },
       updated: $updated
     }'
 else
-  log "mode=${effective_mode} allow_external_remote=${target} env_file=${ENV_FILE} updated=${updated}"
+  log "mode=${effective_mode} allow_external_remote=${target} env_file=${ENV_FILE} updated=${updated} approval=${approval_action} approval_valid=${approval_valid} approval_file=${approval_file}"
 fi

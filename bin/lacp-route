@@ -118,9 +118,39 @@ has_keyword_match() {
   return 1
 }
 
+resolve_base_risk_tier() {
+  local route_name="$1"
+  local tier
+  tier="$(jq -r --arg route_name "${route_name}" '.routing.risk_tiers[$route_name] // empty' "${LACP_SANDBOX_POLICY_FILE}")"
+  case "${tier}" in
+    safe|review|critical)
+      printf '%s' "${tier}"
+      return 0
+      ;;
+  esac
+  case "${route_name}" in
+    trusted_local) printf '%s' "safe" ;;
+    local_sandbox|remote_sandbox) printf '%s' "review" ;;
+    *) printf '%s' "review" ;;
+  esac
+}
+
+task_matches_critical_keywords() {
+  local kw
+  while IFS= read -r kw; do
+    [[ -z "${kw}" ]] && continue
+    if [[ "${task_lc}" == *"${kw}"* ]]; then
+      return 0
+    fi
+  done < <(jq -r '.routing.critical_signals.task_keywords[]? // empty' "${LACP_SANDBOX_POLICY_FILE}")
+  return 1
+}
+
 route="local_sandbox"
 remote_provider=""
 reasons=()
+risk_tier=""
+cost_ceiling_usd=0
 
 if [[ "${CPU_HEAVY}" == "true" || "${LONG_RUN}" == "true" ]]; then
   route="remote_sandbox"
@@ -157,6 +187,34 @@ if [[ "${route}" == "remote_sandbox" ]]; then
   esac
 fi
 
+risk_tier="$(resolve_base_risk_tier "${route}")"
+
+critical_sensitive_data="$(jq -r '.routing.critical_signals.sensitive_data // true' "${LACP_SANDBOX_POLICY_FILE}")"
+critical_untrusted_repo="$(jq -r '.routing.critical_signals.repo_trust_untrusted // true' "${LACP_SANDBOX_POLICY_FILE}")"
+critical_internet_external="$(jq -r '.routing.critical_signals.internet_and_external_code // true' "${LACP_SANDBOX_POLICY_FILE}")"
+
+if [[ "${critical_sensitive_data}" == "true" && "${SENSITIVE_DATA}" == "true" ]]; then
+  risk_tier="critical"
+  reasons+=("critical_signal=sensitive_data")
+fi
+if [[ "${critical_untrusted_repo}" == "true" && "${REPO_TRUST}" == "untrusted" ]]; then
+  risk_tier="critical"
+  reasons+=("critical_signal=untrusted_repo")
+fi
+if [[ "${critical_internet_external}" == "true" && "${INTERNET}" == "true" && "${EXTERNAL_CODE}" == "true" ]]; then
+  risk_tier="critical"
+  reasons+=("critical_signal=internet_and_external_code")
+fi
+if task_matches_critical_keywords; then
+  risk_tier="critical"
+  reasons+=("critical_signal=task_keyword")
+fi
+
+cost_ceiling_usd="$(jq -r --arg risk_tier "${risk_tier}" '.routing.cost_ceiling_usd_by_risk_tier[$risk_tier] // 0' "${LACP_SANDBOX_POLICY_FILE}")"
+if ! [[ "${cost_ceiling_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  die "Invalid cost ceiling for risk_tier=${risk_tier}: ${cost_ceiling_usd}"
+fi
+
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \
     --arg route "${route}" \
@@ -168,6 +226,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson cpu_heavy "${CPU_HEAVY}" \
     --argjson long_run "${LONG_RUN}" \
     --arg remote_provider "${remote_provider}" \
+    --arg risk_tier "${risk_tier}" \
+    --argjson cost_ceiling_usd "${cost_ceiling_usd}" \
     --arg policy_file "${LACP_SANDBOX_POLICY_FILE}" \
     --argjson reasons "$(printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .)" \
     '{
@@ -182,6 +242,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
         long_run: $long_run
       },
       reasons: $reasons,
+      risk_tier: $risk_tier,
+      cost_ceiling_usd: $cost_ceiling_usd,
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       policy_file: $policy_file
     }'
@@ -190,6 +252,8 @@ else
   echo "task=${TASK}"
   echo "repo_trust=${REPO_TRUST} internet=${INTERNET} external_code=${EXTERNAL_CODE} sensitive_data=${SENSITIVE_DATA} cpu_heavy=${CPU_HEAVY} long_run=${LONG_RUN}"
   echo "remote_provider=${remote_provider:-<n/a>}"
+  echo "risk_tier=${risk_tier}"
+  echo "cost_ceiling_usd=${cost_ceiling_usd}"
   echo "policy_file=${LACP_SANDBOX_POLICY_FILE}"
   echo "reasons=$(IFS=,; echo "${reasons[*]}")"
 fi

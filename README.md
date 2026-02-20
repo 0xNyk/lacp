@@ -47,6 +47,18 @@ Make Claude/Codex operations:
 
 For remote routes, provider is policy-driven (`daytona` or `e2b`), with override support.
 
+## Risk Tiers
+
+- `safe`: executes without approval gate
+- `review`: requires valid TTL approval token (`bin/lacp-mode remote-enabled --ttl-min <N>`)
+- `critical`: always requires explicit per-run confirmation (`--confirm-critical true`)
+
+## Budget Gates
+
+- Per-tier cost ceilings are configured in `config/sandbox-policy.json` under `routing.cost_ceiling_usd_by_risk_tier`.
+- Pass `--estimated-cost-usd <N>` to `bin/lacp-sandbox-run`.
+- If estimate exceeds the tier ceiling, run is blocked unless `--confirm-budget true` is explicitly provided.
+
 ## Quick Start
 
 ```bash
@@ -54,6 +66,7 @@ cd ~/control/frameworks/lacp
 cp config/lacp.env.example .env
 bin/lacp-onboard
 bin/lacp-mode show
+bin/lacp-mode remote-enabled --ttl-min 30
 bin/lacp-doctor
 bin/lacp-verify --hours 24
 ```
@@ -62,8 +75,9 @@ bin/lacp-verify --hours 24
 
 By default, LACP runs in **zero-external mode**:
 - `LACP_ALLOW_EXTERNAL_REMOTE="false"`
+- `LACP_REMOTE_APPROVAL_TTL_MIN="30"` (used when granting remote approval)
 - remote routes can still be planned/tested via `--dry-run`
-- live remote execution is blocked unless explicitly enabled
+- live remote execution is blocked unless explicitly enabled **and** approval is still within TTL
 
 ### Daytona
 
@@ -93,9 +107,10 @@ Notes:
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
+- `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
 - `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`)
 - `bin/lacp-route`: deterministic tier/provider routing with reasons
-- `bin/lacp-sandbox-run`: route + dispatch + execution artifact logging
+- `bin/lacp-sandbox-run`: route + risk-tier/budget gates + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring
 - `bin/lacp-remote-smoke`: provider-aware smoke test with artifact output
 
@@ -105,6 +120,7 @@ Notes:
 - Environment-driven configuration in `.env`
 - Policy-driven remote routing
 - External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
+- Risk-tier gating (`safe/review/critical`) with TTL and per-run confirmation controls
 - Explicit runner guardrails for remote execution
 - Artifact logs for auditable runs
 
@@ -120,6 +136,15 @@ See:
 - snapshots: `~/control/automation/ai-dev-optimization/data/snapshots/*.json`
 - sandbox runs: `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
 - remote smoke runs: `~/control/knowledge/knowledge-memory/data/remote-smoke/*.json`
+
+## Testing
+
+```bash
+cd ~/control/frameworks/lacp
+./scripts/ci/test-route-policy.sh
+./scripts/ci/test-mode-and-gates.sh
+./scripts/ci/smoke.sh
+```
 
 ## Optimization Backlog
 
