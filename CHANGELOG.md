@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp` top-level CLI dispatcher (`start/install/doctor/test/...`).
 - `bin/lacp-incident-drill` for scenario-based incident readiness checks with artifacts.
 - `bin/lacp-cache-audit` to track prompt cache effectiveness from local Claude/Codex history logs.
+- Cache audit upgraded to parse provider-native schemas (`.codex/sessions` token_count and `.claude/projects` assistant usage).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.
 - `bin/lacp-report` for recent execution and artifact summaries.
