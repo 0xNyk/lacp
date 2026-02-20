@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-route --task "<summary>" [options]
+
+Options:
+  --repo-trust trusted|unknown|untrusted   (default: unknown)
+  --internet true|false                    (default: false)
+  --external-code true|false               (default: false)
+  --sensitive-data true|false              (default: false)
+  --cpu-heavy true|false                   (default: false)
+  --long-run true|false                    (default: false)
+  --json                                   Emit JSON output
+
+Examples:
+  lacp-route --task "run memory benchmark on internal repo" --repo-trust trusted
+  lacp-route --task "run quant backtest with gpu" --cpu-heavy true --long-run true --json
+EOF
+}
+
+as_bool() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+TASK=""
+REPO_TRUST="unknown"
+INTERNET="false"
+EXTERNAL_CODE="false"
+SENSITIVE_DATA="false"
+CPU_HEAVY="false"
+LONG_RUN="false"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task)
+      TASK="$2"
+      shift 2
+      ;;
+    --repo-trust)
+      REPO_TRUST="$2"
+      shift 2
+      ;;
+    --internet)
+      INTERNET="$(as_bool "$2")"
+      shift 2
+      ;;
+    --external-code)
+      EXTERNAL_CODE="$(as_bool "$2")"
+      shift 2
+      ;;
+    --sensitive-data)
+      SENSITIVE_DATA="$(as_bool "$2")"
+      shift 2
+      ;;
+    --cpu-heavy)
+      CPU_HEAVY="$(as_bool "$2")"
+      shift 2
+      ;;
+    --long-run)
+      LONG_RUN="$(as_bool "$2")"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "${TASK}" ]] || die "--task is required"
+case "${REPO_TRUST}" in
+  trusted|unknown|untrusted) ;;
+  *) die "--repo-trust must be trusted|unknown|untrusted" ;;
+esac
+
+require_cmd jq
+require_file "${LACP_SANDBOX_POLICY_FILE}"
+jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null
+
+task_lc="$(printf '%s' "${TASK}" | tr '[:upper:]' '[:lower:]')"
+
+has_keyword_match() {
+  local key="$1"
+  local kw
+  while IFS= read -r kw; do
+    [[ -z "${kw}" ]] && continue
+    if [[ "${task_lc}" == *"${kw}"* ]]; then
+      return 0
+    fi
+  done < <(jq -r ".routing.${key}[]?" "${LACP_SANDBOX_POLICY_FILE}")
+  return 1
+}
+
+route="local_sandbox"
+reasons=()
+
+if [[ "${CPU_HEAVY}" == "true" || "${LONG_RUN}" == "true" ]]; then
+  route="remote_sandbox"
+  reasons+=("compute_profile=high")
+fi
+
+if has_keyword_match "remote_keywords"; then
+  route="remote_sandbox"
+  reasons+=("task_matches_remote_keywords")
+fi
+
+if [[ "${route}" != "remote_sandbox" ]]; then
+  if [[ "${REPO_TRUST}" == "trusted" && "${INTERNET}" == "false" && "${EXTERNAL_CODE}" == "false" && "${SENSITIVE_DATA}" == "false" ]]; then
+    route="trusted_local"
+    reasons+=("trusted_repo_low_risk_profile")
+  else
+    route="local_sandbox"
+    reasons+=("non_remote_risk_needs_isolation")
+    if has_keyword_match "local_sandbox_keywords"; then
+      reasons+=("task_matches_local_sandbox_keywords")
+    fi
+  fi
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg route "${route}" \
+    --arg task "${TASK}" \
+    --arg repo_trust "${REPO_TRUST}" \
+    --argjson internet "${INTERNET}" \
+    --argjson external_code "${EXTERNAL_CODE}" \
+    --argjson sensitive_data "${SENSITIVE_DATA}" \
+    --argjson cpu_heavy "${CPU_HEAVY}" \
+    --argjson long_run "${LONG_RUN}" \
+    --arg policy_file "${LACP_SANDBOX_POLICY_FILE}" \
+    --argjson reasons "$(printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .)" \
+    '{
+      route: $route,
+      task: $task,
+      inputs: {
+        repo_trust: $repo_trust,
+        internet: $internet,
+        external_code: $external_code,
+        sensitive_data: $sensitive_data,
+        cpu_heavy: $cpu_heavy,
+        long_run: $long_run
+      },
+      reasons: $reasons,
+      policy_file: $policy_file
+    }'
+else
+  log "Route: ${route}"
+  echo "task=${TASK}"
+  echo "repo_trust=${REPO_TRUST} internet=${INTERNET} external_code=${EXTERNAL_CODE} sensitive_data=${SENSITIVE_DATA} cpu_heavy=${CPU_HEAVY} long_run=${LONG_RUN}"
+  echo "policy_file=${LACP_SANDBOX_POLICY_FILE}"
+  echo "reasons=$(IFS=,; echo "${reasons[*]}")"
+fi

@@ -14,6 +14,7 @@ export LACP_DRAFTS_ROOT="${LACP_DRAFTS_ROOT:-$HOME/docs/content/drafts}"
 export LACP_VERIFY_HOURS="${LACP_VERIFY_HOURS:-24}"
 export LACP_BENCH_TOP_K="${LACP_BENCH_TOP_K:-8}"
 export LACP_BENCH_LOOKBACK="${LACP_BENCH_LOOKBACK:-30}"
+export LACP_SANDBOX_POLICY_FILE="${LACP_SANDBOX_POLICY_FILE:-${LACP_ROOT}/config/sandbox-policy.json}"
 
 log() {
   printf '[lacp] %s\n' "$*"

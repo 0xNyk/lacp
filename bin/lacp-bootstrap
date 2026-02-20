@@ -20,6 +20,7 @@ require_file "$(automation_script run_shared_memory.sh)"
 require_file "$(automation_script run_memory_benchmark_suite.sh)"
 require_file "$(automation_script run_memory_pipeline.sh)"
 require_file "$(automation_script capture_snapshot.py)"
+require_file "${LACP_SANDBOX_POLICY_FILE}"
 
 mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 mkdir -p "${LACP_AUTOMATION_ROOT}/data/snapshots"

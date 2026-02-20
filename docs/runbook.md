@@ -27,6 +27,29 @@ bin/lacp-doctor
 bin/lacp-doctor --json
 ```
 
+## Sandbox Routing
+
+```bash
+cd ~/control/frameworks/lacp
+
+# Trusted local example
+bin/lacp-route --task "run memory benchmark on internal repo" --repo-trust trusted
+
+# Local sandbox example
+bin/lacp-route \
+  --task "run third-party scraper on unknown repo" \
+  --repo-trust unknown \
+  --internet true \
+  --external-code true
+
+# Remote sandbox example
+bin/lacp-route \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true \
+  --json
+```
+
 ## Troubleshooting
 
 ### Missing script errors
