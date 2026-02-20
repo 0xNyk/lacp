@@ -124,6 +124,7 @@ ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
   --json)"
 
 ROUTE="$(printf '%s' "${ROUTE_JSON}" | jq -r '.route')"
+REMOTE_PROVIDER="$(printf '%s' "${ROUTE_JSON}" | jq -r '.remote_provider // empty')"
 REASONS_JSON="$(printf '%s' "${ROUTE_JSON}" | jq -c '.reasons')"
 
 RUNNER_TYPE=""
@@ -169,12 +170,19 @@ else
     remote_sandbox)
       RUNNER_TYPE="remote_sandbox_runner"
       RUNNER_PATH="${LACP_REMOTE_SANDBOX_RUNNER:-}"
+      if [[ -z "${RUNNER_PATH}" ]]; then
+        case "${REMOTE_PROVIDER}" in
+          daytona) RUNNER_PATH="${ROOT}/scripts/runners/daytona-runner.sh" ;;
+          e2b) RUNNER_PATH="${ROOT}/scripts/runners/e2b-runner.sh" ;;
+          *) RUNNER_PATH="" ;;
+        esac
+      fi
       if [[ -n "${RUNNER_PATH}" ]]; then
         run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
         EXECUTED=1
       else
         EXEC_RC=3
-        ERROR_MSG="route=remote_sandbox but LACP_REMOTE_SANDBOX_RUNNER is unset"
+        ERROR_MSG="route=remote_sandbox but no runner resolved (provider=${REMOTE_PROVIDER:-unknown})"
       fi
       ;;
     *)
@@ -199,6 +207,7 @@ jq -n \
   --arg task "${TASK}" \
   --arg route "${ROUTE}" \
   --argjson reasons "${REASONS_JSON}" \
+  --arg remote_provider "${REMOTE_PROVIDER}" \
   --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
   --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
   --arg runner_type "${RUNNER_TYPE}" \
@@ -210,6 +219,7 @@ jq -n \
     timestamp: $timestamp,
     task: $task,
     route: $route,
+    remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
     dry_run: $dry_run,
     executed: $executed,
@@ -230,10 +240,12 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
     --argjson reasons "${REASONS_JSON}" \
+    --arg remote_provider "${REMOTE_PROVIDER}" \
     --arg error "${ERROR_MSG}" \
     '{
       run_file: $run_file,
       route: $route,
+      remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,
       dry_run: $dry_run,
       executed: $executed,

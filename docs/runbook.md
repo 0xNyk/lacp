@@ -100,6 +100,25 @@ bin/lacp-sandbox-run \
   -- python3 -V
 ```
 
+## E2B Runner (Remote Execution)
+
+Current integration mode executes inside an existing sandbox id.
+
+```bash
+cd ~/control/frameworks/lacp
+
+# optional policy change: set routing.remote_provider=e2b
+# or force runner explicitly
+LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/e2b-runner.sh"
+E2B_SANDBOX_ID="<running-e2b-sandbox-id>"
+
+bin/lacp-sandbox-run \
+  --task "remote research batch" \
+  --cpu-heavy true \
+  --long-run true \
+  -- python3 -V
+```
+
 ## Troubleshooting
 
 ### Missing script errors
