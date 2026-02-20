@@ -27,6 +27,9 @@ Execution options:
                  Estimated cost of this run used for per-tier budget gates.
   --confirm-budget true|false
                  Allow explicit override when estimated cost exceeds tier ceiling.
+  --input-contract '<json>'
+                 Structured preflight contract required for risky runs when
+                 LACP_REQUIRE_INPUT_CONTRACT=true.
 
 Environment:
   LACP_LOCAL_SANDBOX_RUNNER   Optional executable for local_sandbox tier. Called as:
@@ -34,6 +37,58 @@ Environment:
   LACP_REMOTE_SANDBOX_RUNNER  Optional executable for remote_sandbox tier. Called as:
                               <runner> -- <command> [args...]
 EOF
+}
+
+validate_input_contract() {
+  local raw_json="$1"
+  local min_confidence="$2"
+  python3 - <<'PY' "${raw_json}" "${min_confidence}"
+import json
+import sys
+
+raw = sys.argv[1]
+min_conf = float(sys.argv[2])
+try:
+    obj = json.loads(raw)
+except Exception as exc:
+    print(f"invalid json: {exc}")
+    raise SystemExit(1)
+
+if not isinstance(obj, dict):
+    print("contract must be a json object")
+    raise SystemExit(1)
+
+required = ("source", "intent", "allowed_actions", "denied_actions", "confidence")
+missing = [k for k in required if k not in obj]
+if missing:
+    print(f"missing keys: {','.join(missing)}")
+    raise SystemExit(1)
+
+if not isinstance(obj["source"], str) or not obj["source"].strip():
+    print("source must be non-empty string")
+    raise SystemExit(1)
+if not isinstance(obj["intent"], str) or not obj["intent"].strip():
+    print("intent must be non-empty string")
+    raise SystemExit(1)
+if not isinstance(obj["allowed_actions"], list) or not obj["allowed_actions"]:
+    print("allowed_actions must be a non-empty array")
+    raise SystemExit(1)
+if not isinstance(obj["denied_actions"], list):
+    print("denied_actions must be an array")
+    raise SystemExit(1)
+if not all(isinstance(x, str) and x.strip() for x in obj["allowed_actions"]):
+    print("allowed_actions must contain non-empty strings")
+    raise SystemExit(1)
+if not all(isinstance(x, str) and x.strip() for x in obj["denied_actions"]):
+    print("denied_actions must contain non-empty strings")
+    raise SystemExit(1)
+if not isinstance(obj["confidence"], (int, float)):
+    print("confidence must be numeric")
+    raise SystemExit(1)
+if float(obj["confidence"]) < min_conf or float(obj["confidence"]) > 1.0:
+    print(f"confidence must be between {min_conf} and 1.0")
+    raise SystemExit(1)
+PY
 }
 
 as_bool() {
@@ -145,6 +200,7 @@ AS_JSON=0
 CONFIRM_CRITICAL="false"
 ESTIMATED_COST_USD="0"
 CONFIRM_BUDGET="false"
+INPUT_CONTRACT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -198,6 +254,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --confirm-budget)
       CONFIRM_BUDGET="$(as_bool "$2")"
+      shift 2
+      ;;
+    --input-contract)
+      INPUT_CONTRACT="$2"
       shift 2
       ;;
     --)
@@ -258,9 +318,31 @@ ERROR_MSG=""
 START_MS="$(now_ms)"
 STARTED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 APPROVAL_JSON="null"
+INPUT_CONTRACT_VALID="false"
+INPUT_CONTRACT_REQUIRED="false"
+INPUT_CONTRACT_ERROR=""
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
-  if [[ "${RISK_TIER}" == "critical" && "${CONFIRM_CRITICAL}" != "true" ]]; then
+  if [[ "${LACP_REQUIRE_INPUT_CONTRACT}" == "true" ]] && [[ "${RISK_TIER}" != "safe" ]] && [[ "${INTERNET}" == "true" || "${EXTERNAL_CODE}" == "true" || "${SENSITIVE_DATA}" == "true" ]]; then
+    INPUT_CONTRACT_REQUIRED="true"
+  fi
+
+  if [[ "${INPUT_CONTRACT_REQUIRED}" == "true" ]]; then
+    if [[ -z "${INPUT_CONTRACT}" ]]; then
+      EXEC_RC=11
+      ERROR_MSG="blocked by structured input gate: pass --input-contract with source/intent/allowed_actions/denied_actions/confidence"
+    elif validate_input_contract "${INPUT_CONTRACT}" "${LACP_INPUT_CONTRACT_CONFIDENCE_MIN}" >/dev/null 2>&1; then
+      INPUT_CONTRACT_VALID="true"
+    else
+      INPUT_CONTRACT_ERROR="$(validate_input_contract "${INPUT_CONTRACT}" "${LACP_INPUT_CONTRACT_CONFIDENCE_MIN}" 2>&1 || true)"
+      EXEC_RC=11
+      ERROR_MSG="blocked by structured input gate: invalid --input-contract (${INPUT_CONTRACT_ERROR})"
+    fi
+  fi
+
+  if [[ "${EXEC_RC}" -ne 0 ]]; then
+    EXECUTED=0
+  elif [[ "${RISK_TIER}" == "critical" && "${CONFIRM_CRITICAL}" != "true" ]]; then
     EXEC_RC=9
     ERROR_MSG="blocked by risk_tier=critical: pass --confirm-critical true"
   elif ! python3 - <<'PY' "${ESTIMATED_COST_USD}" "${COST_CEILING_USD}"
@@ -396,6 +478,9 @@ jq -n \
   --argjson cost_ceiling_usd "${COST_CEILING_USD}" \
   --argjson estimated_cost_usd "${ESTIMATED_COST_USD}" \
   --argjson budget_confirmed "$([[ "${CONFIRM_BUDGET}" == "true" ]] && echo true || echo false)" \
+  --argjson input_contract_required "$([[ "${INPUT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+  --argjson input_contract_valid "$([[ "${INPUT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
+  --arg input_contract_error "${INPUT_CONTRACT_ERROR}" \
   --argjson reasons "${REASONS_JSON}" \
   --arg remote_provider "${REMOTE_PROVIDER}" \
   --argjson route_decision "${ROUTE_JSON}" \
@@ -420,6 +505,11 @@ jq -n \
     cost_ceiling_usd: $cost_ceiling_usd,
     estimated_cost_usd: $estimated_cost_usd,
     budget_confirmed: $budget_confirmed,
+    input_contract: {
+      required: $input_contract_required,
+      valid: $input_contract_valid,
+      error: (if $input_contract_error == "" then null else $input_contract_error end)
+    },
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
     route_decision: $route_decision,
@@ -445,6 +535,9 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson cost_ceiling_usd "${COST_CEILING_USD}" \
     --argjson estimated_cost_usd "${ESTIMATED_COST_USD}" \
     --argjson budget_confirmed "$([[ "${CONFIRM_BUDGET}" == "true" ]] && echo true || echo false)" \
+    --argjson input_contract_required "$([[ "${INPUT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+    --argjson input_contract_valid "$([[ "${INPUT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
+    --arg input_contract_error "${INPUT_CONTRACT_ERROR}" \
     --argjson exit_code "${EXEC_RC}" \
     --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
@@ -464,6 +557,11 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
       cost_ceiling_usd: $cost_ceiling_usd,
       estimated_cost_usd: $estimated_cost_usd,
       budget_confirmed: $budget_confirmed,
+      input_contract: {
+        required: $input_contract_required,
+        valid: $input_contract_valid,
+        error: (if $input_contract_error == "" then null else $input_contract_error end)
+      },
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,
       started_at_utc: $started_at,

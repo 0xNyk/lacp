@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-incident-drill [--scenario <name>] [--execute] [--json]
+
+Generate and optionally execute a local incident response drill for LACP.
+
+Scenarios:
+  retrieval-regression   Retrieval quality drops or dense index degrades.
+  sandbox-gate-bypass    Risk/budget/approval gate behavior regresses.
+  memory-sync-drift      Memory/articles/research sync freshness drifts.
+
+Options:
+  --execute   Run the drill commands and capture pass/fail evidence.
+  --json      Emit machine-readable summary output.
+EOF
+}
+
+SCENARIO="retrieval-regression"
+EXECUTE=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --scenario)
+      SCENARIO="$2"
+      shift 2
+      ;;
+    --execute)
+      EXECUTE=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+case "${SCENARIO}" in
+  retrieval-regression|sandbox-gate-bypass|memory-sync-drift) ;;
+  *) die "--scenario must be retrieval-regression|sandbox-gate-bypass|memory-sync-drift" ;;
+esac
+
+DRILL_DIR="${LACP_KNOWLEDGE_ROOT}/data/incidents/drills"
+mkdir -p "${DRILL_DIR}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+REPORT_JSON="${DRILL_DIR}/drill-${SCENARIO}-${STAMP}.json"
+REPORT_MD="${DRILL_DIR}/drill-${SCENARIO}-${STAMP}.md"
+
+declare -a COMMANDS
+declare -a DESCRIPTIONS
+
+add_step() {
+  DESCRIPTIONS+=("$1")
+  COMMANDS+=("$2")
+}
+
+case "${SCENARIO}" in
+  retrieval-regression)
+    add_step "Run doctor health baseline" "${ROOT}/bin/lacp-doctor --json"
+    add_step "Run retrieval benchmark gate" "${ROOT}/bin/lacp-verify --hours 24"
+    add_step "Generate status summary" "${ROOT}/bin/lacp-status-report --json"
+    ;;
+  sandbox-gate-bypass)
+    add_step "Run routing invariants" "${ROOT}/scripts/ci/test-route-policy.sh"
+    add_step "Run mode/gate unit tests" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
+    add_step "Run smoke test for remote/critical gates" "${ROOT}/scripts/ci/smoke.sh"
+    ;;
+  memory-sync-drift)
+    add_step "Run doctor for path/freshness checks" "${ROOT}/bin/lacp-doctor --json"
+    add_step "Run verification cycle for sync/index/bench" "${ROOT}/bin/lacp-verify --hours 24"
+    add_step "Generate report summary" "${ROOT}/bin/lacp-report --hours 24 --json"
+    ;;
+esac
+
+steps_json="[]"
+overall_ok=true
+
+if [[ "${EXECUTE}" -eq 1 ]]; then
+  for i in "${!COMMANDS[@]}"; do
+    desc="${DESCRIPTIONS[$i]}"
+    cmd="${COMMANDS[$i]}"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    set +e
+    output="$(bash -lc "${cmd}" 2>&1)"
+    rc=$?
+    set -e
+    completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ "${rc}" -ne 0 ]]; then
+      overall_ok=false
+    fi
+    output_sha="$(printf '%s' "${output}" | shasum -a 256 | awk '{print $1}')"
+    steps_json="$(jq -n \
+      --argjson existing "${steps_json}" \
+      --arg description "${desc}" \
+      --arg command "${cmd}" \
+      --arg started_at_utc "${started}" \
+      --arg completed_at_utc "${completed}" \
+      --argjson exit_code "${rc}" \
+      --arg output_sha256 "${output_sha}" \
+      '$existing + [{
+        description: $description,
+        command: $command,
+        started_at_utc: $started_at_utc,
+        completed_at_utc: $completed_at_utc,
+        exit_code: $exit_code,
+        output_sha256: $output_sha256
+      }]')"
+  done
+else
+  for i in "${!COMMANDS[@]}"; do
+    desc="${DESCRIPTIONS[$i]}"
+    cmd="${COMMANDS[$i]}"
+    steps_json="$(jq -n \
+      --argjson existing "${steps_json}" \
+      --arg description "${desc}" \
+      --arg command "${cmd}" \
+      '$existing + [{
+        description: $description,
+        command: $command,
+        exit_code: null
+      }]')"
+  done
+fi
+
+# shellcheck disable=SC2094
+jq -n \
+  --arg scenario "${SCENARIO}" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson execute "$([[ "${EXECUTE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson ok "$([[ "${overall_ok}" == "true" ]] && echo true || echo false)" \
+  --arg report_json "${REPORT_JSON}" \
+  --arg report_md "${REPORT_MD}" \
+  --argjson steps "${steps_json}" \
+  '{
+    scenario: $scenario,
+    generated_at_utc: $generated_at_utc,
+    execute: $execute,
+    ok: $ok,
+    report_json: $report_json,
+    report_md: $report_md,
+    steps: $steps
+  }' > "${REPORT_JSON}"
+
+cat > "${REPORT_MD}" <<EOF
+# LACP Incident Drill
+
+- Scenario: \`${SCENARIO}\`
+- Generated: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
+- Executed: \`$([[ "${EXECUTE}" -eq 1 ]] && echo true || echo false)\`
+- Overall OK: \`${overall_ok}\`
+- JSON Report: \`${REPORT_JSON}\`
+
+## Steps
+$(jq -r '.steps[] | "- " + .description + " | command: `" + .command + "` | exit_code: " + (if .exit_code == null then "n/a" else (.exit_code|tostring) end)' "${REPORT_JSON}")
+EOF
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  cat "${REPORT_JSON}"
+else
+  log "incident_drill scenario=${SCENARIO} execute=${EXECUTE} ok=${overall_ok}"
+  log "report_json=${REPORT_JSON}"
+  log "report_md=${REPORT_MD}"
+fi
+
+if [[ "${EXECUTE}" -eq 1 && "${overall_ok}" != "true" ]]; then
+  exit 1
+fi

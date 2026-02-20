@@ -65,6 +65,12 @@ jobs:
           chmod +x scripts/ci/test-ops-commands.sh
           ./scripts/ci/test-ops-commands.sh
 
+      - name: Security controls tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-security-controls.sh
+          ./scripts/ci/test-security-controls.sh
+
       - name: CLI wrapper and isolated env guard tests
         run: |
           set -euo pipefail

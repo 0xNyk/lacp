@@ -62,6 +62,7 @@ export LACP_REMOTE_APPROVAL_FILE="${TMP}/approval.json"
 export LACP_REMOTE_APPROVAL_TTL_MIN="5"
 
 mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+INPUT_CONTRACT='{"source":"ci-test","intent":"validate gating behavior","allowed_actions":["echo"],"denied_actions":["data exfiltration"],"confidence":0.95}'
 
 # Mode workflow and approval file lifecycle.
 out="$("${ROOT}/bin/lacp-mode" local-only --json)"
@@ -104,8 +105,8 @@ PY
 run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "review task" --repo-trust unknown -- /bin/echo "review-approved"
 
 # Critical tier should require explicit confirm every run.
-run_expect_rc 9 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true -- /bin/echo "critical-block"
-run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --confirm-critical true -- /bin/echo "critical-ok"
+run_expect_rc 9 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --input-contract "${INPUT_CONTRACT}" -- /bin/echo "critical-block"
+run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --input-contract "${INPUT_CONTRACT}" --confirm-critical true -- /bin/echo "critical-ok"
 
 # Budget gate should block when estimate exceeds ceiling without explicit override.
 run_expect_rc 10 "${ROOT}/bin/lacp-sandbox-run" --task "trusted benchmark" --repo-trust trusted --estimated-cost-usd 2 -- /bin/echo "budget-block"

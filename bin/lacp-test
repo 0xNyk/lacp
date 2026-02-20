@@ -122,6 +122,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-knowledge-doctor.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-ops-commands.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-security-controls.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
 

@@ -31,14 +31,15 @@ Expected outputs:
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp-doctor
-bin/lacp-doctor --json
-bin/lacp-doctor --fix
-bin/lacp-knowledge-doctor
-bin/lacp-knowledge-doctor --json
-bin/lacp-report --hours 24
-bin/lacp-migrate --json
-bin/lacp-status-report
+bin/lacp doctor
+bin/lacp doctor --json
+bin/lacp doctor --fix
+bin/lacp knowledge-doctor
+bin/lacp knowledge-doctor --json
+bin/lacp report --hours 24
+bin/lacp cache-audit --hours 24 --json
+bin/lacp migrate --json
+bin/lacp status
 ```
 
 ## Operating Mode
@@ -91,6 +92,7 @@ bin/lacp-sandbox-run \
   --repo-trust unknown \
   --internet true \
   --external-code true \
+  --input-contract '{"source":"operator","intent":"run scraper smoke","allowed_actions":["echo"],"denied_actions":["credential exfiltration"],"confidence":0.95}' \
   --confirm-critical true \
   -- echo "local-sandbox-ok"
 
@@ -102,6 +104,14 @@ bin/lacp-sandbox-run \
   --estimated-cost-usd 3.5 \
   --dry-run \
   --json
+```
+
+## Incident Drill
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp incident-drill --scenario retrieval-regression
+bin/lacp incident-drill --scenario sandbox-gate-bypass --execute
 ```
 
 ## Zero-External Mode
