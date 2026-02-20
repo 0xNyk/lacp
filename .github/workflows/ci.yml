@@ -71,6 +71,12 @@ jobs:
           chmod +x scripts/ci/test-security-controls.sh
           ./scripts/ci/test-security-controls.sh
 
+      - name: Cache audit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-cache-audit.sh
+          ./scripts/ci/test-cache-audit.sh
+
       - name: CLI wrapper and isolated env guard tests
         run: |
           set -euo pipefail

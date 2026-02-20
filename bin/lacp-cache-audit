@@ -5,12 +5,12 @@ usage() {
   cat <<'EOF'
 Usage: lacp-cache-audit [--hours N] [--json]
 
-Analyze local Claude/Codex history logs for prompt-cache effectiveness.
+Analyze local Claude/Codex logs for prompt-cache effectiveness.
 
-Default inputs:
-  ~/.claude/history.jsonl
-  ~/.codex/history.jsonl
-  ~/.codex/sessions/**/*.jsonl
+Sources:
+  ~/.codex/sessions/**/*.jsonl (token_count events)
+  ~/.claude/projects/**/*.jsonl (assistant message.usage)
+  ~/.claude/history.jsonl and ~/.codex/history.jsonl (metadata only)
 EOF
 }
 
@@ -47,107 +47,220 @@ python3 - <<'PY' "${HOURS}" "${AS_JSON}"
 import datetime as dt
 import glob
 import json
-import os
 import sys
 from pathlib import Path
+from typing import Any
+
+
+def as_float(v: Any) -> float:
+    if isinstance(v, (int, float)):
+        return float(v)
+    return 0.0
+
+
+def parse_ts(value: Any) -> dt.datetime | None:
+    if isinstance(value, (int, float)):
+        # millisecond epoch values appear in some history files
+        iv = float(value)
+        if iv > 10_000_000_000:  # likely ms epoch
+            iv = iv / 1000.0
+        try:
+            return dt.datetime.fromtimestamp(iv, tz=dt.timezone.utc)
+        except Exception:
+            return None
+    if isinstance(value, str):
+        text = value.replace("Z", "+00:00")
+        try:
+            t = dt.datetime.fromisoformat(text)
+            return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def first_ts(obj: dict[str, Any]) -> dt.datetime | None:
+    for key in ("timestamp", "created_at", "time", "ts"):
+        if key in obj:
+            t = parse_ts(obj.get(key))
+            if t is not None:
+                return t
+    payload = obj.get("payload")
+    if isinstance(payload, dict):
+        for key in ("timestamp", "created_at", "time", "ts"):
+            if key in payload:
+                t = parse_ts(payload.get(key))
+                if t is not None:
+                    return t
+    return None
+
+
+def within_window(obj: dict[str, Any], cutoff: dt.datetime) -> bool:
+    t = first_ts(obj)
+    if t is None:
+        return True
+    return t >= cutoff
+
+
+def add_usage(stats: dict[str, float], prompt: float, cached: float, cache_read: float, cache_create: float) -> None:
+    stats["prompt_tokens"] += prompt
+    stats["cached_tokens"] += cached
+    stats["cache_read_tokens"] += cache_read
+    stats["cache_creation_tokens"] += cache_create
+
+
+def init_bucket() -> dict[str, float]:
+    return {
+        "records": 0.0,
+        "records_with_usage": 0.0,
+        "prompt_tokens": 0.0,
+        "cached_tokens": 0.0,
+        "cache_read_tokens": 0.0,
+        "cache_creation_tokens": 0.0,
+    }
+
 
 hours = int(sys.argv[1])
 as_json = int(sys.argv[2]) == 1
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
 
-paths = [
-    Path.home() / ".claude" / "history.jsonl",
-    Path.home() / ".codex" / "history.jsonl",
+home = Path.home()
+codex_session_paths = [Path(p) for p in glob.glob(str(home / ".codex" / "sessions" / "**" / "*.jsonl"), recursive=True)]
+claude_project_paths = [Path(p) for p in glob.glob(str(home / ".claude" / "projects" / "**" / "*.jsonl"), recursive=True)]
+meta_paths = [
+    home / ".claude" / "history.jsonl",
+    home / ".codex" / "history.jsonl",
 ]
-paths.extend(Path(p) for p in glob.glob(str(Path.home() / ".codex" / "sessions" / "**" / "*.jsonl"), recursive=True))
-paths = [p for p in paths if p.exists() and p.is_file()]
+all_paths = [p for p in (codex_session_paths + claude_project_paths + meta_paths) if p.exists() and p.is_file()]
 
-def iter_numbers(obj, key):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k == key and isinstance(v, (int, float)):
-                yield float(v)
-            yield from iter_numbers(v, key)
-    elif isinstance(obj, list):
-        for item in obj:
-            yield from iter_numbers(item, key)
+totals = init_bucket()
+provider = {"codex": init_bucket(), "claude": init_bucket(), "meta_only": init_bucket()}
+signals = {"codex_token_count_events": 0, "claude_usage_events": 0}
 
-def parse_ts(obj):
-    # Try common timestamp fields.
-    for k in ("timestamp", "created_at", "time", "ts"):
-        v = obj.get(k) if isinstance(obj, dict) else None
-        if not isinstance(v, str):
-            continue
-        text = v.replace("Z", "+00:00")
-        try:
-            t = dt.datetime.fromisoformat(text)
-            return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
-        except Exception:
-            pass
-    return None
 
-stats = {
-    "files_scanned": len(paths),
-    "records_total": 0,
-    "records_in_window": 0,
-    "prompt_tokens": 0.0,
-    "cached_tokens": 0.0,
-    "cache_read_tokens": 0.0,
-    "cache_creation_tokens": 0.0,
-}
+for path in all_paths:
+    source = "meta_only"
+    if "/.codex/sessions/" in str(path):
+        source = "codex"
+    elif "/.claude/projects/" in str(path):
+        source = "claude"
 
-for path in paths:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                stats["records_total"] += 1
                 try:
                     obj = json.loads(line)
                 except Exception:
                     continue
-
-                ts = parse_ts(obj)
-                if ts is not None and ts < cutoff:
+                if not isinstance(obj, dict):
                     continue
-                stats["records_in_window"] += 1
+                if not within_window(obj, cutoff):
+                    continue
 
-                # Provider-agnostic extraction by key name.
-                stats["prompt_tokens"] += sum(iter_numbers(obj, "prompt_tokens"))
-                stats["cached_tokens"] += sum(iter_numbers(obj, "cached_tokens"))
-                stats["cache_read_tokens"] += sum(iter_numbers(obj, "cache_read_input_tokens"))
-                stats["cache_creation_tokens"] += sum(iter_numbers(obj, "cache_creation_input_tokens"))
+                totals["records"] += 1
+                provider[source]["records"] += 1
+
+                if source == "codex":
+                    payload = obj.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    if payload.get("type") != "token_count":
+                        continue
+                    info = payload.get("info")
+                    if not isinstance(info, dict):
+                        continue
+                    usage = info.get("last_token_usage") or info.get("total_token_usage")
+                    if not isinstance(usage, dict):
+                        continue
+
+                    prompt = as_float(usage.get("input_tokens"))
+                    cached = as_float(usage.get("cached_input_tokens"))
+                    out = as_float(usage.get("output_tokens"))
+                    # codex does not expose split read/create in this schema
+                    cache_read = cached
+                    cache_create = 0.0
+                    if prompt <= 0 and out <= 0:
+                        continue
+                    signals["codex_token_count_events"] += 1
+                    totals["records_with_usage"] += 1
+                    provider[source]["records_with_usage"] += 1
+                    add_usage(totals, prompt, cached, cache_read, cache_create)
+                    add_usage(provider[source], prompt, cached, cache_read, cache_create)
+
+                elif source == "claude":
+                    msg = obj.get("message")
+                    if not isinstance(msg, dict):
+                        continue
+                    usage = msg.get("usage")
+                    if not isinstance(usage, dict):
+                        continue
+                    prompt = as_float(usage.get("input_tokens"))
+                    cached = as_float(usage.get("cache_read_input_tokens")) + as_float(usage.get("cache_creation_input_tokens"))
+                    cache_read = as_float(usage.get("cache_read_input_tokens"))
+                    cache_create = as_float(usage.get("cache_creation_input_tokens"))
+                    out = as_float(usage.get("output_tokens"))
+                    if prompt <= 0 and out <= 0:
+                        continue
+                    signals["claude_usage_events"] += 1
+                    totals["records_with_usage"] += 1
+                    provider[source]["records_with_usage"] += 1
+                    add_usage(totals, prompt, cached, cache_read, cache_create)
+                    add_usage(provider[source], prompt, cached, cache_read, cache_create)
     except Exception:
         continue
 
-effective_cached = stats["cached_tokens"] + stats["cache_read_tokens"]
-hit_rate = (effective_cached / stats["prompt_tokens"]) if stats["prompt_tokens"] > 0 else 0.0
+
+def finalize(bucket: dict[str, float]) -> dict[str, Any]:
+    prompt = bucket["prompt_tokens"]
+    effective_cached = bucket["cached_tokens"]
+    hit_rate = (effective_cached / prompt) if prompt > 0 else 0.0
+    return {
+        "records": int(bucket["records"]),
+        "records_with_usage": int(bucket["records_with_usage"]),
+        "prompt_tokens": int(prompt),
+        "cached_tokens": int(bucket["cached_tokens"]),
+        "cache_read_tokens": int(bucket["cache_read_tokens"]),
+        "cache_creation_tokens": int(bucket["cache_creation_tokens"]),
+        "cache_hit_rate_estimate": round(hit_rate, 4),
+    }
+
 
 payload = {
     "window_hours": hours,
     "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "files_scanned": stats["files_scanned"],
-    "records_total": stats["records_total"],
-    "records_in_window": stats["records_in_window"],
-    "prompt_tokens": int(stats["prompt_tokens"]),
-    "cached_tokens": int(stats["cached_tokens"]),
-    "cache_read_tokens": int(stats["cache_read_tokens"]),
-    "cache_creation_tokens": int(stats["cache_creation_tokens"]),
-    "cache_hit_rate_estimate": round(hit_rate, 4),
+    "files_scanned": len(all_paths),
+    "sources": {
+        "codex_session_files": len(codex_session_paths),
+        "claude_project_files": len(claude_project_paths),
+        "meta_files": len([p for p in meta_paths if p.exists()]),
+    },
+    "signals": signals,
+    "overall": finalize(totals),
+    "providers": {
+        "codex": finalize(provider["codex"]),
+        "claude": finalize(provider["claude"]),
+        "meta_only": finalize(provider["meta_only"]),
+    },
+    "confidence": {
+        "status": "high" if totals["records_with_usage"] > 0 else "low",
+        "reason": "schema-matched usage events found" if totals["records_with_usage"] > 0 else "no usage-bearing events found in time window",
+    },
 }
 
 if as_json:
     print(json.dumps(payload, indent=2))
 else:
+    overall = payload["overall"]
     print(f"[lacp] cache_audit window_hours={payload['window_hours']}")
     print(f"files_scanned={payload['files_scanned']}")
-    print(f"records_in_window={payload['records_in_window']}")
-    print(f"prompt_tokens={payload['prompt_tokens']}")
-    print(f"cached_tokens={payload['cached_tokens']}")
-    print(f"cache_read_tokens={payload['cache_read_tokens']}")
-    print(f"cache_creation_tokens={payload['cache_creation_tokens']}")
-    print(f"cache_hit_rate_estimate={payload['cache_hit_rate_estimate']}")
+    print(f"usage_events={overall['records_with_usage']}")
+    print(f"prompt_tokens={overall['prompt_tokens']}")
+    print(f"cached_tokens={overall['cached_tokens']}")
+    print(f"cache_read_tokens={overall['cache_read_tokens']}")
+    print(f"cache_creation_tokens={overall['cache_creation_tokens']}")
+    print(f"cache_hit_rate_estimate={overall['cache_hit_rate_estimate']}")
+    print(f"confidence={payload['confidence']['status']}: {payload['confidence']['reason']}")
 PY

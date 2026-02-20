@@ -251,6 +251,7 @@ Notes:
 - Explicit runner guardrails for remote execution
 - Structured input-contract gate for risky runs (`--input-contract ...`)
 - Artifact logs for auditable runs
+- Cache observability from provider-native history schemas (Codex token_count + Claude usage events)
 
 See:
 - `docs/framework-scope.md`
