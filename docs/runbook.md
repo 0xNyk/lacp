@@ -7,11 +7,18 @@ cd ~/control/frameworks/lacp
 bin/lacp-install --profile starter --with-verify
 ```
 
+Alternative bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+```
+
 ## Standard Verification Cycle
 
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp-verify --hours 24
+bin/lacp-test --quick
 ```
 
 Expected outputs:

@@ -71,6 +71,30 @@ bin/lacp-doctor
 bin/lacp-verify --hours 24
 ```
 
+## Install Options
+
+### Homebrew (HEAD from this repo)
+
+```bash
+brew tap 0xNyk/lacp
+brew install --HEAD lacp
+```
+
+### cURL bootstrap
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+```
+
+Optional flags:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -s -- \
+  --ref main \
+  --profile starter \
+  --with-verify true
+```
+
 ## Remote Setup
 
 By default, LACP runs in **zero-external mode**:
@@ -104,6 +128,7 @@ Notes:
 
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
+- `bin/lacp-test`: one-command local test suite (`--quick` supported)
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
@@ -148,6 +173,13 @@ cd ~/control/frameworks/lacp
 ./scripts/ci/test-knowledge-doctor.sh
 ./scripts/ci/test-install.sh
 ./scripts/ci/smoke.sh
+```
+
+Or use:
+
+```bash
+bin/lacp-test
+bin/lacp-test --quick
 ```
 
 ## Optimization Backlog
