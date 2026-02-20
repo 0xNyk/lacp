@@ -106,6 +106,7 @@ Notes:
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
+- `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
 - `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`)
@@ -143,6 +144,7 @@ See:
 cd ~/control/frameworks/lacp
 ./scripts/ci/test-route-policy.sh
 ./scripts/ci/test-mode-and-gates.sh
+./scripts/ci/test-knowledge-doctor.sh
 ./scripts/ci/smoke.sh
 ```
 

@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-knowledge-doctor [--root <path>] [--json]
+
+Checks markdown knowledge quality gates:
+- frontmatter presence/shape
+- description field presence
+- wiki link resolution
+- orphan note detection
+
+Exits non-zero when hard failures are found.
+EOF
+}
+
+AS_JSON=0
+SCAN_ROOT="${LACP_KNOWLEDGE_GRAPH_ROOT}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root)
+      SCAN_ROOT="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd python3
+[[ -d "${SCAN_ROOT}" ]] || die "Knowledge root does not exist: ${SCAN_ROOT}"
+
+result_json="$(python3 - <<'PY' "${SCAN_ROOT}"
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1]).expanduser().resolve()
+md_files = sorted([p for p in root.rglob("*.md") if p.is_file()])
+
+note_titles = {p.stem: p for p in md_files}
+backlinks = {str(p): 0 for p in md_files}
+outlinks = {str(p): 0 for p in md_files}
+
+frontmatter_missing = []
+frontmatter_malformed = []
+description_missing = []
+unresolved_links = []
+likely_orphans = []
+hard_orphans = []
+
+wiki_re = re.compile(r"\[\[([^\]]+)\]\]")
+
+try:
+    import yaml  # type: ignore
+    has_yaml = True
+except Exception:
+    has_yaml = False
+
+def parse_frontmatter(text: str):
+    if not text.startswith("---\n"):
+        return None, None, "missing"
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return None, None, "malformed"
+    raw = text[4:end]
+    body = text[end + 5 :]
+    return raw, body, None
+
+for path in md_files:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    fm_raw, body, fm_err = parse_frontmatter(text)
+
+    if fm_err == "missing":
+        frontmatter_missing.append(str(path))
+        body = text
+        fm = {}
+    elif fm_err == "malformed":
+        frontmatter_malformed.append(str(path))
+        body = text
+        fm = {}
+    else:
+        fm = {}
+        if has_yaml:
+            try:
+                loaded = yaml.safe_load(fm_raw)  # type: ignore[attr-defined]
+                if isinstance(loaded, dict):
+                    fm = loaded
+                else:
+                    frontmatter_malformed.append(str(path))
+            except Exception:
+                frontmatter_malformed.append(str(path))
+        else:
+            # Fallback minimal parse for description.
+            for line in fm_raw.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fm[k.strip()] = v.strip().strip('"').strip("'")
+
+    desc = str(fm.get("description", "")).strip()
+    if not desc:
+        description_missing.append(str(path))
+
+    links = []
+    for match in wiki_re.findall(body):
+        target = match.split("|", 1)[0].split("#", 1)[0].strip()
+        if not target:
+            continue
+        links.append(target)
+        if target in note_titles:
+            backlinks[str(note_titles[target])] += 1
+            outlinks[str(path)] += 1
+        else:
+            unresolved_links.append({"file": str(path), "target": target})
+
+for path in md_files:
+    p = str(path)
+    inbound = backlinks[p]
+    outbound = outlinks[p]
+    if inbound == 0:
+        likely_orphans.append(p)
+    if inbound == 0 and outbound == 0:
+        hard_orphans.append(p)
+
+fail_count = 0
+warn_count = 0
+checks = []
+
+def add_check(name, status, detail):
+    global fail_count, warn_count
+    if status == "FAIL":
+        fail_count += 1
+    elif status == "WARN":
+        warn_count += 1
+    checks.append({"name": name, "status": status, "detail": detail})
+
+add_check("root_exists", "PASS", str(root))
+add_check("md_files", "PASS" if md_files else "WARN", f"count={len(md_files)}")
+if frontmatter_missing:
+    add_check("frontmatter_missing", "FAIL", f"count={len(frontmatter_missing)}")
+else:
+    add_check("frontmatter_missing", "PASS", "count=0")
+if frontmatter_malformed:
+    add_check("frontmatter_malformed", "FAIL", f"count={len(frontmatter_malformed)}")
+else:
+    add_check("frontmatter_malformed", "PASS", "count=0")
+if description_missing:
+    add_check("description_missing", "WARN", f"count={len(description_missing)}")
+else:
+    add_check("description_missing", "PASS", "count=0")
+if unresolved_links:
+    add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)}")
+else:
+    add_check("unresolved_wikilinks", "PASS", "count=0")
+if hard_orphans:
+    add_check("hard_orphans", "WARN", f"count={len(hard_orphans)}")
+else:
+    add_check("hard_orphans", "PASS", "count=0")
+if likely_orphans:
+    add_check("likely_orphans", "WARN", f"count={len(likely_orphans)}")
+else:
+    add_check("likely_orphans", "PASS", "count=0")
+if not has_yaml:
+    add_check("yaml_parser", "WARN", "PyYAML not installed; using fallback frontmatter parser")
+else:
+    add_check("yaml_parser", "PASS", "PyYAML available")
+
+payload = {
+    "ok": fail_count == 0,
+    "summary": {
+        "fail": fail_count,
+        "warn": warn_count,
+        "total_notes": len(md_files),
+    },
+    "checks": checks,
+    "findings": {
+        "frontmatter_missing": frontmatter_missing[:200],
+        "frontmatter_malformed": frontmatter_malformed[:200],
+        "description_missing": description_missing[:200],
+        "unresolved_links": unresolved_links[:200],
+        "hard_orphans": hard_orphans[:200],
+        "likely_orphans": likely_orphans[:200],
+    },
+}
+
+print(json.dumps(payload, indent=2))
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "Knowledge doctor:",
+    "  ok=\(.ok)",
+    "  total_notes=\(.summary.total_notes)",
+    "  fail=\(.summary.fail) warn=\(.summary.warn)",
+    (.checks[] | "  [\(.status)] \(.name): \(.detail)")
+  '
+fi
+
+ok="$(printf '%s' "${result_json}" | jq -r '.ok')"
+if [[ "${ok}" != "true" ]]; then
+  exit 1
+fi
