@@ -1,5 +1,8 @@
 # LACP
 
+[![CI](https://github.com/0xNyk/lacp/actions/workflows/ci.yml/badge.svg)](https://github.com/0xNyk/lacp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Local Agent Control Plane for Claude/Codex.
 
 Status: active development (`v0.1.x`).
@@ -22,7 +25,9 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Budget Gates](#budget-gates)
 - [Quick Start](#quick-start)
 - [Install Options](#install-options)
+- [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
+- [5 Minute Smoke Test](#5-minute-smoke-test)
 - [Remote Setup](#remote-setup)
 - [Command Reference](#command-reference)
 - [Security Model](#security-model)
@@ -127,6 +132,18 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
   --with-verify true
 ```
 
+## Who It Is For
+
+Use LACP if you want:
+- measurable local agent operations (artifacts + diagnostics)
+- policy-based execution gates (risk, approvals, budget)
+- repeatable onboarding for Claude/Codex workflows
+
+LACP is not for:
+- users looking for a chat UI product
+- users who do not want to maintain local scripts/config
+- teams that need managed cloud orchestration out of the box
+
 ## What Install Does
 
 `bin/lacp-install --profile starter --with-verify`:
@@ -135,6 +152,21 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
 - scaffolds safe starter automation scripts when missing
 - runs onboarding preflight checks
 - runs verification and produces baseline artifacts
+
+## 5 Minute Smoke Test
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp-install --profile starter --with-verify
+bin/lacp-test --quick
+bin/lacp-doctor --json | jq '.ok,.summary'
+bin/lacp-status-report --json | jq
+```
+
+Expected:
+- `lacp-test --quick` exits `0`
+- doctor reports `"ok": true`
+- status report includes mode + doctor + artifact fields
 
 ## Remote Setup
 
