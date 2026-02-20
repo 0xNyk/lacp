@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp <command> [args...]
+
+Core:
+  start         Run onboarding flow (alias: onboard)
+  install       Run installer profile workflow
+  verify        Run verification cycle
+  doctor        Run diagnostics
+  status        Render status report
+  test          Run test suites
+  mode          Show/set operating mode
+
+Ops:
+  report        Summarize recent run/artifact health
+  migrate       Migrate roots into .env
+  route         Show routing decision
+  run           Execute routed sandbox run
+  bootstrap     Run bootstrap checks
+
+Knowledge:
+  knowledge-doctor   Validate knowledge graph/docs hygiene
+
+Remote:
+  remote-setup  Configure remote provider prerequisites
+  remote-smoke  Run remote provider smoke test
+
+Examples:
+  lacp start --with-verify
+  lacp test --isolated
+  lacp doctor --json | jq
+EOF
+}
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 0
+fi
+
+cmd="$1"
+shift || true
+
+case "${cmd}" in
+  start|onboard)
+    exec "${ROOT}/bin/lacp-onboard" "$@"
+    ;;
+  install)
+    exec "${ROOT}/bin/lacp-install" "$@"
+    ;;
+  verify)
+    exec "${ROOT}/bin/lacp-verify" "$@"
+    ;;
+  doctor)
+    exec "${ROOT}/bin/lacp-doctor" "$@"
+    ;;
+  knowledge-doctor)
+    exec "${ROOT}/bin/lacp-knowledge-doctor" "$@"
+    ;;
+  status)
+    exec "${ROOT}/bin/lacp-status-report" "$@"
+    ;;
+  test)
+    exec "${ROOT}/bin/lacp-test" "$@"
+    ;;
+  mode)
+    exec "${ROOT}/bin/lacp-mode" "$@"
+    ;;
+  report)
+    exec "${ROOT}/bin/lacp-report" "$@"
+    ;;
+  migrate)
+    exec "${ROOT}/bin/lacp-migrate" "$@"
+    ;;
+  route)
+    exec "${ROOT}/bin/lacp-route" "$@"
+    ;;
+  run)
+    exec "${ROOT}/bin/lacp-sandbox-run" "$@"
+    ;;
+  bootstrap)
+    exec "${ROOT}/bin/lacp-bootstrap" "$@"
+    ;;
+  remote-setup)
+    exec "${ROOT}/bin/lacp-remote-setup" "$@"
+    ;;
+  remote-smoke)
+    exec "${ROOT}/bin/lacp-remote-smoke" "$@"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "[lacp] ERROR: unknown command: ${cmd}" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

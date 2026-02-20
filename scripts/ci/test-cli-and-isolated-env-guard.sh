@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+ENV_FILE="${ROOT}/.env"
+ENV_BACKUP="${TMP}/.env.backup"
+
+cleanup() {
+  if [[ -f "${ENV_BACKUP}" ]]; then
+    cp "${ENV_BACKUP}" "${ENV_FILE}"
+  else
+    rm -f "${ENV_FILE}"
+  fi
+  rm -rf "${TMP}"
+}
+trap cleanup EXIT
+
+if [[ -f "${ENV_FILE}" ]]; then
+  cp "${ENV_FILE}" "${ENV_BACKUP}"
+fi
+
+# Wrapper sanity checks.
+"${ROOT}/bin/lacp" --help >/dev/null
+"${ROOT}/bin/lacp" doctor --help >/dev/null
+"${ROOT}/bin/lacp" test --help >/dev/null
+
+# Pin .env to sentinel values and assert isolated runs do not mutate it.
+cat > "${ENV_FILE}" <<'EOF'
+LACP_AUTOMATION_ROOT="/tmp/lacp-sentinel/automation"
+LACP_KNOWLEDGE_ROOT="/tmp/lacp-sentinel/knowledge"
+LACP_DRAFTS_ROOT="/tmp/lacp-sentinel/drafts"
+LACP_VERIFY_HOURS="24"
+LACP_BENCH_TOP_K="8"
+LACP_BENCH_LOOKBACK="30"
+EOF
+
+before_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
+"${ROOT}/bin/lacp" test --isolated >/dev/null
+after_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
+
+if [[ "${before_hash}" != "${after_hash}" ]]; then
+  echo "[cli-env-guard] FAIL .env changed during isolated test run" >&2
+  exit 1
+fi
+
+echo "[cli-env-guard] PASS wrapper commands and isolated .env guard"
