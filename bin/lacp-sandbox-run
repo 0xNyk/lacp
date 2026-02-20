@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-sandbox-run --task "<summary>" [routing options] [--dry-run] [--json] -- <command> [args...]
+
+Routing options:
+  --repo-trust trusted|unknown|untrusted   (default: unknown)
+  --internet true|false                    (default: false)
+  --external-code true|false               (default: false)
+  --sensitive-data true|false              (default: false)
+  --cpu-heavy true|false                   (default: false)
+  --long-run true|false                    (default: false)
+
+Execution options:
+  --dry-run      Do not execute the command
+  --json         Emit JSON result
+
+Environment:
+  LACP_LOCAL_SANDBOX_RUNNER   Optional executable for local_sandbox tier. Called as:
+                              <runner> -- <command> [args...]
+  LACP_REMOTE_SANDBOX_RUNNER  Optional executable for remote_sandbox tier. Called as:
+                              <runner> -- <command> [args...]
+EOF
+}
+
+as_bool() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+json_escape_cmd() {
+  printf '%s\0' "$@" | xargs -0 -n1 printf '%s\n' | jq -R . | jq -s .
+}
+
+TASK=""
+REPO_TRUST="unknown"
+INTERNET="false"
+EXTERNAL_CODE="false"
+SENSITIVE_DATA="false"
+CPU_HEAVY="false"
+LONG_RUN="false"
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task)
+      TASK="$2"
+      shift 2
+      ;;
+    --repo-trust)
+      REPO_TRUST="$2"
+      shift 2
+      ;;
+    --internet)
+      INTERNET="$(as_bool "$2")"
+      shift 2
+      ;;
+    --external-code)
+      EXTERNAL_CODE="$(as_bool "$2")"
+      shift 2
+      ;;
+    --sensitive-data)
+      SENSITIVE_DATA="$(as_bool "$2")"
+      shift 2
+      ;;
+    --cpu-heavy)
+      CPU_HEAVY="$(as_bool "$2")"
+      shift 2
+      ;;
+    --long-run)
+      LONG_RUN="$(as_bool "$2")"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "${TASK}" ]] || die "--task is required"
+case "${REPO_TRUST}" in
+  trusted|unknown|untrusted) ;;
+  *) die "--repo-trust must be trusted|unknown|untrusted" ;;
+esac
+
+if [[ "${DRY_RUN}" -eq 0 && $# -eq 0 ]]; then
+  die "No command provided. Use -- <command> [args...]"
+fi
+
+CMD=("$@")
+ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
+  --task "${TASK}" \
+  --repo-trust "${REPO_TRUST}" \
+  --internet "${INTERNET}" \
+  --external-code "${EXTERNAL_CODE}" \
+  --sensitive-data "${SENSITIVE_DATA}" \
+  --cpu-heavy "${CPU_HEAVY}" \
+  --long-run "${LONG_RUN}" \
+  --json)"
+
+ROUTE="$(printf '%s' "${ROUTE_JSON}" | jq -r '.route')"
+REASONS_JSON="$(printf '%s' "${ROUTE_JSON}" | jq -c '.reasons')"
+
+RUNNER_TYPE=""
+RUNNER_PATH=""
+EXEC_RC=0
+EXECUTED=0
+ERROR_MSG=""
+
+run_direct() {
+  local -a cmd=("$@")
+  "${cmd[@]}"
+}
+
+run_with_runner() {
+  local runner="$1"
+  shift
+  local -a cmd=("$@")
+  "${runner}" -- "${cmd[@]}"
+}
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  EXECUTED=0
+else
+  case "${ROUTE}" in
+    trusted_local)
+      RUNNER_TYPE="direct"
+      run_direct "${CMD[@]}" || EXEC_RC=$?
+      EXECUTED=1
+      ;;
+    local_sandbox)
+      RUNNER_TYPE="local_sandbox_runner"
+      RUNNER_PATH="${LACP_LOCAL_SANDBOX_RUNNER:-}"
+      if [[ -n "${RUNNER_PATH}" ]]; then
+        run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
+        EXECUTED=1
+      else
+        RUNNER_TYPE="direct_fallback"
+        log "WARN: LACP_LOCAL_SANDBOX_RUNNER is unset; falling back to direct execution"
+        run_direct "${CMD[@]}" || EXEC_RC=$?
+        EXECUTED=1
+      fi
+      ;;
+    remote_sandbox)
+      RUNNER_TYPE="remote_sandbox_runner"
+      RUNNER_PATH="${LACP_REMOTE_SANDBOX_RUNNER:-}"
+      if [[ -n "${RUNNER_PATH}" ]]; then
+        run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
+        EXECUTED=1
+      else
+        EXEC_RC=3
+        ERROR_MSG="route=remote_sandbox but LACP_REMOTE_SANDBOX_RUNNER is unset"
+      fi
+      ;;
+    *)
+      EXEC_RC=4
+      ERROR_MSG="Unknown route: ${ROUTE}"
+      ;;
+  esac
+fi
+
+RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+mkdir -p "${RUNS_DIR}"
+RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
+RUN_FILE="${RUNS_DIR}/run-${RUN_TAG}.json"
+
+CMD_JSON="[]"
+if [[ ${#CMD[@]} -gt 0 ]]; then
+  CMD_JSON="$(json_escape_cmd "${CMD[@]}")"
+fi
+
+jq -n \
+  --arg timestamp "${RUN_TAG}" \
+  --arg task "${TASK}" \
+  --arg route "${ROUTE}" \
+  --argjson reasons "${REASONS_JSON}" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
+  --arg runner_type "${RUNNER_TYPE}" \
+  --arg runner_path "${RUNNER_PATH}" \
+  --arg error "${ERROR_MSG}" \
+  --argjson exit_code "${EXEC_RC}" \
+  --argjson command "${CMD_JSON}" \
+  '{
+    timestamp: $timestamp,
+    task: $task,
+    route: $route,
+    reasons: $reasons,
+    dry_run: $dry_run,
+    executed: $executed,
+    runner: {
+      type: $runner_type,
+      path: $runner_path
+    },
+    command: $command,
+    exit_code: $exit_code,
+    error: (if $error == "" then null else $error end)
+  }' > "${RUN_FILE}"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg run_file "${RUN_FILE}" \
+    --arg route "${ROUTE}" \
+    --argjson exit_code "${EXEC_RC}" \
+    --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
+    --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    --argjson reasons "${REASONS_JSON}" \
+    --arg error "${ERROR_MSG}" \
+    '{
+      run_file: $run_file,
+      route: $route,
+      reasons: $reasons,
+      dry_run: $dry_run,
+      executed: $executed,
+      exit_code: $exit_code,
+      error: (if $error == "" then null else $error end)
+    }'
+else
+  log "route=${ROUTE} executed=${EXECUTED} exit_code=${EXEC_RC}"
+  log "run_file=${RUN_FILE}"
+  if [[ -n "${ERROR_MSG}" ]]; then
+    log "error=${ERROR_MSG}"
+  fi
+fi
+
+exit "${EXEC_RC}"

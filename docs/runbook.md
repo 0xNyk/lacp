@@ -50,6 +50,34 @@ bin/lacp-route \
   --json
 ```
 
+## Sandbox Execution Adapter
+
+```bash
+cd ~/control/frameworks/lacp
+
+# Trusted local execution
+bin/lacp-sandbox-run \
+  --task "run internal benchmark checks" \
+  --repo-trust trusted \
+  -- echo "trusted-local-ok"
+
+# Local sandbox route (falls back to direct if local runner unset)
+bin/lacp-sandbox-run \
+  --task "run third-party scraper on unknown repo" \
+  --repo-trust unknown \
+  --internet true \
+  --external-code true \
+  -- echo "local-sandbox-ok"
+
+# Remote route dry-run (safe when remote runner is not configured yet)
+bin/lacp-sandbox-run \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true \
+  --dry-run \
+  --json
+```
+
 ## Troubleshooting
 
 ### Missing script errors
