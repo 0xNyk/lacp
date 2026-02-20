@@ -78,6 +78,28 @@ bin/lacp-sandbox-run \
   --json
 ```
 
+## Daytona Runner (Remote Execution)
+
+```bash
+cd ~/control/frameworks/lacp
+daytona login
+
+# set in .env
+LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/daytona-runner.sh"
+LACP_DAYTONA_CLASS="small"
+LACP_DAYTONA_TARGET="us"
+```
+
+Run:
+
+```bash
+bin/lacp-sandbox-run \
+  --task "quant gpu backtest with long runtime" \
+  --cpu-heavy true \
+  --long-run true \
+  -- python3 -V
+```
+
 ## Troubleshooting
 
 ### Missing script errors
