@@ -82,12 +82,8 @@ bin/lacp-sandbox-run \
 
 ```bash
 cd ~/control/frameworks/lacp
+bin/lacp-remote-setup --provider daytona
 daytona login
-
-# set in .env
-LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/daytona-runner.sh"
-LACP_DAYTONA_CLASS="small"
-LACP_DAYTONA_TARGET="us"
 ```
 
 Run:
@@ -107,16 +103,20 @@ Current integration mode executes inside an existing sandbox id.
 ```bash
 cd ~/control/frameworks/lacp
 
-# optional policy change: set routing.remote_provider=e2b
-# or force runner explicitly
-LACP_REMOTE_SANDBOX_RUNNER="$HOME/control/frameworks/lacp/scripts/runners/e2b-runner.sh"
-E2B_SANDBOX_ID="<running-e2b-sandbox-id>"
+bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-e2b-sandbox-id>"
 
 bin/lacp-sandbox-run \
   --task "remote research batch" \
   --cpu-heavy true \
   --long-run true \
   -- python3 -V
+```
+
+Preview only:
+
+```bash
+bin/lacp-remote-setup --provider daytona --dry-run --json
+bin/lacp-remote-setup --provider e2b --dry-run --json
 ```
 
 ## Troubleshooting

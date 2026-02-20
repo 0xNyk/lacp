@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-remote-setup [options]
+
+Options:
+  --provider daytona|e2b     Remote provider to configure (default: from policy)
+  --set-policy true|false    Update sandbox-policy remote_provider (default: true)
+  --write-env true|false     Write runner settings to .env (default: true)
+  --install-missing true|false  Attempt brew install if CLI missing (default: false)
+  --e2b-sandbox-id <id>      Set E2B_SANDBOX_ID in .env when provider=e2b
+  --dry-run                  Show what would change without writing files
+  --json                     Emit machine-readable summary
+
+Notes:
+- Authentication is not auto-run; this command checks status and prints next commands.
+EOF
+}
+
+as_bool() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+set_env_kv() {
+  local file="$1"
+  local key="$2"
+  local val="$3"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v k="${key}" -v v="${val}" '
+    BEGIN { done=0 }
+    $0 ~ "^" k "=" {
+      print k "=\"" v "\""
+      done=1
+      next
+    }
+    { print }
+    END {
+      if (!done) print k "=\"" v "\""
+    }
+  ' "${file}" > "${tmp}"
+  mv "${tmp}" "${file}"
+}
+
+PROVIDER=""
+SET_POLICY="true"
+WRITE_ENV="true"
+INSTALL_MISSING="false"
+DRY_RUN=0
+AS_JSON=0
+E2B_SANDBOX_ID_VALUE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --provider)
+      PROVIDER="$2"
+      shift 2
+      ;;
+    --set-policy)
+      SET_POLICY="$(as_bool "$2")"
+      shift 2
+      ;;
+    --write-env)
+      WRITE_ENV="$(as_bool "$2")"
+      shift 2
+      ;;
+    --install-missing)
+      INSTALL_MISSING="$(as_bool "$2")"
+      shift 2
+      ;;
+    --e2b-sandbox-id)
+      E2B_SANDBOX_ID_VALUE="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd jq
+require_file "${LACP_SANDBOX_POLICY_FILE}"
+jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null
+
+if [[ -z "${PROVIDER}" ]]; then
+  PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}")"
+fi
+case "${PROVIDER}" in
+  daytona|e2b) ;;
+  *) die "--provider must be daytona|e2b" ;;
+esac
+
+ENV_FILE="${ROOT}/.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    :
+  else
+    cp "${ROOT}/config/lacp.env.example" "${ENV_FILE}"
+  fi
+fi
+
+runner_path=""
+cli_name=""
+install_name=""
+auth_ok="false"
+auth_hint=""
+next_steps=()
+changes=()
+
+case "${PROVIDER}" in
+  daytona)
+    runner_path="${ROOT}/scripts/runners/daytona-runner.sh"
+    cli_name="daytona"
+    install_name="daytona"
+    auth_hint="daytona login"
+    ;;
+  e2b)
+    runner_path="${ROOT}/scripts/runners/e2b-runner.sh"
+    cli_name="e2b"
+    install_name="e2b"
+    auth_hint="Set E2B_API_KEY and, for current adapter mode, E2B_SANDBOX_ID"
+    ;;
+esac
+
+cli_found="false"
+if command -v "${cli_name}" >/dev/null 2>&1; then
+  cli_found="true"
+else
+  if [[ "${INSTALL_MISSING}" == "true" ]]; then
+    if command -v brew >/dev/null 2>&1; then
+      if [[ "${DRY_RUN}" -eq 1 ]]; then
+        next_steps+=("brew install ${install_name}")
+      else
+        brew install "${install_name}" || true
+      fi
+      if command -v "${cli_name}" >/dev/null 2>&1; then
+        cli_found="true"
+      fi
+    else
+      next_steps+=("Install ${cli_name} manually (brew not found)")
+    fi
+  fi
+fi
+
+if [[ "${PROVIDER}" == "daytona" ]]; then
+  if [[ "${cli_found}" == "true" ]] && daytona list --format json >/dev/null 2>&1; then
+    auth_ok="true"
+  else
+    auth_ok="false"
+    next_steps+=("Run: daytona login")
+  fi
+fi
+
+if [[ "${PROVIDER}" == "e2b" ]]; then
+  if [[ -n "${E2B_API_KEY:-}" || ( -f "${ENV_FILE}" && "${DRY_RUN}" -eq 0 && "$(grep -c '^E2B_API_KEY=' "${ENV_FILE}" || true)" -gt 0 ) ]]; then
+    auth_ok="true"
+  else
+    auth_ok="false"
+    next_steps+=("Set E2B_API_KEY in shell or .env")
+  fi
+  if [[ -z "${E2B_SANDBOX_ID_VALUE}" ]]; then
+    next_steps+=("Provide --e2b-sandbox-id <id> or set E2B_SANDBOX_ID in .env")
+  fi
+fi
+
+if [[ "${SET_POLICY}" == "true" ]]; then
+  changes+=("policy.remote_provider=${PROVIDER}")
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    tmp="$(mktemp)"
+    jq --arg p "${PROVIDER}" '.routing.remote_provider=$p' "${LACP_SANDBOX_POLICY_FILE}" > "${tmp}"
+    mv "${tmp}" "${LACP_SANDBOX_POLICY_FILE}"
+  fi
+fi
+
+if [[ "${WRITE_ENV}" == "true" ]]; then
+  changes+=(".env:LACP_REMOTE_SANDBOX_RUNNER=${runner_path}")
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    set_env_kv "${ENV_FILE}" "LACP_REMOTE_SANDBOX_RUNNER" "${runner_path}"
+  fi
+
+  if [[ "${PROVIDER}" == "e2b" && -n "${E2B_SANDBOX_ID_VALUE}" ]]; then
+    changes+=(".env:E2B_SANDBOX_ID=${E2B_SANDBOX_ID_VALUE}")
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      set_env_kv "${ENV_FILE}" "E2B_SANDBOX_ID" "${E2B_SANDBOX_ID_VALUE}"
+    fi
+  fi
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg provider "${PROVIDER}" \
+    --arg runner_path "${runner_path}" \
+    --arg cli_name "${cli_name}" \
+    --argjson cli_found "$([[ "${cli_found}" == "true" ]] && echo true || echo false)" \
+    --argjson auth_ok "$([[ "${auth_ok}" == "true" ]] && echo true || echo false)" \
+    --arg auth_hint "${auth_hint}" \
+    --arg env_file "${ENV_FILE}" \
+    --arg policy_file "${LACP_SANDBOX_POLICY_FILE}" \
+    --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    --argjson changes "$(printf '%s\n' "${changes[@]}" | jq -R . | jq -s .)" \
+    --argjson next_steps "$(printf '%s\n' "${next_steps[@]}" | jq -R . | jq -s .)" \
+    '{
+      provider: $provider,
+      cli: { name: $cli_name, found: $cli_found },
+      auth: { ok: $auth_ok, hint: $auth_hint },
+      files: { env_file: $env_file, policy_file: $policy_file },
+      runner_path: $runner_path,
+      dry_run: $dry_run,
+      changes: $changes,
+      next_steps: $next_steps
+    }'
+else
+  log "remote provider setup complete (provider=${PROVIDER}, dry_run=${DRY_RUN})"
+  log "runner_path=${runner_path}"
+  log "cli_found=${cli_found} auth_ok=${auth_ok}"
+  if [[ ${#changes[@]} -gt 0 ]]; then
+    log "changes:"
+    printf '%s\n' "${changes[@]}" | sed 's/^/  - /'
+  fi
+  if [[ ${#next_steps[@]} -gt 0 ]]; then
+    log "next steps:"
+    printf '%s\n' "${next_steps[@]}" | sed 's/^/  - /'
+  fi
+fi

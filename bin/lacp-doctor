@@ -100,6 +100,7 @@ DAYTONA_RUNNER="${LACP_ROOT}/scripts/runners/daytona-runner.sh"
 E2B_RUNNER="${LACP_ROOT}/scripts/runners/e2b-runner.sh"
 check_file "${DAYTONA_RUNNER}" "runner_file:daytona"
 check_file "${E2B_RUNNER}" "runner_file:e2b"
+check_file "${LACP_ROOT}/bin/lacp-remote-setup" "bin:lacp-remote-setup"
 
 if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
   if command -v "${LACP_LOCAL_SANDBOX_RUNNER}" >/dev/null 2>&1; then
