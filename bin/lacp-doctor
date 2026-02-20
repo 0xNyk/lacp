@@ -85,6 +85,13 @@ check_file "$(automation_script run_shared_memory.sh)" "script:run_shared_memory
 check_file "$(automation_script run_memory_pipeline.sh)" "script:run_memory_pipeline.sh"
 check_file "$(automation_script run_memory_benchmark_suite.sh)" "script:run_memory_benchmark_suite.sh"
 check_file "$(automation_script capture_snapshot.py)" "script:capture_snapshot.py"
+check_file "${LACP_SANDBOX_POLICY_FILE}" "config:sandbox_policy"
+
+if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
+  add_check "config:sandbox_policy_json" "PASS" "valid json"
+elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
+  add_check "config:sandbox_policy_json" "FAIL" "invalid json"
+fi
 
 if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
   add_check "health:ollama" "PASS" "http://127.0.0.1:11434/api/version"

@@ -24,6 +24,7 @@ cp config/lacp.env.example .env
 bin/lacp-onboard
 bin/lacp-verify --hours 24
 bin/lacp-doctor
+bin/lacp-route --task "run quant backtest with gpu" --cpu-heavy true --long-run true --json
 ```
 
 ## Defaults
@@ -54,6 +55,10 @@ These defaults are used unless overridden by env vars in `.env` or shell:
   - checks Ollama endpoint reachability
   - inspects latest benchmark/snapshot artifacts
   - machine-readable output: `bin/lacp-doctor --json`
+- `bin/lacp-route`
+  - applies sandbox routing policy (`trusted_local | local_sandbox | remote_sandbox`)
+  - returns explainable routing reasons
+  - machine-readable output: `bin/lacp-route --task "<...>" --json`
 
 ## Artifact Paths
 

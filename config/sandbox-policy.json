@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "tiers": {
+    "trusted_local": {
+      "description": "High-trust local execution for known repos and low-risk tasks."
+    },
+    "local_sandbox": {
+      "description": "Isolated local execution for unknown or semi-trusted workloads."
+    },
+    "remote_sandbox": {
+      "description": "Remote execution for high-compute, long-running, or high-risk workloads."
+    }
+  },
+  "routing": {
+    "remote_keywords": [
+      "rl",
+      "finetune",
+      "fine-tune",
+      "deep research",
+      "quant",
+      "backtest",
+      "biotech",
+      "gpu"
+    ],
+    "local_sandbox_keywords": [
+      "untrusted",
+      "third-party",
+      "unknown repo",
+      "scrape",
+      "crawler",
+      "browser automation"
+    ],
+    "max_local_runtime_seconds": 1800
+  }
+}
