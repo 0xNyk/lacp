@@ -28,6 +28,7 @@ fi
 "${ROOT}/bin/lacp" cache-audit --help >/dev/null
 "${ROOT}/bin/lacp" cache-guard --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null
+"${ROOT}/bin/lacp" release-gate --help >/dev/null
 "${ROOT}/bin/lacp" workflow-run --help >/dev/null
 
 # Pin .env to sentinel values and assert isolated runs do not mutate it.

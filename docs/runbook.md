@@ -40,9 +40,30 @@ bin/lacp report --hours 24
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp skill-audit --json
+bin/lacp release-gate --quick
 bin/lacp migrate --json
 bin/lacp status
 ```
+
+## Pre-Live Go/No-Go Gate
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp release-gate
+```
+
+Default gate includes:
+- full test suite
+- `lacp-doctor`
+- cache threshold gate (`min_hit_rate=0.70`, `min_usage_events=100`)
+- skill supply-chain audit
+
+Useful options:
+- `--quick` to run quick tests instead of full suite
+- `--cache-min-hit-rate <n>`
+- `--cache-min-events <n>`
+- `--skill-path <path>` (repeatable)
+- `--json`
 
 ## Operating Mode
 
