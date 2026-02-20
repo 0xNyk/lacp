@@ -174,12 +174,14 @@ LACP is not for:
 cd ~/control/frameworks/lacp
 bin/lacp-install --profile starter --with-verify
 bin/lacp-test --quick
+bin/lacp-test --isolated
 bin/lacp-doctor --json | jq '.ok,.summary'
 bin/lacp-status-report --json | jq
 ```
 
 Expected:
 - `lacp-test --quick` exits `0`
+- `lacp-test --isolated` exits `0`
 - doctor reports `"ok": true`
 - status report includes mode + doctor + artifact fields
 
@@ -221,7 +223,7 @@ Notes:
 
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
-- `bin/lacp-test`: one-command local test suite (`--quick` supported)
+- `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
@@ -276,6 +278,7 @@ Or use:
 ```bash
 bin/lacp-test
 bin/lacp-test --quick
+bin/lacp-test --isolated
 ```
 
 ## Troubleshooting
