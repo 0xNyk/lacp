@@ -32,6 +32,9 @@ EOF
 
 QUICK=0
 ISOLATED=0
+ENV_GUARD_FILE=""
+ENV_GUARD_HASH=""
+ENV_GUARD_EXISTS=0
 
 enable_isolated_roots() {
   tmp_root="$(mktemp -d)"
@@ -40,6 +43,34 @@ enable_isolated_roots() {
   export LACP_KNOWLEDGE_ROOT="${tmp_root}/knowledge"
   export LACP_DRAFTS_ROOT="${tmp_root}/drafts"
   mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+}
+
+record_env_guard() {
+  ENV_GUARD_FILE="${ROOT}/.env"
+  if [[ -f "${ENV_GUARD_FILE}" ]]; then
+    ENV_GUARD_EXISTS=1
+    ENV_GUARD_HASH="$(shasum "${ENV_GUARD_FILE}" | awk '{print $1}')"
+  else
+    ENV_GUARD_EXISTS=0
+    ENV_GUARD_HASH=""
+  fi
+}
+
+check_env_guard() {
+  if [[ "${ENV_GUARD_EXISTS}" -eq 1 ]]; then
+    if [[ ! -f "${ENV_GUARD_FILE}" ]]; then
+      die "isolated run mutated .env state: file was removed"
+    fi
+    local now_hash
+    now_hash="$(shasum "${ENV_GUARD_FILE}" | awk '{print $1}')"
+    if [[ "${now_hash}" != "${ENV_GUARD_HASH}" ]]; then
+      die "isolated run mutated .env content"
+    fi
+  else
+    if [[ -f "${ENV_GUARD_FILE}" ]]; then
+      die "isolated run mutated .env state: file was created"
+    fi
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -78,6 +109,7 @@ fi
 
 if [[ "${ISOLATED}" -eq 1 ]]; then
   log "Using isolated temporary roots"
+  record_env_guard
   enable_isolated_roots
 fi
 
@@ -95,6 +127,10 @@ done
 
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh
+fi
+
+if [[ "${ISOLATED}" -eq 1 ]]; then
+  check_env_guard
 fi
 
 log "Full suite passed"

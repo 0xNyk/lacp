@@ -13,6 +13,7 @@ class Lacp < Formula
     libexec.install Dir["*"]
 
     %w[
+      lacp
       lacp-install
       lacp-onboard
       lacp-bootstrap

@@ -43,7 +43,7 @@ if [[ "${FIX}" -eq 1 ]]; then
   mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
   mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/approvals"
 
-  if [[ ! -f "${LACP_ROOT}/.env" && -f "${LACP_ROOT}/config/lacp.env.example" ]]; then
+  if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && ! -f "${LACP_ROOT}/.env" && -f "${LACP_ROOT}/config/lacp.env.example" ]]; then
     cp "${LACP_ROOT}/config/lacp.env.example" "${LACP_ROOT}/.env"
   fi
 fi
