@@ -3,7 +3,23 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
+ENV_FILE="${ROOT}/.env"
+ENV_BACKUP="${TMP}/.env.backup"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  cp "${ENV_FILE}" "${ENV_BACKUP}"
+fi
+
+cleanup() {
+  if [[ -f "${ENV_BACKUP}" ]]; then
+    cp "${ENV_BACKUP}" "${ENV_FILE}"
+  else
+    rm -f "${ENV_FILE}"
+  fi
+  rm -rf "${TMP}"
+}
+
+trap cleanup EXIT
 
 assert_eq() {
   local actual="$1"
