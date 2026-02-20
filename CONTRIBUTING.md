@@ -31,6 +31,7 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 
 ./scripts/ci/smoke.sh
+./scripts/ci/test-route-policy.sh
 ```
 
 ## Design Constraints
