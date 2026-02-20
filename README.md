@@ -172,11 +172,11 @@ LACP is not for:
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp-install --profile starter --with-verify
-bin/lacp-test --quick
-bin/lacp-test --isolated
-bin/lacp-doctor --json | jq '.ok,.summary'
-bin/lacp-status-report --json | jq
+bin/lacp install --profile starter --with-verify
+bin/lacp test --quick
+bin/lacp test --isolated
+bin/lacp doctor --json | jq '.ok,.summary'
+bin/lacp status --json | jq
 ```
 
 Expected:
@@ -221,6 +221,7 @@ Notes:
 
 ## Command Reference
 
+- `bin/lacp`: top-level CLI dispatcher (`lacp <command> ...`)
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
@@ -279,6 +280,11 @@ Or use:
 bin/lacp-test
 bin/lacp-test --quick
 bin/lacp-test --isolated
+
+# preferred
+bin/lacp test
+bin/lacp test --quick
+bin/lacp test --isolated
 ```
 
 ## Troubleshooting

@@ -64,3 +64,9 @@ jobs:
           set -euo pipefail
           chmod +x scripts/ci/test-ops-commands.sh
           ./scripts/ci/test-ops-commands.sh
+
+      - name: CLI wrapper and isolated env guard tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-cli-and-isolated-env-guard.sh
+          ./scripts/ci/test-cli-and-isolated-env-guard.sh

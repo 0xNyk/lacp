@@ -40,8 +40,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -f "${ROOT}/.env" ]]; then
-  cp "${ROOT}/config/lacp.env.example" "${ROOT}/.env"
-  log "Created ${ROOT}/.env from template"
+  if [[ "${LACP_SKIP_DOTENV:-0}" == "1" ]]; then
+    log "Skipped .env creation because LACP_SKIP_DOTENV=1"
+  else
+    cp "${ROOT}/config/lacp.env.example" "${ROOT}/.env"
+    log "Created ${ROOT}/.env from template"
+  fi
 else
   log "Using existing ${ROOT}/.env"
 fi
