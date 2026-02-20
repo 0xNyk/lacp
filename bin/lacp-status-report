@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-status-report [--print] [--json]
+
+Options:
+  --print   Print markdown report to stdout instead of writing file
+  --json    Print JSON payload to stdout
+
+Default:
+  Writes markdown report to docs/system-status.md
+EOF
+}
+
+MODE="write"
+FORMAT="md"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --print)
+      MODE="print"
+      shift
+      ;;
+    --json)
+      FORMAT="json"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd jq
+
+MODE_JSON="$("${ROOT}/bin/lacp-mode" show --json)"
+DOCTOR_JSON="$("${ROOT}/bin/lacp-doctor" --json)"
+
+POLICY_PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}")"
+ALLOW_REMOTE="$(echo "${MODE_JSON}" | jq -r '.allow_external_remote')"
+MODE_NAME="$(echo "${MODE_JSON}" | jq -r '.mode')"
+
+PASS_COUNT="$(echo "${DOCTOR_JSON}" | jq -r '.summary.pass')"
+WARN_COUNT="$(echo "${DOCTOR_JSON}" | jq -r '.summary.warn')"
+FAIL_COUNT="$(echo "${DOCTOR_JSON}" | jq -r '.summary.fail')"
+DOCTOR_OK="$(echo "${DOCTOR_JSON}" | jq -r '.ok')"
+
+latest_or_none() {
+  local pattern="$1"
+  local found
+  found="$(ls -1t ${pattern} 2>/dev/null | head -n 1 || true)"
+  if [[ -z "${found}" ]]; then
+    echo ""
+  else
+    echo "${found}"
+  fi
+}
+
+LATEST_BENCH="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json")"
+LATEST_SNAPSHOT="$(latest_or_none "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json")"
+LATEST_SANDBOX_RUN="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json")"
+LATEST_REMOTE_SMOKE="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/smoke-*.json")"
+
+BENCH_GATE="unknown"
+BENCH_SUMMARY="n/a"
+if [[ -n "${LATEST_BENCH}" ]]; then
+  BENCH_GATE="$(jq -r '.gate_ok // "unknown"' "${LATEST_BENCH}" 2>/dev/null || echo "unknown")"
+  BENCH_SUMMARY="$(jq -r '"hit@\(.summary.hit_rate_at_k // "n/a"), mrr@\(.summary.mrr_at_k // "n/a"), ndcg@\(.summary.ndcg_at_k // "n/a")"' "${LATEST_BENCH}" 2>/dev/null || echo "n/a")"
+fi
+
+REPORT_TIME_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+REPORT_FILE="${ROOT}/docs/system-status.md"
+
+if [[ "${FORMAT}" == "json" ]]; then
+  jq -n \
+    --arg generated_at "${REPORT_TIME_UTC}" \
+    --arg mode "${MODE_NAME}" \
+    --arg allow_remote "${ALLOW_REMOTE}" \
+    --arg remote_provider "${POLICY_PROVIDER}" \
+    --argjson doctor_ok "$([[ "${DOCTOR_OK}" == "true" ]] && echo true || echo false)" \
+    --argjson pass_count "${PASS_COUNT}" \
+    --argjson warn_count "${WARN_COUNT}" \
+    --argjson fail_count "${FAIL_COUNT}" \
+    --arg latest_benchmark "${LATEST_BENCH}" \
+    --arg benchmark_gate "${BENCH_GATE}" \
+    --arg benchmark_summary "${BENCH_SUMMARY}" \
+    --arg latest_snapshot "${LATEST_SNAPSHOT}" \
+    --arg latest_sandbox_run "${LATEST_SANDBOX_RUN}" \
+    --arg latest_remote_smoke "${LATEST_REMOTE_SMOKE}" \
+    '{
+      generated_at_utc: $generated_at,
+      mode: $mode,
+      allow_external_remote: $allow_remote,
+      remote_provider: $remote_provider,
+      doctor: {
+        ok: $doctor_ok,
+        pass: $pass_count,
+        warn: $warn_count,
+        fail: $fail_count
+      },
+      artifacts: {
+        latest_benchmark: $latest_benchmark,
+        benchmark_gate_ok: $benchmark_gate,
+        benchmark_summary: $benchmark_summary,
+        latest_snapshot: $latest_snapshot,
+        latest_sandbox_run: $latest_sandbox_run,
+        latest_remote_smoke: $latest_remote_smoke
+      }
+    }'
+  exit 0
+fi
+
+REPORT_MD=$(cat <<EOF
+# LACP System Status
+
+Generated (UTC): \`${REPORT_TIME_UTC}\`
+
+## Mode
+
+- Mode: \`${MODE_NAME}\`
+- External remote allowed: \`${ALLOW_REMOTE}\`
+- Policy remote provider: \`${POLICY_PROVIDER}\`
+
+## Doctor
+
+- Overall OK: \`${DOCTOR_OK}\`
+- Pass: \`${PASS_COUNT}\`
+- Warn: \`${WARN_COUNT}\`
+- Fail: \`${FAIL_COUNT}\`
+
+## Artifacts
+
+- Latest benchmark: \`${LATEST_BENCH:-<none>}\`
+- Benchmark gate: \`${BENCH_GATE}\`
+- Benchmark summary: \`${BENCH_SUMMARY}\`
+- Latest snapshot: \`${LATEST_SNAPSHOT:-<none>}\`
+- Latest sandbox run: \`${LATEST_SANDBOX_RUN:-<none>}\`
+- Latest remote smoke: \`${LATEST_REMOTE_SMOKE:-<none>}\`
+EOF
+)
+
+if [[ "${MODE}" == "print" ]]; then
+  printf '%s\n' "${REPORT_MD}"
+else
+  printf '%s\n' "${REPORT_MD}" > "${REPORT_FILE}"
+  log "status report written: ${REPORT_FILE}"
+fi
