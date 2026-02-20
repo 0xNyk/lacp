@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-skill-audit [--path DIR]... [--json] [--no-fail-on-high]
+
+Audit local skill directories for high-risk supply-chain patterns.
+By default exits non-zero when high-risk findings are detected.
+
+Defaults:
+  --path ~/.agents/skills
+  --path ~/.codex/skills
+EOF
+}
+
+AS_JSON=0
+FAIL_ON_HIGH=1
+declare -a PATHS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --path)
+      PATHS+=("$2")
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    --no-fail-on-high)
+      FAIL_ON_HIGH=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[lacp] ERROR: Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "${#PATHS[@]}" -eq 0 ]]; then
+  PATHS=("$HOME/.agents/skills" "$HOME/.codex/skills")
+fi
+
+python3 - <<'PY' "${AS_JSON}" "${FAIL_ON_HIGH}" "${PATHS[@]}"
+import datetime as dt
+import json
+import re
+import sys
+from pathlib import Path
+
+as_json = int(sys.argv[1]) == 1
+fail_on_high = int(sys.argv[2]) == 1
+paths = [Path(p).expanduser() for p in sys.argv[3:]]
+
+rules = [
+    ("high", "pipe_exec", re.compile(r"(curl|wget)[^|\n]*\|\s*(bash|sh)\b", re.IGNORECASE)),
+    ("high", "reverse_shell_tcp", re.compile(r"/dev/tcp/|nc\s+-e|bash\s+-i", re.IGNORECASE)),
+    ("high", "base64_exec", re.compile(r"base64\s+-d[^|\n]*\|\s*(bash|sh)\b", re.IGNORECASE)),
+    ("medium", "direct_remote_exec", re.compile(r"\b(bash|sh)\s+<(curl|wget)\b", re.IGNORECASE)),
+    ("medium", "credential_exfil", re.compile(r"(ssh|wallet|cookie|keychain|\\.env).*(upload|exfil|send)", re.IGNORECASE)),
+]
+
+findings = []
+scanned_files = 0
+scanned_skills = 0
+
+for root in paths:
+    if not root.exists() or not root.is_dir():
+        continue
+    for skill_dir in root.iterdir():
+        if not skill_dir.is_dir():
+            continue
+        scanned_skills += 1
+        files = []
+        skill_md = skill_dir / "SKILL.md"
+        if skill_md.exists():
+            files.append(skill_md)
+        scripts_dir = skill_dir / "scripts"
+        if scripts_dir.exists() and scripts_dir.is_dir():
+            files.extend([p for p in scripts_dir.rglob("*") if p.is_file()])
+        for f in files:
+            scanned_files += 1
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            for severity, rule_id, pattern in rules:
+                for m in pattern.finditer(text):
+                    line_no = text.count("\n", 0, m.start()) + 1
+                    snippet = text[m.start():m.end()].replace("\n", " ")[:200]
+                    findings.append(
+                        {
+                            "severity": severity,
+                            "rule": rule_id,
+                            "skill_dir": str(skill_dir),
+                            "file": str(f),
+                            "line": line_no,
+                            "match": snippet,
+                        }
+                    )
+
+high_count = sum(1 for x in findings if x["severity"] == "high")
+medium_count = sum(1 for x in findings if x["severity"] == "medium")
+ok = not (fail_on_high and high_count > 0)
+
+payload = {
+    "generated_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "paths": [str(p) for p in paths],
+    "scanned_skills": scanned_skills,
+    "scanned_files": scanned_files,
+    "summary": {
+        "high": high_count,
+        "medium": medium_count,
+        "total": len(findings),
+    },
+    "ok": ok,
+    "findings": findings[:200],
+}
+
+if as_json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(f"[lacp] skill_audit skills={payload['scanned_skills']} files={payload['scanned_files']}")
+    print(f"high={high_count} medium={medium_count} total={len(findings)}")
+    print(f"ok={ok}")
+    for item in findings[:20]:
+        print(f"- {item['severity']} {item['rule']} {item['file']}:{item['line']} match={item['match']}")
+
+raise SystemExit(0 if ok else 1)
+PY

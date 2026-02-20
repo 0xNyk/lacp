@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-cache-guard [--hours N] [--min-hit-rate X] [--min-usage-events N] [--json]
+
+Run cache-audit and enforce minimum prompt-cache health thresholds.
+EOF
+}
+
+HOURS=24
+MIN_HIT_RATE="0.70"
+MIN_USAGE_EVENTS=100
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    --min-hit-rate)
+      MIN_HIT_RATE="$2"
+      shift 2
+      ;;
+    --min-usage-events)
+      MIN_USAGE_EVENTS="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[lacp] ERROR: Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+audit_json="$("${ROOT}/bin/lacp-cache-audit" --hours "${HOURS}" --json)"
+
+python3 - <<'PY' "${audit_json}" "${MIN_HIT_RATE}" "${MIN_USAGE_EVENTS}" "${AS_JSON}"
+import json
+import sys
+
+audit = json.loads(sys.argv[1])
+min_hit_rate = float(sys.argv[2])
+min_usage_events = int(sys.argv[3])
+as_json = int(sys.argv[4]) == 1
+
+hit_rate = float(audit.get("overall", {}).get("cache_hit_rate_estimate", 0.0))
+usage_events = int(audit.get("overall", {}).get("records_with_usage", 0))
+
+failures = []
+if hit_rate < min_hit_rate:
+    failures.append(f"cache_hit_rate_estimate={hit_rate} below min_hit_rate={min_hit_rate}")
+if usage_events < min_usage_events:
+    failures.append(f"records_with_usage={usage_events} below min_usage_events={min_usage_events}")
+
+payload = {
+    "ok": len(failures) == 0,
+    "thresholds": {
+        "min_hit_rate": min_hit_rate,
+        "min_usage_events": min_usage_events,
+    },
+    "observed": {
+        "cache_hit_rate_estimate": hit_rate,
+        "records_with_usage": usage_events,
+    },
+    "failures": failures,
+    "audit": audit,
+}
+
+if as_json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(f"[lacp] cache_guard ok={payload['ok']}")
+    print(f"observed.cache_hit_rate_estimate={hit_rate}")
+    print(f"observed.records_with_usage={usage_events}")
+    print(f"threshold.min_hit_rate={min_hit_rate}")
+    print(f"threshold.min_usage_events={min_usage_events}")
+    if failures:
+        for f in failures:
+            print(f"- FAIL {f}")
+
+raise SystemExit(0 if payload["ok"] else 1)
+PY

@@ -28,8 +28,11 @@ class Lacp < Formula
       lacp-remote-smoke
       lacp-report
       lacp-cache-audit
+      lacp-cache-guard
+      lacp-skill-audit
       lacp-migrate
       lacp-incident-drill
+      lacp-workflow-run
       lacp-test
     ].each do |cmd|
       (bin/cmd).write_env_script(libexec/"bin/#{cmd}")

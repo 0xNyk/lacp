@@ -19,8 +19,11 @@ Core:
 Ops:
   report        Summarize recent run/artifact health
   cache-audit   Analyze prompt cache effectiveness from local histories
+  cache-guard   Enforce cache effectiveness thresholds
+  skill-audit   Audit local skills for supply-chain risk patterns
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
+  workflow-run  Deterministic multi-role workflow runner
   route         Show routing decision
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
@@ -78,11 +81,20 @@ case "${cmd}" in
   cache-audit)
     exec "${ROOT}/bin/lacp-cache-audit" "$@"
     ;;
+  cache-guard)
+    exec "${ROOT}/bin/lacp-cache-guard" "$@"
+    ;;
+  skill-audit)
+    exec "${ROOT}/bin/lacp-skill-audit" "$@"
+    ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"
     ;;
   incident-drill)
     exec "${ROOT}/bin/lacp-incident-drill" "$@"
+    ;;
+  workflow-run)
+    exec "${ROOT}/bin/lacp-workflow-run" "$@"
     ;;
   route)
     exec "${ROOT}/bin/lacp-route" "$@"
