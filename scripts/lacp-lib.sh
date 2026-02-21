@@ -27,6 +27,7 @@ export LACP_CANARY_MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE:-0.90}"
 export LACP_CANARY_MIN_MRR="${LACP_CANARY_MIN_MRR:-0.65}"
 export LACP_CANARY_MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES:-2}"
 export LACP_WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR:-$HOME/.local/bin}"
+export LACP_AUTO_DEPS_FORMULAS="${LACP_AUTO_DEPS_FORMULAS:-jq ripgrep python@3.11 git tmux gh}"
 
 log() {
   printf '[lacp] %s\n' "$*"
@@ -70,4 +71,63 @@ if not matches:
 latest = max(matches, key=lambda p: os.path.getmtime(p))
 print(latest)
 PY
+}
+
+lacp_missing_commands() {
+  local -a required=("$@")
+  local cmd
+  for cmd in "${required[@]}"; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+      printf '%s\n' "${cmd}"
+    fi
+  done
+}
+
+lacp_auto_install_deps() {
+  local dry_run="${1:-false}"
+  local force="${2:-false}"
+  local os_name
+  os_name="$(uname -s 2>/dev/null || echo unknown)"
+
+  if [[ "${os_name}" != "Darwin" ]]; then
+    log "auto-deps unsupported on ${os_name}; install dependencies manually"
+    return 0
+  fi
+
+  if ! command -v brew >/dev/null 2>&1; then
+    if [[ "${force}" == "true" ]]; then
+      die "Homebrew is required for --auto-deps on macOS"
+    fi
+    log "auto-deps skipped: Homebrew not found"
+    return 0
+  fi
+
+  local -a formulas=()
+  # shellcheck disable=SC2206
+  formulas=(${LACP_AUTO_DEPS_FORMULAS})
+  if [[ "${#formulas[@]}" -eq 0 ]]; then
+    log "auto-deps skipped: no formulas configured"
+    return 0
+  fi
+
+  local -a missing=()
+  local formula
+  for formula in "${formulas[@]}"; do
+    if ! brew list --formula "${formula}" >/dev/null 2>&1; then
+      missing+=("${formula}")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    log "auto-deps: all configured formulas already installed"
+    return 0
+  fi
+
+  if [[ "${dry_run}" == "true" ]]; then
+    log "auto-deps dry-run: would install formulas: ${missing[*]}"
+    return 0
+  fi
+
+  log "auto-deps: installing formulas: ${missing[*]}"
+  brew install "${missing[@]}"
 }

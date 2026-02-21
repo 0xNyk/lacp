@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold]
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--auto-deps] [--auto-deps-dry-run] [--auto-deps-force]
 
 Bootstraps LACP for first-time users.
 
@@ -19,6 +19,7 @@ Notes:
   - Creates .env from config/lacp.env.example if missing.
   - Ensures root/data directories exist.
   - Runs lacp-onboard at the end (optionally with verify).
+  - On macOS, --auto-deps can install missing Homebrew formulas for core toolchain dependencies.
 EOF
 }
 
@@ -26,6 +27,9 @@ PROFILE="starter"
 WITH_VERIFY=0
 HOURS="${LACP_VERIFY_HOURS}"
 FORCE_SCAFFOLD=0
+AUTO_DEPS=0
+AUTO_DEPS_DRY_RUN=0
+AUTO_DEPS_FORCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +49,19 @@ while [[ $# -gt 0 ]]; do
       FORCE_SCAFFOLD=1
       shift
       ;;
+    --auto-deps)
+      AUTO_DEPS=1
+      shift
+      ;;
+    --auto-deps-dry-run)
+      AUTO_DEPS=1
+      AUTO_DEPS_DRY_RUN=1
+      shift
+      ;;
+    --auto-deps-force)
+      AUTO_DEPS_FORCE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -59,6 +76,10 @@ case "${PROFILE}" in
   starter|existing) ;;
   *) die "--profile must be starter|existing" ;;
 esac
+
+if [[ "${AUTO_DEPS}" -eq 1 ]]; then
+  lacp_auto_install_deps "$([[ "${AUTO_DEPS_DRY_RUN}" -eq 1 ]] && echo true || echo false)" "$([[ "${AUTO_DEPS_FORCE}" -eq 1 ]] && echo true || echo false)"
+fi
 
 if [[ ! -f "${ROOT}/.env" ]]; then
   if [[ "${LACP_SKIP_DOTENV:-0}" == "1" ]]; then
@@ -164,7 +185,11 @@ if [[ "${WITH_VERIFY}" -eq 1 ]]; then
   ONBOARD_ARGS+=(--with-verify --hours "${HOURS}")
 fi
 
-"${ROOT}/bin/lacp-onboard" "${ONBOARD_ARGS[@]}"
+if [[ "${#ONBOARD_ARGS[@]}" -gt 0 ]]; then
+  "${ROOT}/bin/lacp-onboard" "${ONBOARD_ARGS[@]}"
+else
+  "${ROOT}/bin/lacp-onboard"
+fi
 
 log "Install complete (profile=${PROFILE})"
 log "Next: bin/lacp-doctor --json | jq"

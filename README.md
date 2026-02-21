@@ -229,9 +229,11 @@ Notes:
 - `bin/lacp`: top-level CLI dispatcher (`lacp <command> ...`)
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
+- `bin/lacp-install --auto-deps`: macOS/Homebrew dependency bootstrap for fresh machines (`--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
+  - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
 - `bin/lacp-auto-rollback`: fail-safe rollback action runner (`local-only` mode + wrapper unadopt) on unhealthy canary
 - `bin/lacp-schedule-health`: install/status/run-now/uninstall scheduled local health checks via launchd
 - `bin/lacp-policy-pack`: list/apply policy baseline packs (`starter`, `strict`, `enterprise`)
@@ -348,6 +350,8 @@ bin/lacp-test --isolated
 # pre-live gate
 bin/lacp release-gate --quick
 bin/lacp canary --json | jq
+bin/lacp canary --set-clean-baseline
+bin/lacp canary --since-clean-baseline --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
 
 # fail-safe rollback if canary is unhealthy
@@ -361,6 +365,10 @@ bin/lacp policy-pack apply --pack strict --json | jq
 bin/lacp schedule-health install --interval-min 60 --json | jq
 bin/lacp schedule-health status --json | jq
 bin/lacp schedule-health run-now --json | jq
+
+# fresh macOS dependency bootstrap
+bin/lacp install --profile starter --auto-deps
+bin/lacp doctor --fix-deps --auto-deps-dry-run --json | jq
 
 # optional orchestration (dry-run)
 bin/lacp orchestrate run \
