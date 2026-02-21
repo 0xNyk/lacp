@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
   - `config/harness/sandbox-profiles.yaml`
   - `config/harness/verification-policy.yaml`
 - Harness contracts validation test: `scripts/ci/test-harness-contracts.sh`.
+- `bin/lacp-harness-validate` for tasks plan validation + profile/policy cross-checks.
+- Harness validate CI coverage: `scripts/ci/test-harness-validate.sh`.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.

@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-harness-validate --tasks <tasks.json> [options]
+
+Validates tasks plan structure and cross-checks references against harness catalogs.
+
+Options:
+  --tasks <path>           Path to tasks.json (required)
+  --schema <path>          Path to tasks schema JSON
+  --profiles <path>        Path to sandbox profiles YAML
+  --verification <path>    Path to verification policy YAML
+  --json                   Emit JSON summary
+  -h, --help               Show help
+EOF
+}
+
+TASKS_FILE=""
+SCHEMA_FILE="${ROOT}/config/harness/tasks.schema.json"
+PROFILES_FILE="${ROOT}/config/harness/sandbox-profiles.yaml"
+VERIFICATION_FILE="${ROOT}/config/harness/verification-policy.yaml"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tasks)
+      TASKS_FILE="$2"
+      shift 2
+      ;;
+    --schema)
+      SCHEMA_FILE="$2"
+      shift 2
+      ;;
+    --profiles)
+      PROFILES_FILE="$2"
+      shift 2
+      ;;
+    --verification)
+      VERIFICATION_FILE="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "${TASKS_FILE}" ]] || die "--tasks is required"
+require_file "${TASKS_FILE}"
+require_file "${SCHEMA_FILE}"
+require_file "${PROFILES_FILE}"
+require_file "${VERIFICATION_FILE}"
+
+python3 - <<'PY' "${TASKS_FILE}" "${SCHEMA_FILE}" "${PROFILES_FILE}" "${VERIFICATION_FILE}" "${AS_JSON}"
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except Exception as exc:  # pragma: no cover
+    print(f"[lacp] ERROR: missing yaml support: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def add_error(errors: list[str], message: str) -> None:
+    errors.append(message)
+
+
+def is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def require_str(obj: dict, key: str, errors: list[str], prefix: str) -> str | None:
+    value = obj.get(key)
+    if not isinstance(value, str) or not value.strip():
+        add_error(errors, f"{prefix}.{key} must be a non-empty string")
+        return None
+    return value
+
+
+tasks_path = Path(sys.argv[1])
+schema_path = Path(sys.argv[2])
+profiles_path = Path(sys.argv[3])
+verification_path = Path(sys.argv[4])
+as_json = sys.argv[5] == "1"
+
+errors: list[str] = []
+warnings: list[str] = []
+
+# Parse all files first.
+try:
+    tasks = json.loads(tasks_path.read_text())
+except Exception as exc:
+    print(f"[lacp] ERROR: invalid tasks json: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    schema = json.loads(schema_path.read_text())
+except Exception as exc:
+    print(f"[lacp] ERROR: invalid schema json: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    profiles = yaml.safe_load(profiles_path.read_text())
+except Exception as exc:
+    print(f"[lacp] ERROR: invalid profiles yaml: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    verification = yaml.safe_load(verification_path.read_text())
+except Exception as exc:
+    print(f"[lacp] ERROR: invalid verification yaml: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+# Minimal schema sanity checks.
+if not isinstance(schema, dict) or "properties" not in schema:
+    add_error(errors, "schema missing top-level properties")
+
+if not isinstance(tasks, dict):
+    add_error(errors, "tasks payload must be an object")
+    tasks = {}
+
+for field in ["version", "spec_id", "generated_at_utc", "orchestrator", "tasks"]:
+    if field not in tasks:
+        add_error(errors, f"missing required field: {field}")
+
+if not isinstance(tasks.get("tasks"), list) or not tasks.get("tasks"):
+    add_error(errors, "tasks must be a non-empty array")
+
+orch = tasks.get("orchestrator")
+if not isinstance(orch, dict):
+    add_error(errors, "orchestrator must be an object")
+else:
+    rt = orch.get("reasoning_tier")
+    if rt not in {"high", "medium", "low"}:
+        add_error(errors, "orchestrator.reasoning_tier must be high|medium|low")
+    mkeys = orch.get("memory_keys")
+    if not isinstance(mkeys, list) or not mkeys or not all(isinstance(x, str) and x.strip() for x in mkeys):
+        add_error(errors, "orchestrator.memory_keys must be non-empty string array")
+    restarts = orch.get("max_restarts_per_task")
+    if not is_int(restarts) or restarts < 0 or restarts > 20:
+        add_error(errors, "orchestrator.max_restarts_per_task must be integer 0..20")
+    models = orch.get("default_models")
+    if not isinstance(models, dict):
+        add_error(errors, "orchestrator.default_models must be an object")
+    else:
+        for mk in ["planner", "implementer", "verifier"]:
+            mv = models.get(mk)
+            if not isinstance(mv, str) or not mv.strip():
+                add_error(errors, f"orchestrator.default_models.{mk} must be non-empty string")
+
+profile_map = profiles.get("profiles") if isinstance(profiles, dict) else None
+verification_map = verification.get("policies") if isinstance(verification, dict) else None
+if not isinstance(profile_map, dict) or not profile_map:
+    add_error(errors, "profiles catalog missing profiles map")
+    profile_map = {}
+if not isinstance(verification_map, dict) or not verification_map:
+    add_error(errors, "verification catalog missing policies map")
+    verification_map = {}
+
+task_ids: set[str] = set()
+id_pattern = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
+allowed_complexity = {"low", "medium", "high", "critical"}
+
+for idx, task in enumerate(tasks.get("tasks", [])):
+    prefix = f"tasks[{idx}]"
+    if not isinstance(task, dict):
+        add_error(errors, f"{prefix} must be an object")
+        continue
+
+    tid = require_str(task, "id", errors, prefix)
+    if tid is not None:
+        if not id_pattern.match(tid):
+            add_error(errors, f"{prefix}.id has invalid format")
+        if tid in task_ids:
+            add_error(errors, f"{prefix}.id duplicates existing id: {tid}")
+        task_ids.add(tid)
+
+    title = require_str(task, "title", errors, prefix)
+    if isinstance(title, str) and len(title.strip()) < 5:
+        add_error(errors, f"{prefix}.title must be at least 5 chars")
+
+    complexity = task.get("complexity")
+    if complexity not in allowed_complexity:
+        add_error(errors, f"{prefix}.complexity must be one of {sorted(allowed_complexity)}")
+
+    pm = require_str(task, "primary_model", errors, prefix)
+    if pm is None:
+        add_error(errors, f"{prefix}.primary_model is required")
+
+    deps = task.get("depends_on")
+    if not isinstance(deps, list):
+        add_error(errors, f"{prefix}.depends_on must be an array")
+    else:
+        dep_seen: set[str] = set()
+        for dep in deps:
+            if not isinstance(dep, str) or not id_pattern.match(dep):
+                add_error(errors, f"{prefix}.depends_on entries must match task id format")
+                continue
+            if dep in dep_seen:
+                add_error(errors, f"{prefix}.depends_on has duplicate entry: {dep}")
+            dep_seen.add(dep)
+
+    rb = task.get("reasoning_budget")
+    if not isinstance(rb, dict):
+        add_error(errors, f"{prefix}.reasoning_budget must be object")
+    else:
+        mi = rb.get("max_input_tokens")
+        mo = rb.get("max_output_tokens")
+        if not is_int(mi) or mi < 256:
+            add_error(errors, f"{prefix}.reasoning_budget.max_input_tokens must be integer >= 256")
+        if not is_int(mo) or mo < 128:
+            add_error(errors, f"{prefix}.reasoning_budget.max_output_tokens must be integer >= 128")
+
+    it = task.get("iterations")
+    if not isinstance(it, dict):
+        add_error(errors, f"{prefix}.iterations must be object")
+    else:
+        l1 = it.get("loop_1_max")
+        l2 = it.get("loop_2_max")
+        ql = it.get("quality_loop_max")
+        if not is_int(l1) or l1 < 1 or l1 > 50:
+            add_error(errors, f"{prefix}.iterations.loop_1_max must be integer 1..50")
+        if not is_int(l2) or l2 < 0 or l2 > 20:
+            add_error(errors, f"{prefix}.iterations.loop_2_max must be integer 0..20")
+        if not is_int(ql) or ql < 0 or ql > 20:
+            add_error(errors, f"{prefix}.iterations.quality_loop_max must be integer 0..20")
+
+    sp = require_str(task, "sandbox_profile", errors, prefix)
+    vp = require_str(task, "verification_policy", errors, prefix)
+    if isinstance(sp, str) and sp not in profile_map:
+        add_error(errors, f"{prefix}.sandbox_profile not found in profiles catalog: {sp}")
+    if isinstance(vp, str) and vp not in verification_map:
+        add_error(errors, f"{prefix}.verification_policy not found in verification catalog: {vp}")
+
+# second pass: dependency existence and self-dep
+for idx, task in enumerate(tasks.get("tasks", [])):
+    if not isinstance(task, dict):
+        continue
+    tid = task.get("id")
+    deps = task.get("depends_on")
+    if not isinstance(tid, str) or not isinstance(deps, list):
+        continue
+    for dep in deps:
+        if dep == tid:
+            add_error(errors, f"tasks[{idx}].depends_on contains self dependency")
+        elif dep not in task_ids:
+            add_error(errors, f"tasks[{idx}].depends_on references unknown task id: {dep}")
+
+ok = len(errors) == 0
+payload = {
+    "ok": ok,
+    "summary": {
+        "task_count": len(tasks.get("tasks", [])) if isinstance(tasks.get("tasks"), list) else 0,
+        "errors": len(errors),
+        "warnings": len(warnings),
+    },
+    "files": {
+        "tasks": str(tasks_path),
+        "schema": str(schema_path),
+        "profiles": str(profiles_path),
+        "verification": str(verification_path),
+    },
+    "errors": errors,
+    "warnings": warnings,
+}
+
+if as_json:
+    print(json.dumps(payload, indent=2))
+else:
+    if ok:
+        print("[lacp] harness validation passed")
+        print(f"[lacp] tasks={payload['summary']['task_count']} errors=0 warnings={payload['summary']['warnings']}")
+    else:
+        print(f"[lacp] harness validation failed: errors={payload['summary']['errors']}", file=sys.stderr)
+        for item in errors:
+            print(f" - {item}", file=sys.stderr)
+
+raise SystemExit(0 if ok else 1)
+PY
+
