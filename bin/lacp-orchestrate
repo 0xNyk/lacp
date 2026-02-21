@@ -45,7 +45,7 @@ cmd_doctor() {
   dmux_path="$(command -v dmux || true)"
   claude_path="$(command -v claude || true)"
   git_path="$(command -v git || true)"
-  default_backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}"
+  default_backend="${LACP_ORCHESTRATOR_BACKEND:-dmux}"
 
   if [[ "${as_json}" == "true" ]]; then
     jq -n \
@@ -95,7 +95,7 @@ cmd_doctor() {
 }
 
 cmd_run() {
-  local task="" backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}" session="" command_text=""
+  local task="" backend="${LACP_ORCHESTRATOR_BACKEND:-dmux}" session="" command_text=""
   local repo_trust="unknown" internet="false" external_code="false" cpu_heavy="false" long_run="false"
   local estimated_cost_usd="" confirm_budget="false" confirm_critical="false" input_contract=""
   local claude_tmux="false"
