@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def parse_utc(value: str) -> dt.datetime:
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    out = dt.datetime.fromisoformat(value)
+    if out.tzinfo is None:
+        out = out.replace(tzinfo=dt.timezone.utc)
+    return out.astimezone(dt.timezone.utc)
+
+
+def load_json(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text())
+    except Exception as exc:
+        raise ValueError(f"invalid json in {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"json root must be object: {path}")
+    return payload
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate browser evidence manifest for LACP")
+    parser.add_argument("--manifest", required=True, help="Path to browser evidence manifest JSON")
+    parser.add_argument(
+        "--schema",
+        default="config/harness/browser-evidence.schema.json",
+        help="Path to browser evidence schema JSON",
+    )
+    parser.add_argument(
+        "--required-entrypoint-kind",
+        action="append",
+        default=[],
+        help="Require at least one flow with this entrypoint kind (repeatable)",
+    )
+    parser.add_argument(
+        "--max-age-hours",
+        type=int,
+        default=24,
+        help="Maximum allowed age for captured_at_utc",
+    )
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    args = parser.parse_args()
+
+    manifest_path = Path(args.manifest).resolve()
+    root_env = Path(os.environ.get("LACP_SCRIPT_ROOT", ".")).resolve()
+    schema_path = Path(args.schema)
+    if not schema_path.is_absolute():
+        schema_path = (root_env / schema_path).resolve()
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not manifest_path.is_file():
+        errors.append(f"missing manifest: {manifest_path}")
+    if not schema_path.is_file():
+        errors.append(f"missing schema: {schema_path}")
+
+    manifest: dict = {}
+    if not errors:
+        try:
+            manifest = load_json(manifest_path)
+            _ = load_json(schema_path)  # syntax sanity check only
+        except Exception as exc:  # pragma: no cover
+            errors.append(str(exc))
+
+    flows = manifest.get("flows") if isinstance(manifest, dict) else None
+    captured_at = manifest.get("captured_at_utc") if isinstance(manifest, dict) else None
+
+    if not isinstance(captured_at, str) or not captured_at.strip():
+        errors.append("captured_at_utc must be non-empty string")
+    else:
+        try:
+            ts = parse_utc(captured_at)
+            age_hours = (dt.datetime.now(dt.timezone.utc) - ts).total_seconds() / 3600.0
+            if age_hours > float(args.max_age_hours):
+                errors.append(
+                    f"evidence too old: age_hours={age_hours:.2f} > max_age_hours={args.max_age_hours}"
+                )
+        except Exception as exc:
+            errors.append(f"invalid captured_at_utc: {exc}")
+
+    if not isinstance(flows, list) or not flows:
+        errors.append("flows must be a non-empty array")
+        flows = []
+
+    seen_ids: set[str] = set()
+    found_kinds: set[str] = set()
+    artifact_missing = 0
+    assertion_failures = 0
+
+    for idx, flow in enumerate(flows):
+        prefix = f"flows[{idx}]"
+        if not isinstance(flow, dict):
+            errors.append(f"{prefix} must be object")
+            continue
+
+        fid = flow.get("id")
+        kind = flow.get("entrypoint_kind")
+        entrypoint = flow.get("entrypoint")
+        expected_identity = flow.get("expected_identity")
+        artifacts = flow.get("artifacts")
+        assertions = flow.get("assertions")
+
+        if not isinstance(fid, str) or not fid.strip():
+            errors.append(f"{prefix}.id must be non-empty string")
+        elif fid in seen_ids:
+            errors.append(f"{prefix}.id duplicated: {fid}")
+        else:
+            seen_ids.add(fid)
+
+        if not isinstance(kind, str) or not kind.strip():
+            errors.append(f"{prefix}.entrypoint_kind must be non-empty string")
+        else:
+            found_kinds.add(kind)
+
+        if not isinstance(entrypoint, str) or not entrypoint.strip():
+            errors.append(f"{prefix}.entrypoint must be non-empty string")
+
+        if not isinstance(expected_identity, dict):
+            errors.append(f"{prefix}.expected_identity must be object")
+        else:
+            mode = expected_identity.get("mode")
+            value = expected_identity.get("value")
+            if mode not in {"guest", "user", "admin", "service"}:
+                errors.append(f"{prefix}.expected_identity.mode invalid")
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{prefix}.expected_identity.value must be non-empty string")
+
+        if not isinstance(artifacts, dict):
+            errors.append(f"{prefix}.artifacts must be object")
+        else:
+            for key in ["trace", "screenshot"]:
+                path = artifacts.get(key)
+                if not isinstance(path, str) or not path.strip():
+                    errors.append(f"{prefix}.artifacts.{key} must be non-empty string")
+                    continue
+                p = Path(path)
+                if not p.is_absolute():
+                    p = (manifest_path.parent / p).resolve()
+                if not p.exists():
+                    artifact_missing += 1
+                    errors.append(f"{prefix}.artifacts.{key} not found on disk: {p}")
+
+        if not isinstance(assertions, list) or not assertions:
+            errors.append(f"{prefix}.assertions must be non-empty array")
+        else:
+            for aidx, assertion in enumerate(assertions):
+                ap = f"{prefix}.assertions[{aidx}]"
+                if not isinstance(assertion, dict):
+                    errors.append(f"{ap} must be object")
+                    continue
+                name = assertion.get("name")
+                ok = assertion.get("ok")
+                if not isinstance(name, str) or not name.strip():
+                    errors.append(f"{ap}.name must be non-empty string")
+                if not isinstance(ok, bool):
+                    errors.append(f"{ap}.ok must be boolean")
+                elif not ok:
+                    assertion_failures += 1
+
+    for required in args.required_entrypoint_kind:
+        if required not in found_kinds:
+            errors.append(f"missing required entrypoint kind: {required}")
+
+    if assertion_failures > 0:
+        errors.append(f"failing assertions detected: {assertion_failures}")
+
+    ok = len(errors) == 0
+    payload = {
+        "ok": ok,
+        "manifest": str(manifest_path),
+        "schema": str(schema_path),
+        "summary": {
+            "flows": len(flows),
+            "required_entrypoint_kinds": args.required_entrypoint_kind,
+            "found_entrypoint_kinds": sorted(found_kinds),
+            "artifact_missing": artifact_missing,
+            "assertion_failures": assertion_failures,
+            "errors": len(errors),
+            "warnings": len(warnings),
+        },
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        if ok:
+            print("[lacp] browser evidence validation passed")
+        else:
+            print("[lacp] browser evidence validation failed", file=sys.stderr)
+            for item in errors:
+                print(f" - {item}", file=sys.stderr)
+
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

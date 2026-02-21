@@ -189,11 +189,32 @@ check_file "${LACP_MCP_AUTH_POLICY_FILE}" "config:mcp_auth_policy"
 check_file "${LACP_ROOT}/config/harness/tasks.schema.json" "config:harness_tasks_schema"
 check_file "${LACP_ROOT}/config/harness/sandbox-profiles.yaml" "config:harness_sandbox_profiles"
 check_file "${LACP_ROOT}/config/harness/verification-policy.yaml" "config:harness_verification_policy"
+check_file "${LACP_ROOT}/config/harness/browser-evidence.schema.json" "config:harness_browser_evidence_schema"
+check_file "${LACP_ROOT}/config/risk-policy-contract.json" "config:risk_policy_contract"
+check_file "${LACP_ROOT}/config/risk-policy-contract.schema.json" "config:risk_policy_contract_schema"
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
   add_check "config:sandbox_policy_json" "PASS" "valid json"
 elif [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]]; then
   add_check "config:sandbox_policy_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_ROOT}/config/risk-policy-contract.json" ]] && jq empty "${LACP_ROOT}/config/risk-policy-contract.json" >/dev/null 2>&1; then
+  add_check "config:risk_policy_contract_json" "PASS" "valid json"
+elif [[ -f "${LACP_ROOT}/config/risk-policy-contract.json" ]]; then
+  add_check "config:risk_policy_contract_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_ROOT}/config/risk-policy-contract.schema.json" ]] && jq empty "${LACP_ROOT}/config/risk-policy-contract.schema.json" >/dev/null 2>&1; then
+  add_check "config:risk_policy_contract_schema_json" "PASS" "valid json"
+elif [[ -f "${LACP_ROOT}/config/risk-policy-contract.schema.json" ]]; then
+  add_check "config:risk_policy_contract_schema_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_ROOT}/config/harness/browser-evidence.schema.json" ]] && jq empty "${LACP_ROOT}/config/harness/browser-evidence.schema.json" >/dev/null 2>&1; then
+  add_check "config:harness_browser_evidence_schema_json" "PASS" "valid json"
+elif [[ -f "${LACP_ROOT}/config/harness/browser-evidence.schema.json" ]]; then
+  add_check "config:harness_browser_evidence_schema_json" "FAIL" "invalid json"
 fi
 
 if [[ -f "${LACP_MCP_AUTH_POLICY_FILE}" ]] && jq empty "${LACP_MCP_AUTH_POLICY_FILE}" >/dev/null 2>&1; then
@@ -289,6 +310,8 @@ check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
 check_file "${LACP_ROOT}/bin/lacp-orchestrate" "bin:lacp-orchestrate"
 check_file "${LACP_ROOT}/bin/lacp-harness-validate" "bin:lacp-harness-validate"
 check_file "${LACP_ROOT}/bin/lacp-harness-run" "bin:lacp-harness-run"
+check_file "${LACP_ROOT}/bin/lacp-pr-preflight" "bin:lacp-pr-preflight"
+check_file "${LACP_ROOT}/bin/lacp-browser-evidence-validate" "bin:lacp-browser-evidence-validate"
 check_file "${LACP_ROOT}/bin/lacp-mode" "bin:lacp-mode"
 check_file "${LACP_ROOT}/bin/lacp-knowledge-doctor" "bin:lacp-knowledge-doctor"
 check_file "${LACP_ROOT}/bin/lacp-status-report" "bin:lacp-status-report"

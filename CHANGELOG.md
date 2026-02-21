@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-cache-guard` to enforce minimum cache hit-rate and usage-event thresholds.
 - `bin/lacp-skill-audit` to detect high-risk skill supply-chain patterns (`curl|bash`, reverse shell signatures, etc.).
 - `bin/lacp-release-gate` for one-command pre-live go/no-go checks across tests, doctor, cache, and skill audit.
+- `config/risk-policy-contract.json` + `config/risk-policy-contract.schema.json` for one-source PR gate policy contract.
+- `bin/lacp-pr-preflight` to enforce risk-tier required checks, docs drift rules, current-head review state, and browser evidence gates.
+- `config/harness/browser-evidence.schema.json` + `bin/lacp-browser-evidence-validate` for machine-verifiable UI/user-flow evidence.
 - `bin/lacp-orchestrate` optional tmux/dmux adapter (`doctor`, `run`) routed through existing LACP sandbox gates.
 - Harness contract layer:
   - `config/harness/tasks.schema.json`
@@ -22,6 +25,8 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-harness-run` for dependency-aware task execution with loop retries and attempt artifacts.
 - Harness validate CI coverage: `scripts/ci/test-harness-validate.sh`.
 - Harness run CI coverage: `scripts/ci/test-harness-run.sh`.
+- Browser evidence CI coverage: `scripts/ci/test-browser-evidence-validate.sh`.
+- PR preflight CI coverage: `scripts/ci/test-pr-preflight.sh`.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.
