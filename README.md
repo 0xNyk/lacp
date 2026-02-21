@@ -235,8 +235,10 @@ Notes:
 - `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
 - `bin/lacp-release-gate`: run strict pre-live go/no-go checks (tests + doctor + cache + skills)
+- `bin/lacp-pr-preflight`: evaluate PR policy gates (risk tier + docs drift + check runs + stale review state)
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
+- `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
 - `bin/lacp-orchestrate`: optional tmux/dmux orchestration adapter (still routed through LACP gates)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
@@ -260,6 +262,9 @@ Use these files to formalize your orchestrator workflow from specs to loops:
 - `config/harness/tasks.schema.json`: contract for generated `tasks.json` plans.
 - `config/harness/sandbox-profiles.yaml`: reproducible sandbox/runtime presets.
 - `config/harness/verification-policy.yaml`: per-task verification requirements and thresholds.
+- `config/harness/browser-evidence.schema.json`: machine-verifiable browser flow evidence contract.
+- `config/risk-policy-contract.json`: single risk/merge/review/evidence policy contract.
+- `config/risk-policy-contract.schema.json`: contract schema for drift-resistant validation.
 
 This maps directly to:
 - spec -> orchestrator-generated tasks
@@ -272,6 +277,15 @@ Validate a generated task plan:
 cd ~/control/frameworks/lacp
 bin/lacp harness-validate --tasks ./tasks.json --json | jq
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json | jq
+
+# PR preflight policy gate from local evidence files
+bin/lacp pr-preflight \
+  --changed-files ./changed-files.txt \
+  --head-sha "$(git rev-parse HEAD)" \
+  --checks-json ./checks.json \
+  --review-json ./review-state.json \
+  --browser-evidence ./browser-evidence.json \
+  --json | jq
 ```
 
 ## Security Model

@@ -1,0 +1,374 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text())
+
+
+def normalize_changed_files(repo_root: Path, changed_files: list[str]) -> list[str]:
+    out: list[str] = []
+    for value in changed_files:
+        v = value.strip()
+        if not v:
+            continue
+        p = Path(v)
+        if p.is_absolute():
+            try:
+                v = str(p.resolve().relative_to(repo_root))
+            except Exception:
+                v = str(p.resolve())
+        out.append(v)
+    return sorted(set(out))
+
+
+def tier_rank(tier: str) -> int:
+    return {"low": 1, "medium": 2, "high": 3}.get(tier, 0)
+
+
+def pick_risk_tier(changed_files: list[str], tier_rules: dict[str, list[str]]) -> str:
+    best = "low"
+    for file_path in changed_files:
+        for tier, globs in tier_rules.items():
+            if any(fnmatch.fnmatch(file_path, pattern) for pattern in globs):
+                if tier_rank(tier) > tier_rank(best):
+                    best = tier
+    return best
+
+
+def parse_check_runs(payload) -> list[dict]:
+    if isinstance(payload, dict) and isinstance(payload.get("check_runs"), list):
+        return [x for x in payload["check_runs"] if isinstance(x, dict)]
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    return []
+
+
+def check_run_ok(check: dict) -> bool:
+    status = str(check.get("status", "")).lower()
+    conclusion = str(check.get("conclusion", "")).lower()
+    if status in {"completed", "success"} and conclusion in {"success", "neutral", "skipped", ""}:
+        return True
+    if conclusion == "success":
+        return True
+    return False
+
+
+def canonical_sha(value: str) -> str:
+    return value.strip().lower()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LACP PR preflight gate planner/validator")
+    parser.add_argument("--contract", default="config/risk-policy-contract.json", help="Risk policy contract path")
+    parser.add_argument("--schema", default="config/risk-policy-contract.schema.json", help="Contract schema path")
+    parser.add_argument("--changed-files", default="", help="Newline file with changed paths")
+    parser.add_argument("--from-ref", default="", help="Git from ref for changed files")
+    parser.add_argument("--to-ref", default="HEAD", help="Git to ref for changed files")
+    parser.add_argument("--head-sha", default="", help="PR head sha; defaults to current HEAD")
+    parser.add_argument("--checks-json", default="", help="Optional checks payload JSON")
+    parser.add_argument("--review-json", default="", help="Optional review-agent state JSON")
+    parser.add_argument("--browser-evidence", default="", help="Optional browser evidence manifest JSON")
+    parser.add_argument("--repo-root", default=".", help="Repo root path")
+    parser.add_argument("--json", action="store_true", help="Emit JSON")
+    args = parser.parse_args()
+
+    root_env = Path(os.environ.get("LACP_SCRIPT_ROOT", ".")).resolve()
+    repo_root = Path(args.repo_root).resolve()
+
+    contract_path = Path(args.contract)
+    if not contract_path.is_absolute():
+        contract_path = (root_env / contract_path).resolve()
+    schema_path = Path(args.schema)
+    if not schema_path.is_absolute():
+        schema_path = (root_env / schema_path).resolve()
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not contract_path.is_file():
+        errors.append(f"missing contract: {contract_path}")
+    if not schema_path.is_file():
+        errors.append(f"missing schema: {schema_path}")
+
+    contract = {}
+    if not errors:
+        try:
+            contract = load_json(contract_path)
+            _ = load_json(schema_path)  # syntax sanity
+        except Exception as exc:
+            errors.append(f"invalid contract/schema json: {exc}")
+
+    changed_files: list[str] = []
+    if args.changed_files:
+        changed_path = Path(args.changed_files).resolve()
+        if not changed_path.is_file():
+            errors.append(f"missing changed-files input: {changed_path}")
+        else:
+            changed_files = changed_path.read_text().splitlines()
+    elif args.from_ref:
+        cp = run_cmd(["git", "-C", str(repo_root), "diff", "--name-only", args.from_ref, args.to_ref])
+        if cp.returncode != 0:
+            errors.append(f"git diff failed: {cp.stderr.strip()}")
+        else:
+            changed_files = cp.stdout.splitlines()
+    else:
+        cp = run_cmd(["git", "-C", str(repo_root), "diff", "--name-only", "HEAD~1", args.to_ref])
+        if cp.returncode == 0:
+            changed_files = cp.stdout.splitlines()
+        else:
+            warnings.append("could not infer changed files from HEAD~1; provide --changed-files or --from-ref")
+
+    changed_files = normalize_changed_files(repo_root, changed_files)
+    if not changed_files:
+        warnings.append("changed file set is empty")
+
+    if args.head_sha:
+        head_sha = canonical_sha(args.head_sha)
+    else:
+        cp = run_cmd(["git", "-C", str(repo_root), "rev-parse", "HEAD"])
+        if cp.returncode != 0:
+            errors.append("unable to determine head sha")
+            head_sha = ""
+        else:
+            head_sha = canonical_sha(cp.stdout)
+
+    risk_tier = "low"
+    required_checks: list[str] = []
+    docs_drift_ok = True
+    docs_drift_hits: list[dict] = []
+    checks_ok = True
+    missing_checks: list[str] = []
+    failed_checks: list[str] = []
+    stale_checks: list[str] = []
+    review_required = False
+    review_ok = True
+    browser_required = False
+    browser_ok = True
+    browser_details: dict = {}
+
+    if isinstance(contract, dict):
+        tier_rules = contract.get("riskTierRules") or {}
+        merge_policy = contract.get("mergePolicy") or {}
+        docs_rules = contract.get("docsDriftRules") or []
+        review_cfg = contract.get("reviewAgent") or {}
+        browser_cfg = contract.get("browserEvidence") or {}
+
+        if not isinstance(tier_rules, dict):
+            errors.append("contract.riskTierRules must be object")
+            tier_rules = {}
+        if not isinstance(merge_policy, dict):
+            errors.append("contract.mergePolicy must be object")
+            merge_policy = {}
+        if not isinstance(docs_rules, list):
+            errors.append("contract.docsDriftRules must be array")
+            docs_rules = []
+
+        safe_rules = {
+            "high": list(tier_rules.get("high") or []),
+            "medium": list(tier_rules.get("medium") or []),
+            "low": list(tier_rules.get("low") or ["**"]),
+        }
+
+        risk_tier = pick_risk_tier(changed_files, safe_rules)
+        required_checks = list((merge_policy.get(risk_tier) or {}).get("requiredChecks") or [])
+
+        for idx, rule in enumerate(docs_rules):
+            if not isinstance(rule, dict):
+                continue
+            match_globs = [x for x in (rule.get("match") or []) if isinstance(x, str) and x]
+            requires_any = [x for x in (rule.get("requiresAny") or []) if isinstance(x, str) and x]
+            if not match_globs or not requires_any:
+                continue
+            triggered = [f for f in changed_files if any(fnmatch.fnmatch(f, pat) for pat in match_globs)]
+            if not triggered:
+                continue
+            satisfied = any(req in changed_files for req in requires_any)
+            docs_drift_hits.append(
+                {
+                    "rule_index": idx,
+                    "triggered_by": triggered,
+                    "requires_any": requires_any,
+                    "satisfied": satisfied,
+                }
+            )
+            if not satisfied:
+                docs_drift_ok = False
+
+        review_required = risk_tier in set(review_cfg.get("requiredTiers") or [])
+        browser_required = risk_tier in set(browser_cfg.get("requiredTiers") or [])
+
+        if args.checks_json:
+            checks_path = Path(args.checks_json).resolve()
+            if not checks_path.is_file():
+                errors.append(f"missing checks json: {checks_path}")
+            else:
+                try:
+                    checks_payload = load_json(checks_path)
+                except Exception:
+                    checks_payload = json.loads(checks_path.read_text())
+                check_runs = parse_check_runs(checks_payload)
+                check_by_name = {}
+                for run in check_runs:
+                    name = str(run.get("name", "")).strip()
+                    if not name:
+                        continue
+                    check_by_name.setdefault(name, []).append(run)
+
+                for req in required_checks:
+                    candidates = check_by_name.get(req, [])
+                    if not candidates:
+                        checks_ok = False
+                        missing_checks.append(req)
+                        continue
+
+                    fresh = []
+                    stale = []
+                    for c in candidates:
+                        run_sha = canonical_sha(str(c.get("head_sha", "") or c.get("sha", "")))
+                        if head_sha and run_sha and run_sha != head_sha:
+                            stale.append(c)
+                        else:
+                            fresh.append(c)
+
+                    if stale:
+                        stale_checks.append(req)
+
+                    target = fresh[-1] if fresh else None
+                    if target is None:
+                        checks_ok = False
+                        failed_checks.append(f"{req}:stale-only")
+                    elif not check_run_ok(target):
+                        checks_ok = False
+                        failed_checks.append(f"{req}:{target.get('conclusion', target.get('status', 'unknown'))}")
+
+        if review_required:
+            if not args.review_json:
+                review_ok = False
+                errors.append("review required for this tier but --review-json not provided")
+            else:
+                review_path = Path(args.review_json).resolve()
+                if not review_path.is_file():
+                    review_ok = False
+                    errors.append(f"missing review json: {review_path}")
+                else:
+                    review_state = load_json(review_path)
+                    review_sha = canonical_sha(str(review_state.get("head_sha", "")))
+                    review_status = str(review_state.get("status", "")).lower()
+                    actionable = int(review_state.get("actionable_findings", 0) or 0)
+
+                    if bool(review_cfg.get("mustMatchHeadSha", True)) and head_sha and review_sha and review_sha != head_sha:
+                        review_ok = False
+                        errors.append("review state is stale for current head sha")
+                    if review_status not in {"success", "completed", "clean"}:
+                        review_ok = False
+                        errors.append(f"review status not clean: {review_status or 'missing'}")
+                    if actionable > 0:
+                        review_ok = False
+                        errors.append(f"review actionable findings: {actionable}")
+
+        if browser_required:
+            if not args.browser_evidence:
+                browser_ok = False
+                errors.append("browser evidence required for this tier but --browser-evidence not provided")
+            else:
+                evidence_path = Path(args.browser_evidence).resolve()
+                if not evidence_path.is_file():
+                    browser_ok = False
+                    errors.append(f"missing browser evidence manifest: {evidence_path}")
+                else:
+                    schema_rel = str(browser_cfg.get("manifestSchema", "config/harness/browser-evidence.schema.json"))
+                    schema_path2 = Path(schema_rel)
+                    if not schema_path2.is_absolute():
+                        schema_path2 = (root_env / schema_path2).resolve()
+                    cmd = [
+                        str(root_env / "bin/lacp-browser-evidence-validate"),
+                        "--manifest",
+                        str(evidence_path),
+                        "--schema",
+                        str(schema_path2),
+                        "--max-age-hours",
+                        str(int(browser_cfg.get("maxArtifactAgeHours", 24))),
+                        "--json",
+                    ]
+                    for kind in browser_cfg.get("requiredEntrypointKinds", []):
+                        cmd.extend(["--required-entrypoint-kind", str(kind)])
+                    cp = run_cmd(cmd)
+                    if cp.returncode != 0:
+                        browser_ok = False
+                    try:
+                        browser_details = json.loads(cp.stdout) if cp.stdout.strip() else {}
+                    except Exception:
+                        browser_details = {"raw_output": cp.stdout, "stderr": cp.stderr}
+
+    gate_ok = (
+        len(errors) == 0
+        and docs_drift_ok
+        and checks_ok
+        and review_ok
+        and browser_ok
+    )
+
+    payload = {
+        "ok": gate_ok,
+        "head_sha": head_sha,
+        "risk_tier": risk_tier,
+        "changed_files": changed_files,
+        "required_checks": required_checks,
+        "docs_drift": {
+            "ok": docs_drift_ok,
+            "rules": docs_drift_hits,
+        },
+        "checks": {
+            "ok": checks_ok,
+            "missing": missing_checks,
+            "failed": failed_checks,
+            "stale": stale_checks,
+        },
+        "review": {
+            "required": review_required,
+            "ok": review_ok,
+        },
+        "browser_evidence": {
+            "required": browser_required,
+            "ok": browser_ok,
+            "details": browser_details,
+        },
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        if gate_ok:
+            print(f"[lacp] preflight passed (tier={risk_tier})")
+        else:
+            print(f"[lacp] preflight failed (tier={risk_tier})", file=sys.stderr)
+            for item in errors:
+                print(f" - {item}", file=sys.stderr)
+
+    return 0 if gate_ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

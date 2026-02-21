@@ -22,8 +22,10 @@ Ops:
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
   release-gate  Run strict pre-live go/no-go gates
+  pr-preflight  Evaluate PR policy gates (risk tier/checks/review/evidence)
   harness-validate Validate tasks.json against harness contracts
   harness-run  Execute tasks.json with dependency-aware loop retries
+  browser-evidence-validate Validate browser evidence manifest contract
   orchestrate   Run optional tmux/dmux orchestration through LACP gates
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
@@ -94,11 +96,17 @@ case "${cmd}" in
   release-gate)
     exec "${ROOT}/bin/lacp-release-gate" "$@"
     ;;
+  pr-preflight)
+    exec "${ROOT}/bin/lacp-pr-preflight" "$@"
+    ;;
   harness-validate)
     exec "${ROOT}/bin/lacp-harness-validate" "$@"
     ;;
   harness-run)
     exec "${ROOT}/bin/lacp-harness-run" "$@"
+    ;;
+  browser-evidence-validate)
+    exec "${ROOT}/bin/lacp-browser-evidence-validate" "$@"
     ;;
   orchestrate)
     exec "${ROOT}/bin/lacp-orchestrate" "$@"

@@ -7,12 +7,21 @@ HARNESS_DIR="${ROOT}/config/harness"
 schema_file="${HARNESS_DIR}/tasks.schema.json"
 profiles_file="${HARNESS_DIR}/sandbox-profiles.yaml"
 verify_file="${HARNESS_DIR}/verification-policy.yaml"
+browser_schema_file="${HARNESS_DIR}/browser-evidence.schema.json"
+risk_contract_file="${ROOT}/config/risk-policy-contract.json"
+risk_contract_schema_file="${ROOT}/config/risk-policy-contract.schema.json"
 
 [[ -f "${schema_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${schema_file}" >&2; exit 1; }
 [[ -f "${profiles_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${profiles_file}" >&2; exit 1; }
 [[ -f "${verify_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${verify_file}" >&2; exit 1; }
+[[ -f "${browser_schema_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${browser_schema_file}" >&2; exit 1; }
+[[ -f "${risk_contract_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${risk_contract_file}" >&2; exit 1; }
+[[ -f "${risk_contract_schema_file}" ]] || { echo "[harness-contracts-test] FAIL missing ${risk_contract_schema_file}" >&2; exit 1; }
 
 jq -e '.["$schema"] and .properties.tasks and .properties.tasks.items.properties.sandbox_profile and .properties.tasks.items.properties.verification_policy' "${schema_file}" >/dev/null
+jq -e '.["$schema"] and .properties.flows and .properties.captured_at_utc' "${browser_schema_file}" >/dev/null
+jq -e '.version and .riskTierRules and .mergePolicy and .docsDriftRules and .reviewAgent and .browserEvidence' "${risk_contract_file}" >/dev/null
+jq -e '.["$schema"] and .properties.riskTierRules and .properties.mergePolicy and .properties.docsDriftRules' "${risk_contract_schema_file}" >/dev/null
 
 ruby -e '
 require "yaml"
