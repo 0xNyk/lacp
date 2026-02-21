@@ -44,6 +44,7 @@ bin/lacp release-gate --quick
 bin/lacp orchestrate doctor --json
 scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
+bin/lacp harness-run --tasks ./tasks.json --workdir . --json
 bin/lacp migrate --json
 bin/lacp status
 ```

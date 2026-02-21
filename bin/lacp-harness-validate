@@ -249,6 +249,27 @@ for idx, task in enumerate(tasks.get("tasks", [])):
     if isinstance(vp, str) and vp not in verification_map:
         add_error(errors, f"{prefix}.verification_policy not found in verification catalog: {vp}")
 
+    runner = task.get("runner")
+    if runner is not None:
+        if not isinstance(runner, dict):
+            add_error(errors, f"{prefix}.runner must be an object when provided")
+        else:
+            rcmd = runner.get("command")
+            if not isinstance(rcmd, str) or not rcmd.strip():
+                add_error(errors, f"{prefix}.runner.command must be a non-empty string")
+            renv = runner.get("env")
+            if renv is not None:
+                if not isinstance(renv, dict):
+                    add_error(errors, f"{prefix}.runner.env must be an object when provided")
+                else:
+                    for k, v in renv.items():
+                        if not isinstance(k, str) or not k.strip():
+                            add_error(errors, f"{prefix}.runner.env has invalid key")
+                            break
+                        if not isinstance(v, str):
+                            add_error(errors, f"{prefix}.runner.env[{k}] must be a string")
+                            break
+
 # second pass: dependency existence and self-dep
 for idx, task in enumerate(tasks.get("tasks", [])):
     if not isinstance(task, dict):
@@ -294,4 +315,3 @@ else:
 
 raise SystemExit(0 if ok else 1)
 PY
-

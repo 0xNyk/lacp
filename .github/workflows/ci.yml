@@ -101,6 +101,12 @@ jobs:
           chmod +x scripts/ci/test-harness-validate.sh
           ./scripts/ci/test-harness-validate.sh
 
+      - name: Harness run tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-harness-run.sh
+          ./scripts/ci/test-harness-run.sh
+
       - name: Orchestrate tests
         run: |
           set -euo pipefail
