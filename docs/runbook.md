@@ -39,8 +39,13 @@ bin/lacp knowledge-doctor --json
 bin/lacp report --hours 24
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
+bin/lacp canary --json
+bin/lacp auto-rollback --json
 bin/lacp skill-audit --json
+bin/lacp policy-pack list --json
+bin/lacp policy-pack apply --pack starter --json
 bin/lacp release-gate --quick
+bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json
 bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
 bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json
 bin/lacp worktree doctor --repo-root . --json
@@ -49,6 +54,7 @@ scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json
 bin/lacp migrate --json
+bin/lacp schedule-health status --json
 bin/lacp status
 ```
 
@@ -89,6 +95,14 @@ Useful options:
 - `--cache-min-events <n>`
 - `--skill-path <path>` (repeatable)
 - `--json`
+
+Recommended chained discipline:
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp canary --json | jq
+bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+```
 
 ## Optional Orchestrator Adapter (dmux/tmux/claude_worktree)
 

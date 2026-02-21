@@ -1,0 +1,19 @@
+{
+  "name": "starter",
+  "description": "Balanced defaults for solo local development with conservative remote access.",
+  "sandbox_policy_patch": {
+    "routing": {
+      "remote_provider": "daytona",
+      "cost_ceiling_usd_by_risk_tier": {
+        "safe": 1.0,
+        "review": 5.0,
+        "critical": 10.0
+      }
+    }
+  },
+  "env": {
+    "LACP_ALLOW_EXTERNAL_REMOTE": "false",
+    "LACP_REQUIRE_INPUT_CONTRACT": "true",
+    "LACP_INPUT_CONTRACT_CONFIDENCE_MIN": "0.70"
+  }
+}

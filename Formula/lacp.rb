@@ -27,6 +27,11 @@ class Lacp < Formula
       lacp-remote-setup
       lacp-remote-smoke
       lacp-report
+      lacp-canary
+      lacp-auto-rollback
+      lacp-schedule-health
+      lacp-policy-pack
+      lacp-release-prepare
       lacp-cache-audit
       lacp-cache-guard
       lacp-skill-audit

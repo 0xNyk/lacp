@@ -52,8 +52,15 @@ echo "[ops-test] PASS doctor.fix"
 
 # report should return structured output with run metrics.
 report_json="$("/bin/bash" "${ROOT}/bin/lacp-report" --hours 24 --json)"
+status_json="$("/bin/bash" "${ROOT}/bin/lacp-status-report" --json)"
 assert_eq "$(echo "${report_json}" | jq -r '.window_hours')" "24" "report.window_hours"
 assert_eq "$(echo "${report_json}" | jq -r '.runs.total >= 0')" "true" "report.runs.total"
+assert_eq "$(echo "${report_json}" | jq -r '.observability.wrappers.bin_dir | length > 0')" "true" "report.wrappers.bin_dir"
+assert_eq "$(echo "${report_json}" | jq -r '.observability.wrapper_routed_runs.total >= 0')" "true" "report.wrapper_runs.total"
+assert_eq "$(echo "${report_json}" | jq -r '.schema_version')" "1" "report.schema_version"
+assert_eq "$(echo "${report_json}" | jq -r '.kind')" "report" "report.kind"
+assert_eq "$(echo "${status_json}" | jq -r '.schema_version')" "1" "status.schema_version"
+assert_eq "$(echo "${status_json}" | jq -r '.kind')" "status" "status.kind"
 
 # migrate should dry-run and apply env settings.
 migrate_preview="$("/bin/bash" "${ROOT}/bin/lacp-migrate" --automation-root "${AUTOMATION_ROOT}" --knowledge-root "${KNOWLEDGE_ROOT}" --drafts-root "${DRAFTS_ROOT}" --json)"

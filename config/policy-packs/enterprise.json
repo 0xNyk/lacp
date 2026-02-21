@@ -1,0 +1,20 @@
+{
+  "name": "enterprise",
+  "description": "Higher review budget ceilings and remote-enabled defaults for larger teams with stronger process controls.",
+  "sandbox_policy_patch": {
+    "routing": {
+      "remote_provider": "daytona",
+      "cost_ceiling_usd_by_risk_tier": {
+        "safe": 2.0,
+        "review": 20.0,
+        "critical": 50.0
+      },
+      "max_local_runtime_seconds": 3600
+    }
+  },
+  "env": {
+    "LACP_ALLOW_EXTERNAL_REMOTE": "true",
+    "LACP_REQUIRE_INPUT_CONTRACT": "true",
+    "LACP_INPUT_CONTRACT_CONFIDENCE_MIN": "0.70"
+  }
+}

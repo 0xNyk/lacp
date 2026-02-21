@@ -45,18 +45,21 @@ require_cmd python3
 RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
 LATEST_BENCH="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
 LATEST_SNAPSHOT="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
+WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR}"
 
-report_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${LATEST_BENCH}" "${LATEST_SNAPSHOT}"
+report_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${LATEST_BENCH}" "${LATEST_SNAPSHOT}" "${WRAPPER_BIN_DIR}"
 import datetime as dt
 import glob
 import json
 import pathlib
+import re
 import sys
 
 runs_dir = pathlib.Path(sys.argv[1])
 hours = int(sys.argv[2])
 latest_bench = sys.argv[3]
 latest_snapshot = sys.argv[4]
+wrapper_bin_dir = pathlib.Path(sys.argv[5]).expanduser()
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
 
@@ -82,6 +85,47 @@ blocked_review = sum(1 for r in runs if int(r.get("exit_code", 0)) == 8)
 blocked_critical = sum(1 for r in runs if int(r.get("exit_code", 0)) == 9)
 blocked_budget = sum(1 for r in runs if int(r.get("exit_code", 0)) == 10)
 
+wrapper_tasks = {
+    "interactive claude session": 0,
+    "interactive codex session": 0,
+}
+wrapper_routed_runs = {"claude": 0, "codex": 0}
+for r in runs:
+    task = str(r.get("task", ""))
+    if task in wrapper_tasks:
+        wrapper_tasks[task] += 1
+    cmd = r.get("command", []) or []
+    first = str(cmd[0]) if isinstance(cmd, list) and cmd else ""
+    base = pathlib.Path(first).name
+    if base == "claude.native":
+        wrapper_routed_runs["claude"] += 1
+    elif base == "codex.native":
+        wrapper_routed_runs["codex"] += 1
+
+def wrapper_state(cmd_name: str):
+    wrapper_path = wrapper_bin_dir / cmd_name
+    native_path = wrapper_bin_dir / f"{cmd_name}.native"
+    managed = False
+    target = None
+    if wrapper_path.exists():
+        try:
+            text = wrapper_path.read_text(errors="ignore")
+            managed = "LACP_MANAGED_WRAPPER=1" in text
+            match = re.search(r'^NATIVE=(.+)$', text, re.MULTILINE)
+            if match:
+                raw = match.group(1).strip()
+                if raw and (raw[0] == raw[-1]) and raw[0] in {"'", '"'}:
+                    raw = raw[1:-1]
+                target = raw
+        except Exception:
+            managed = False
+    return {
+        "path": str(wrapper_path),
+        "managed": managed,
+        "native_backup": str(native_path) if native_path.exists() else None,
+        "native_target": target,
+    }
+
 benchmark = {}
 if latest_bench:
     try:
@@ -96,9 +140,24 @@ if latest_bench:
 else:
     benchmark = {"path": None, "gate_ok": None, "summary": {}}
 
+overall_ok = True
+if benchmark.get("gate_ok") is False:
+    overall_ok = False
+
 payload = {
+    "schema_version": "1",
+    "kind": "report",
     "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "ok": overall_ok,
     "window_hours": hours,
+    "summary": {
+        "window_hours": hours,
+        "runs_total": total,
+        "runs_executed": executed,
+        "runs_success": success,
+        "blocked_total": blocked_review + blocked_critical + blocked_budget,
+        "benchmark_gate_ok": benchmark.get("gate_ok"),
+    },
     "runs": {
         "total": total,
         "executed": executed,
@@ -111,6 +170,23 @@ payload = {
     "artifacts": {
         "latest_benchmark": benchmark,
         "latest_snapshot": latest_snapshot or None,
+    },
+    "observability": {
+        "wrappers": {
+            "bin_dir": str(wrapper_bin_dir),
+            "claude": wrapper_state("claude"),
+            "codex": wrapper_state("codex"),
+        },
+        "wrapper_routed_runs": {
+            "claude": wrapper_routed_runs["claude"],
+            "codex": wrapper_routed_runs["codex"],
+            "total": wrapper_routed_runs["claude"] + wrapper_routed_runs["codex"],
+        },
+        "wrapper_task_runs": {
+            "claude": wrapper_tasks["interactive claude session"],
+            "codex": wrapper_tasks["interactive codex session"],
+            "total": wrapper_tasks["interactive claude session"] + wrapper_tasks["interactive codex session"],
+        },
     },
 }
 print(json.dumps(payload, indent=2))
@@ -126,6 +202,9 @@ else
     "  window_hours=\(.window_hours)",
     "  runs.total=\(.runs.total) runs.executed=\(.runs.executed) runs.success=\(.runs.success) runs.success_all=\(.runs.success_all)",
     "  blocked.review=\(.runs.blocked_review) blocked.critical=\(.runs.blocked_critical) blocked.budget=\(.runs.blocked_budget)",
+    "  wrappers.bin_dir=\(.observability.wrappers.bin_dir)",
+    "  wrappers.claude.managed=\(.observability.wrappers.claude.managed) wrappers.codex.managed=\(.observability.wrappers.codex.managed)",
+    "  wrapper_runs.total=\(.observability.wrapper_routed_runs.total) wrapper_tasks.total=\(.observability.wrapper_task_runs.total)",
     "  benchmark.path=\(.artifacts.latest_benchmark.path // "<none>")",
     "  benchmark.gate_ok=\(.artifacts.latest_benchmark.gate_ok)",
     "  snapshot.path=\(.artifacts.latest_snapshot // "<none>")"
