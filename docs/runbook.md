@@ -146,6 +146,12 @@ bin/lacp worktree remove --repo-root . --name "lacp-claude-batch-a" --force --js
 
 # batch orchestration
 bin/lacp orchestrate run --batch ./orchestrate-batch.json --json | jq
+
+# dmux-first swarm lifecycle
+bin/lacp swarm init --manifest ./swarm.json --json | jq
+bin/lacp swarm plan --manifest ./swarm.json --json | jq
+bin/lacp swarm launch --manifest ./swarm.json --json | jq
+bin/lacp swarm status --latest --json | jq
 ```
 
 ## Operating Mode

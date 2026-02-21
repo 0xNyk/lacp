@@ -125,6 +125,12 @@ jobs:
           chmod +x scripts/ci/test-worktree.sh
           ./scripts/ci/test-worktree.sh
 
+      - name: Swarm command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-swarm.sh
+          ./scripts/ci/test-swarm.sh
+
       - name: Orchestrate tests
         run: |
           set -euo pipefail

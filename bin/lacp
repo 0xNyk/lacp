@@ -28,6 +28,7 @@ Ops:
   browser-evidence-validate Validate browser evidence manifest contract
   orchestrate   Run optional tmux/dmux orchestration through LACP gates
   worktree      Manage git worktree lifecycle for isolated agent runs
+  swarm         Manage dmux-first multi-session swarm workflows
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
@@ -114,6 +115,9 @@ case "${cmd}" in
     ;;
   worktree)
     exec "${ROOT}/bin/lacp-worktree" "$@"
+    ;;
+  swarm)
+    exec "${ROOT}/bin/lacp-swarm" "$@"
     ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"
