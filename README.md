@@ -234,6 +234,7 @@ Notes:
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
 - `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
+- `bin/lacp-skill-factory`: operate auto-skill-factory (`summary/capture/record/lifecycle/recluster/revalidate`) with categorized autogen skill bundles
 - `bin/lacp-release-gate`: run strict pre-live go/no-go checks (tests + doctor + cache + skills)
 - `bin/lacp-pr-preflight`: evaluate PR policy gates (risk tier + docs drift + check runs + stale review state)
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
@@ -294,6 +295,7 @@ bin/lacp pr-preflight \
 
 - No secrets in repo configuration files
 - Environment-driven configuration in `.env`
+- Zero-external-cost CI/workflow policy (official `actions/*` only; no paid provider secrets/endpoints in workflows)
 - Policy-driven remote routing
 - External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Risk-tier gating (`safe/review/critical`) with TTL and per-run confirmation controls

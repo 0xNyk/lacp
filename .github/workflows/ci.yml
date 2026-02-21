@@ -29,6 +29,12 @@ jobs:
           set -euo pipefail
           shellcheck bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh
 
+      - name: Workflow cost policy tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-workflow-cost-policy.sh
+          ./scripts/ci/test-workflow-cost-policy.sh
+
       - name: Smoke tests
         run: |
           set -euo pipefail

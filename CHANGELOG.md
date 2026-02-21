@@ -38,6 +38,7 @@ All notable changes to this project will be documented in this file.
 - Worktree command CI coverage: `scripts/ci/test-worktree.sh`.
 - Orchestrate CI expanded with batch-manifest execution coverage.
 - Swarm command CI coverage: `scripts/ci/test-swarm.sh`.
+- Workflow cost-policy gate: `scripts/ci/test-workflow-cost-policy.sh` enforcing official actions-only and blocking paid-provider workflow hooks.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.
@@ -68,5 +69,6 @@ All notable changes to this project will be documented in this file.
 - Approval TTL and explicit confirmation gates for higher-risk operations.
 - `lacp-test --isolated` now enforces `.env` integrity and fails on mutation.
 - Structured input-contract gate for risky sandbox runs (`--input-contract`, exit code `11` on violation).
+- Release workflow no longer depends on third-party actions; uses `gh release` with repository `GITHUB_TOKEN`.
 
 [0.1.0]: https://github.com/0xNyk/lacp/releases/tag/v0.1.0
