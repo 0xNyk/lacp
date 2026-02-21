@@ -126,6 +126,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-cache-audit.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-cache-guard.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-audit.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-harness-contracts.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-orchestrate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-release-gate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-workflow-run.sh"

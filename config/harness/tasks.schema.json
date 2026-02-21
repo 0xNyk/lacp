@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xNyk/lacp/config/harness/tasks.schema.json",
+  "title": "LACP Harness Task Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "spec_id",
+    "generated_at_utc",
+    "orchestrator",
+    "tasks"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "spec_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "orchestrator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reasoning_tier",
+        "memory_keys",
+        "max_restarts_per_task",
+        "default_models"
+      ],
+      "properties": {
+        "reasoning_tier": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "memory_keys": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "max_restarts_per_task": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "default_models": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["planner", "implementer", "verifier"],
+          "properties": {
+            "planner": { "type": "string", "minLength": 1 },
+            "implementer": { "type": "string", "minLength": 1 },
+            "verifier": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "complexity",
+          "depends_on",
+          "primary_model",
+          "reasoning_budget",
+          "iterations",
+          "sandbox_profile",
+          "verification_policy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 5
+          },
+          "description": {
+            "type": "string"
+          },
+          "complexity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+            },
+            "uniqueItems": true
+          },
+          "primary_model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reasoning_budget": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["max_input_tokens", "max_output_tokens"],
+            "properties": {
+              "max_input_tokens": {
+                "type": "integer",
+                "minimum": 256
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 128
+              }
+            }
+          },
+          "iterations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["loop_1_max", "loop_2_max", "quality_loop_max"],
+            "properties": {
+              "loop_1_max": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "loop_2_max": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "quality_loop_max": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 20
+              }
+            }
+          },
+          "sandbox_profile": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+          },
+          "verification_policy": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+          },
+          "escalation_policy": {
+            "type": "string",
+            "enum": [
+              "none",
+              "retry_same_model",
+              "retry_stronger_model",
+              "require_human_review"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
+
