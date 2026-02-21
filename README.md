@@ -239,7 +239,7 @@ Notes:
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
 - `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
-- `bin/lacp-orchestrate`: optional tmux/dmux orchestration adapter (still routed through LACP gates)
+- `bin/lacp-orchestrate`: optional tmux/dmux/claude_worktree orchestration adapter (still routed through LACP gates)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
@@ -343,6 +343,16 @@ bin/lacp orchestrate run \
   --session "lacp-swarm" \
   --command "echo hello" \
   --repo-trust trusted \
+  --dry-run
+
+# claude native worktree isolation through LACP
+bin/lacp orchestrate run \
+  --task "parallel migration stream" \
+  --backend claude_worktree \
+  --session "migration-batch-a" \
+  --command "audit migration changes and propose safe fixes" \
+  --repo-trust trusted \
+  --claude-tmux true \
   --dry-run
 
 # preferred
