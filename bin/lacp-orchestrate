@@ -9,7 +9,7 @@ usage() {
   cat <<'EOF'
 Usage:
   lacp-orchestrate doctor [--json]
-  lacp-orchestrate run --task <text> --backend tmux|dmux --session <name> --command <cmd> [options]
+  lacp-orchestrate run --task <text> --backend tmux|dmux|claude_worktree --session <name> --command <cmd> [options]
 
 Options (run):
   --repo-trust trusted|unknown    Default: unknown
@@ -22,6 +22,7 @@ Options (run):
   --confirm-critical true         Required for critical-risk tasks
   --input-contract <json>         Structured contract for risky runs
   --dry-run                       Plan-only execution
+  --claude-tmux true|false        Enable Claude native --tmux when backend=claude_worktree
   --json                          Output structured JSON
 EOF
 }
@@ -35,10 +36,12 @@ bool_arg() {
 
 cmd_doctor() {
   local as_json="$1"
-  local tmux_path dmux_path default_backend
+  local tmux_path dmux_path claude_path git_path default_backend
 
   tmux_path="$(command -v tmux || true)"
   dmux_path="$(command -v dmux || true)"
+  claude_path="$(command -v claude || true)"
+  git_path="$(command -v git || true)"
   default_backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}"
 
   if [[ "${as_json}" == "true" ]]; then
@@ -46,6 +49,8 @@ cmd_doctor() {
       --arg default_backend "${default_backend}" \
       --arg tmux_path "${tmux_path}" \
       --arg dmux_path "${dmux_path}" \
+      --arg claude_path "${claude_path}" \
+      --arg git_path "${git_path}" \
       '{
         ok: true,
         default_backend: $default_backend,
@@ -57,6 +62,11 @@ cmd_doctor() {
           dmux: {
             available: ($dmux_path != ""),
             command: (if $dmux_path == "" then null else $dmux_path end)
+          },
+          claude_worktree: {
+            available: ($claude_path != "" and $git_path != ""),
+            command: (if $claude_path == "" then null else $claude_path end),
+            git: (if $git_path == "" then null else $git_path end)
           }
         }
       }'
@@ -74,12 +84,18 @@ cmd_doctor() {
   else
     log "dmux=missing"
   fi
+  if [[ -n "${claude_path}" && -n "${git_path}" ]]; then
+    log "claude_worktree=available (claude=${claude_path}, git=${git_path})"
+  else
+    log "claude_worktree=missing (claude=${claude_path:-none}, git=${git_path:-none})"
+  fi
 }
 
 cmd_run() {
   local task="" backend="${LACP_ORCHESTRATOR_BACKEND:-tmux}" session="" command_text=""
   local repo_trust="unknown" internet="false" external_code="false" cpu_heavy="false" long_run="false"
   local estimated_cost_usd="" confirm_budget="false" confirm_critical="false" input_contract=""
+  local claude_tmux="false"
   local dry_run="false" as_json="false"
 
   while [[ $# -gt 0 ]]; do
@@ -97,6 +113,7 @@ cmd_run() {
       --confirm-budget) confirm_budget="$(bool_arg "$2")"; shift 2 ;;
       --confirm-critical) confirm_critical="$(bool_arg "$2")"; shift 2 ;;
       --input-contract) input_contract="$2"; shift 2 ;;
+      --claude-tmux) claude_tmux="$(bool_arg "$2")"; shift 2 ;;
       --dry-run) dry_run="true"; shift ;;
       --json) as_json="true"; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -108,15 +125,24 @@ cmd_run() {
   [[ -n "${session}" ]] || die "--session is required"
   [[ -n "${command_text}" ]] || die "--command is required"
   [[ "${repo_trust}" == "trusted" || "${repo_trust}" == "unknown" ]] || die "--repo-trust must be trusted|unknown"
-  [[ "${backend}" == "tmux" || "${backend}" == "dmux" ]] || die "--backend must be tmux|dmux"
+  [[ "${backend}" == "tmux" || "${backend}" == "dmux" || "${backend}" == "claude_worktree" ]] || die "--backend must be tmux|dmux|claude_worktree"
 
-  local runner="${ROOT}/scripts/runners/${backend}-runner.sh"
+  local runner=""
+  case "${backend}" in
+    tmux|dmux)
+      runner="${ROOT}/scripts/runners/${backend}-runner.sh"
+      ;;
+    claude_worktree)
+      runner="${ROOT}/scripts/runners/claude-worktree-runner.sh"
+      ;;
+  esac
   require_file "${runner}"
 
   export LACP_ORCH_BACKEND="${backend}"
   export LACP_ORCH_SESSION_NAME="${session}"
   export LACP_ORCH_COMMAND="${command_text}"
   export LACP_ORCH_DRY_RUN="${dry_run}"
+  export LACP_CLAUDE_WORKTREE_USE_TMUX="${claude_tmux}"
 
   local -a run_args=(
     --task "${task}"
@@ -177,4 +203,3 @@ main() {
 }
 
 main "$@"
-

@@ -89,7 +89,7 @@ Useful options:
 - `--skill-path <path>` (repeatable)
 - `--json`
 
-## Optional Orchestrator Adapter (tmux/dmux)
+## Optional Orchestrator Adapter (tmux/dmux/claude_worktree)
 
 Use orchestration as an optional layer while keeping LACP as the gatekeeper:
 
@@ -115,6 +115,17 @@ bin/lacp orchestrate run \
   --session "lacp-dmux" \
   --command "codex --help" \
   --repo-trust trusted
+
+# Claude native worktree isolation (safe dry-run)
+bin/lacp orchestrate run \
+  --task "start claude worktree stream" \
+  --backend claude_worktree \
+  --session "lacp-claude-batch-a" \
+  --command "review open migration diffs and suggest fixes" \
+  --repo-trust trusted \
+  --claude-tmux true \
+  --dry-run \
+  --json | jq
 ```
 
 ## Operating Mode

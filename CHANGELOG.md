@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-pr-preflight` to enforce risk-tier required checks, docs drift rules, current-head review state, and browser evidence gates.
 - `config/harness/browser-evidence.schema.json` + `bin/lacp-browser-evidence-validate` for machine-verifiable UI/user-flow evidence.
 - `bin/lacp-orchestrate` optional tmux/dmux adapter (`doctor`, `run`) routed through existing LACP sandbox gates.
+- `lacp-orchestrate` now supports `claude_worktree` backend with optional `--claude-tmux` wiring into Claude native worktree isolation.
+- `scripts/runners/claude-worktree-runner.sh` for policy-gated Claude `--worktree` dispatch.
 - Harness contract layer:
   - `config/harness/tasks.schema.json`
   - `config/harness/sandbox-profiles.yaml`
@@ -27,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - Harness run CI coverage: `scripts/ci/test-harness-run.sh`.
 - Browser evidence CI coverage: `scripts/ci/test-browser-evidence-validate.sh`.
 - PR preflight CI coverage: `scripts/ci/test-pr-preflight.sh`.
+- Orchestrate CI expanded with `claude_worktree` backend coverage.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.

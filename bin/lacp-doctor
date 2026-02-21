@@ -128,6 +128,7 @@ check_cmd python3
 check_cmd rg
 check_cmd jq
 check_cmd curl
+check_cmd git
 
 check_canonical_dir "${LACP_AUTOMATION_ROOT}" "root:automation"
 check_canonical_dir "${LACP_KNOWLEDGE_ROOT}" "root:knowledge"
@@ -301,10 +302,12 @@ DAYTONA_RUNNER="${LACP_ROOT}/scripts/runners/daytona-runner.sh"
 E2B_RUNNER="${LACP_ROOT}/scripts/runners/e2b-runner.sh"
 TMUX_RUNNER="${LACP_ROOT}/scripts/runners/tmux-runner.sh"
 DMUX_RUNNER="${LACP_ROOT}/scripts/runners/dmux-runner.sh"
+CLAUDE_WORKTREE_RUNNER="${LACP_ROOT}/scripts/runners/claude-worktree-runner.sh"
 check_file "${DAYTONA_RUNNER}" "runner_file:daytona"
 check_file "${E2B_RUNNER}" "runner_file:e2b"
 check_file "${TMUX_RUNNER}" "runner_file:tmux"
 check_file "${DMUX_RUNNER}" "runner_file:dmux"
+check_file "${CLAUDE_WORKTREE_RUNNER}" "runner_file:claude_worktree"
 check_file "${LACP_ROOT}/bin/lacp-remote-setup" "bin:lacp-remote-setup"
 check_file "${LACP_ROOT}/bin/lacp-remote-smoke" "bin:lacp-remote-smoke"
 check_file "${LACP_ROOT}/bin/lacp-orchestrate" "bin:lacp-orchestrate"
@@ -377,6 +380,12 @@ if command -v tmux >/dev/null 2>&1; then
   add_check "cli:tmux" "PASS" "$(command -v tmux)"
 else
   add_check "cli:tmux" "WARN" "missing (optional unless using tmux orchestration)"
+fi
+
+if command -v claude >/dev/null 2>&1; then
+  add_check "cli:claude" "PASS" "$(command -v claude)"
+else
+  add_check "cli:claude" "WARN" "missing (optional unless using claude_worktree orchestration)"
 fi
 
 if command -v dmux >/dev/null 2>&1; then
