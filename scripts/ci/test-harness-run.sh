@@ -134,6 +134,16 @@ ok_json="$("${ROOT}/bin/lacp-harness-run" \
 
 echo "${ok_json}" | jq -e '.ok == true' >/dev/null
 echo "${ok_json}" | jq -e '.summary.succeeded == 2' >/dev/null
+echo "${ok_json}" | jq -e '.summary.receipts_total >= 2' >/dev/null
+echo "${ok_json}" | jq -e '.summary.receipt_chain_head | length > 0' >/dev/null
+
+run_dir="$(echo "${ok_json}" | jq -r '.run_dir')"
+first_receipt="$(jq -r '.receipt.receipt_hash' "${run_dir}/task-a/loop1-attempt-01.json")"
+second_prev="$(jq -r '.receipt.prev_receipt_hash' "${run_dir}/task-b/loop1-attempt-01.json")"
+if [[ "${first_receipt}" != "${second_prev}" ]]; then
+  echo "[harness-run-test] FAIL receipt chain mismatch between task-a and task-b" >&2
+  exit 1
+fi
 
 set +e
 "${ROOT}/bin/lacp-harness-run" \
@@ -151,4 +161,3 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 
 echo "[harness-run-test] harness run tests passed"
-
