@@ -51,7 +51,7 @@ class Lacp < Formula
       lacp-workflow-run
       lacp-test
     ].each do |cmd|
-      (bin/cmd).write_env_script(libexec/"bin/#{cmd}")
+      (bin/cmd).write_env_script(libexec/"bin/#{cmd}", {})
     end
   end
 
