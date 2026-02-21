@@ -42,8 +42,24 @@ bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --jso
 bin/lacp skill-audit --json
 bin/lacp release-gate --quick
 bin/lacp orchestrate doctor --json
+scripts/ci/test-harness-contracts.sh
 bin/lacp migrate --json
 bin/lacp status
+```
+
+## Harness Contracts (Specs -> Tasks -> Loops)
+
+Use these files as the source of truth for harness workflows:
+
+- `config/harness/tasks.schema.json`
+- `config/harness/sandbox-profiles.yaml`
+- `config/harness/verification-policy.yaml`
+
+Validate locally:
+
+```bash
+cd ~/control/frameworks/lacp
+./scripts/ci/test-harness-contracts.sh
 ```
 
 ## Pre-Live Go/No-Go Gate

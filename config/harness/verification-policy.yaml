@@ -1,0 +1,51 @@
+version: "1.0"
+default_policy: "code-quality-default"
+policies:
+  code-quality-default:
+    description: "Standard engineering loop: lint, tests, and smoke checks."
+    required:
+      checks:
+        - id: "lint"
+          command: "shellcheck bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh"
+        - id: "unit-tests"
+          command: "bin/lacp test --quick"
+        - id: "smoke"
+          command: "scripts/ci/smoke.sh"
+    thresholds:
+      min_passed_checks: 3
+      max_flaky_retries: 1
+      max_regression_budget: 0
+    failure_action: "require_human_review"
+
+  security-sensitive:
+    description: "High-stakes paths require strict security checks and full suite."
+    required:
+      checks:
+        - id: "security-controls"
+          command: "scripts/ci/test-security-controls.sh"
+        - id: "skill-audit"
+          command: "bin/lacp skill-audit --json"
+        - id: "release-gate"
+          command: "bin/lacp release-gate --quick --json"
+        - id: "full-isolated-tests"
+          command: "bin/lacp test --isolated"
+    thresholds:
+      min_passed_checks: 4
+      max_flaky_retries: 0
+      max_regression_budget: 0
+    failure_action: "block"
+
+  research-nonprod:
+    description: "Fast iteration for non-production research loops."
+    required:
+      checks:
+        - id: "quick-tests"
+          command: "bin/lacp test --quick"
+        - id: "cache-guard"
+          command: "bin/lacp cache-guard --hours 24 --min-hit-rate 0.60 --min-usage-events 20 --json"
+    thresholds:
+      min_passed_checks: 2
+      max_flaky_retries: 2
+      max_regression_budget: 1
+    failure_action: "retry_stronger_model"
+
