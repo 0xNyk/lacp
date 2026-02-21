@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-canary [options]
+
+Evaluate canary health for promotion readiness using recent benchmark artifacts.
+
+Options:
+  --days <n>                 Lookback window in days (default: 7)
+  --min-hit-rate <n>         Minimum average hit_rate_at_k (default: 0.90)
+  --min-mrr <n>              Minimum average mrr_at_k (default: 0.65)
+  --max-triage-issues <n>    Maximum total triage issues in window (default: 2)
+  --json                     Print JSON payload
+  -h, --help                 Show this help
+EOF
+}
+
+DAYS="${LACP_CANARY_DAYS}"
+MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE}"
+MIN_MRR="${LACP_CANARY_MIN_MRR}"
+MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES}"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)
+      DAYS="$2"
+      shift 2
+      ;;
+    --min-hit-rate)
+      MIN_HIT_RATE="$2"
+      shift 2
+      ;;
+    --min-mrr)
+      MIN_MRR="$2"
+      shift 2
+      ;;
+    --max-triage-issues)
+      MAX_TRIAGE_ISSUES="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd python3
+require_cmd jq
+
+BENCH_DIR="${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
+
+result_json="$(python3 - <<'PY' "${BENCH_DIR}" "${DAYS}" "${MIN_HIT_RATE}" "${MIN_MRR}" "${MAX_TRIAGE_ISSUES}"
+import datetime as dt
+import json
+import pathlib
+import statistics
+import sys
+
+bench_dir = pathlib.Path(sys.argv[1])
+days = int(sys.argv[2])
+min_hit = float(sys.argv[3])
+min_mrr = float(sys.argv[4])
+max_triage_issues = int(sys.argv[5])
+
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(days=days)
+
+rows = []
+if bench_dir.exists():
+    for path in sorted(bench_dir.glob("benchmark-*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            continue
+
+        ts = payload.get("generated_at_utc")
+        if ts:
+            try:
+                generated = dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+            except Exception:
+                generated = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
+        else:
+            generated = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
+
+        if generated < cutoff:
+            continue
+
+        summary = payload.get("summary", {}) or {}
+        triage = payload.get("triage", {}) or {}
+        rows.append(
+            {
+                "path": str(path),
+                "generated_at_utc": generated.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "gate_ok": bool(payload.get("gate_ok", False)),
+                "hit_rate_at_k": float(summary.get("hit_rate_at_k", 0.0) or 0.0),
+                "mrr_at_k": float(summary.get("mrr_at_k", 0.0) or 0.0),
+                "triage_issue_count": int(triage.get("issue_count", 0) or 0),
+            }
+        )
+
+rows.sort(key=lambda r: r["generated_at_utc"])
+
+failures = []
+if len(rows) < days:
+    failures.append(f"insufficient benchmarks in window: expected >= {days}, got {len(rows)}")
+
+if rows:
+    avg_hit = statistics.fmean(r["hit_rate_at_k"] for r in rows)
+    avg_mrr = statistics.fmean(r["mrr_at_k"] for r in rows)
+    triage_total = sum(r["triage_issue_count"] for r in rows)
+    gate_failures = sum(1 for r in rows if not r["gate_ok"])
+else:
+    avg_hit = 0.0
+    avg_mrr = 0.0
+    triage_total = 0
+    gate_failures = 0
+
+if avg_hit < min_hit:
+    failures.append(f"avg hit_rate_at_k below threshold: {avg_hit:.4f} < {min_hit:.4f}")
+if avg_mrr < min_mrr:
+    failures.append(f"avg mrr_at_k below threshold: {avg_mrr:.4f} < {min_mrr:.4f}")
+if triage_total > max_triage_issues:
+    failures.append(f"triage issues exceed threshold: {triage_total} > {max_triage_issues}")
+if gate_failures > 0:
+    failures.append(f"gate_ok failed in {gate_failures} benchmark(s)")
+
+ok = len(failures) == 0
+
+payload = {
+    "schema_version": "1",
+    "kind": "canary",
+    "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "window": {
+        "days": days,
+        "cutoff_utc": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    },
+    "thresholds": {
+        "min_hit_rate_at_k": min_hit,
+        "min_mrr_at_k": min_mrr,
+        "max_triage_issues": max_triage_issues,
+        "min_benchmark_count": days,
+    },
+    "summary": {
+        "benchmark_count": len(rows),
+        "avg_hit_rate_at_k": avg_hit,
+        "avg_mrr_at_k": avg_mrr,
+        "triage_issues_total": triage_total,
+        "gate_failures": gate_failures,
+    },
+    "promotion_ready": ok,
+    "ok": ok,
+    "failures": failures,
+    "samples": rows,
+}
+print(json.dumps(payload, indent=2))
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+  exit 0
+fi
+
+echo "${result_json}" | jq -r '
+  "LACP Canary",
+  "  generated_at_utc=\(.generated_at_utc)",
+  "  window.days=\(.window.days) sample_count=\(.summary.benchmark_count)",
+  "  avg.hit_rate_at_k=\(.summary.avg_hit_rate_at_k) avg.mrr_at_k=\(.summary.avg_mrr_at_k)",
+  "  triage.total=\(.summary.triage_issues_total) gate_failures=\(.summary.gate_failures)",
+  "  promotion_ready=\(.promotion_ready)",
+  (if (.failures | length) > 0 then ("  failures=" + (.failures | join(" | "))) else "  failures=<none>" end)
+'
+
+if [[ "$(echo "${result_json}" | jq -r '.ok')" != "true" ]]; then
+  exit 1
+fi

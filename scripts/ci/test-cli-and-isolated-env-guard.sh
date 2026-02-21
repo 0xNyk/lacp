@@ -27,6 +27,11 @@ fi
 "${ROOT}/bin/lacp" incident-drill --help >/dev/null
 "${ROOT}/bin/lacp" cache-audit --help >/dev/null
 "${ROOT}/bin/lacp" cache-guard --help >/dev/null
+"${ROOT}/bin/lacp" canary --help >/dev/null
+"${ROOT}/bin/lacp" auto-rollback --help >/dev/null
+"${ROOT}/bin/lacp" schedule-health --help >/dev/null
+"${ROOT}/bin/lacp" policy-pack --help >/dev/null
+"${ROOT}/bin/lacp" release-prepare --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null
 "${ROOT}/bin/lacp" skill-factory --help >/dev/null
 "${ROOT}/bin/lacp" adopt-local --help >/dev/null

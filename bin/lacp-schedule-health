@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-schedule-health install [options]
+  lacp-schedule-health status [options]
+  lacp-schedule-health run-now [options]
+  lacp-schedule-health uninstall [options]
+
+Options:
+  --interval-min <n>      Schedule interval in minutes (default: 60)
+  --label <name>          launchd label (default: com.lacp.healthcheck)
+  --plist <path>          plist path (default: ~/Library/LaunchAgents/<label>.plist)
+  --runner <path>         runner script path (default: $LACP_AUTOMATION_ROOT/scripts/lacp-health-check.sh)
+  --skip-load             Skip launchctl load/unload operations
+  --dry-run               Print actions only
+  --json                  Print JSON payload
+  -h, --help              Show this help
+EOF
+}
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+INTERVAL_MIN="60"
+LABEL="com.lacp.healthcheck"
+PLIST_PATH=""
+RUNNER_PATH=""
+SKIP_LOAD=0
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interval-min) INTERVAL_MIN="$2"; shift 2 ;;
+    --label) LABEL="$2"; shift 2 ;;
+    --plist) PLIST_PATH="$2"; shift 2 ;;
+    --runner) RUNNER_PATH="$2"; shift 2 ;;
+    --skip-load) SKIP_LOAD=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+[[ "${INTERVAL_MIN}" =~ ^[0-9]+$ ]] || die "--interval-min must be a non-negative integer"
+if [[ -z "${PLIST_PATH}" ]]; then
+  PLIST_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
+fi
+if [[ -z "${RUNNER_PATH}" ]]; then
+  RUNNER_PATH="${LACP_AUTOMATION_ROOT}/scripts/lacp-health-check.sh"
+fi
+
+launchctl_path="$(command -v launchctl || true)"
+launchctl_available="false"
+if [[ -n "${launchctl_path}" ]]; then
+  launchctl_available="true"
+fi
+
+emit_json() {
+  local ok="$1"
+  local action="$2"
+  local installed="$3"
+  local loaded="$4"
+  jq -n \
+    --arg schema_version "1" \
+    --arg kind "schedule_health" \
+    --arg action "${action}" \
+    --arg label "${LABEL}" \
+    --arg plist_path "${PLIST_PATH}" \
+    --arg runner_path "${RUNNER_PATH}" \
+    --argjson interval_min "${INTERVAL_MIN}" \
+    --argjson ok "$([[ "${ok}" == "true" ]] && echo true || echo false)" \
+    --argjson installed "$([[ "${installed}" == "true" ]] && echo true || echo false)" \
+    --argjson loaded "$([[ "${loaded}" == "true" ]] && echo true || echo false)" \
+    --argjson launchctl_available "$([[ "${launchctl_available}" == "true" ]] && echo true || echo false)" \
+    --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    '{
+      schema_version: $schema_version,
+      kind: $kind,
+      ok: $ok,
+      action: $action,
+      label: $label,
+      interval_min: $interval_min,
+      plist_path: $plist_path,
+      runner_path: $runner_path,
+      launchctl_available: $launchctl_available,
+      installed: $installed,
+      loaded: $loaded,
+      dry_run: $dry_run
+    }'
+}
+
+write_runner() {
+  local runner_dir
+  runner_dir="$(dirname "${RUNNER_PATH}")"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+  mkdir -p "${runner_dir}"
+  cat > "${RUNNER_PATH}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+LACP_ROOT=$(printf '%q' "${ROOT}")
+ts="\$(date -u +%Y%m%dT%H%M%SZ)"
+out_dir="${LACP_KNOWLEDGE_ROOT}/data/health"
+mkdir -p "\${out_dir}"
+"\${LACP_ROOT}/bin/lacp-doctor" --json > "\${out_dir}/doctor-\${ts}.json"
+"\${LACP_ROOT}/bin/lacp-status-report" --json > "\${out_dir}/status-\${ts}.json"
+"\${LACP_ROOT}/bin/lacp-report" --hours "${LACP_VERIFY_HOURS}" --json > "\${out_dir}/report-\${ts}.json"
+cp "\${out_dir}/doctor-\${ts}.json" "\${out_dir}/latest-doctor.json"
+cp "\${out_dir}/status-\${ts}.json" "\${out_dir}/latest-status.json"
+cp "\${out_dir}/report-\${ts}.json" "\${out_dir}/latest-report.json"
+EOF
+  chmod +x "${RUNNER_PATH}"
+}
+
+write_plist() {
+  local plist_dir
+  plist_dir="$(dirname "${PLIST_PATH}")"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+  mkdir -p "${plist_dir}"
+  cat > "${PLIST_PATH}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${RUNNER_PATH}</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>${INTERVAL_MIN}</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${LACP_KNOWLEDGE_ROOT}/data/health/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LACP_KNOWLEDGE_ROOT}/data/health/launchd.err.log</string>
+</dict>
+</plist>
+EOF
+}
+
+is_loaded() {
+  if [[ "${launchctl_available}" != "true" ]]; then
+    echo "false"
+    return 0
+  fi
+  if launchctl list 2>/dev/null | rg -q "${LABEL}"; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
+case "${SUB}" in
+  install)
+    write_runner
+    write_plist
+    if [[ "${SKIP_LOAD}" -ne 1 && "${DRY_RUN}" -eq 0 && "${launchctl_available}" == "true" ]]; then
+      launchctl unload "${PLIST_PATH}" >/dev/null 2>&1 || true
+      launchctl load -w "${PLIST_PATH}"
+    fi
+    installed="false"
+    if [[ -f "${PLIST_PATH}" ]]; then
+      installed="true"
+    fi
+    loaded="$(is_loaded)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_json "true" "install" "${installed}" "${loaded}"
+    else
+      log "schedule-health installed label=${LABEL} plist=${PLIST_PATH} runner=${RUNNER_PATH} loaded=${loaded}"
+    fi
+    ;;
+  status)
+    installed="false"
+    if [[ -f "${PLIST_PATH}" ]]; then
+      installed="true"
+    fi
+    loaded="$(is_loaded)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_json "true" "status" "${installed}" "${loaded}"
+    else
+      log "schedule-health status installed=${installed} loaded=${loaded} label=${LABEL}"
+    fi
+    ;;
+  run-now)
+    if [[ ! -x "${RUNNER_PATH}" ]]; then
+      die "Runner missing or not executable: ${RUNNER_PATH}"
+    fi
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      "/bin/bash" "${RUNNER_PATH}"
+    fi
+    installed="false"
+    if [[ -f "${PLIST_PATH}" ]]; then
+      installed="true"
+    fi
+    loaded="$(is_loaded)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_json "true" "run-now" "${installed}" "${loaded}"
+    else
+      log "schedule-health run-now complete"
+    fi
+    ;;
+  uninstall)
+    if [[ "${SKIP_LOAD}" -ne 1 && "${DRY_RUN}" -eq 0 && "${launchctl_available}" == "true" ]]; then
+      launchctl unload "${PLIST_PATH}" >/dev/null 2>&1 || true
+    fi
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      rm -f "${PLIST_PATH}"
+    fi
+    installed="false"
+    if [[ -f "${PLIST_PATH}" ]]; then
+      installed="true"
+    fi
+    loaded="$(is_loaded)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_json "true" "uninstall" "${installed}" "${loaded}"
+    else
+      log "schedule-health uninstalled label=${LABEL} plist=${PLIST_PATH}"
+    fi
+    ;;
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac
