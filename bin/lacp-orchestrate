@@ -10,6 +10,7 @@ usage() {
 Usage:
   lacp-orchestrate doctor [--json]
   lacp-orchestrate run --task <text> --backend tmux|dmux|claude_worktree --session <name> --command <cmd> [options]
+  lacp-orchestrate run --batch <jobs.json> [options]
 
 Options (run):
   --repo-trust trusted|unknown    Default: unknown
@@ -23,6 +24,8 @@ Options (run):
   --input-contract <json>         Structured contract for risky runs
   --dry-run                       Plan-only execution
   --claude-tmux true|false        Enable Claude native --tmux when backend=claude_worktree
+  --batch <path>                  Run multiple orchestration jobs from JSON manifest
+  --continue-on-error true|false  Continue batch after a failed job (default false)
   --json                          Output structured JSON
 EOF
 }
@@ -96,6 +99,7 @@ cmd_run() {
   local repo_trust="unknown" internet="false" external_code="false" cpu_heavy="false" long_run="false"
   local estimated_cost_usd="" confirm_budget="false" confirm_critical="false" input_contract=""
   local claude_tmux="false"
+  local batch_file="" continue_on_error="false"
   local dry_run="false" as_json="false"
 
   while [[ $# -gt 0 ]]; do
@@ -114,12 +118,218 @@ cmd_run() {
       --confirm-critical) confirm_critical="$(bool_arg "$2")"; shift 2 ;;
       --input-contract) input_contract="$2"; shift 2 ;;
       --claude-tmux) claude_tmux="$(bool_arg "$2")"; shift 2 ;;
+      --batch) batch_file="$2"; shift 2 ;;
+      --continue-on-error) continue_on_error="$(bool_arg "$2")"; shift 2 ;;
       --dry-run) dry_run="true"; shift ;;
       --json) as_json="true"; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown argument: $1" ;;
     esac
   done
+
+  if [[ -n "${batch_file}" ]]; then
+    require_file "${batch_file}"
+    local -a job_lines=()
+    mapfile -t job_lines < <(
+      python3 - <<'PY' "${batch_file}" "${continue_on_error}"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text())
+cli_continue = sys.argv[2] == "true"
+
+if isinstance(payload, list):
+    jobs = payload
+    batch_continue = cli_continue
+elif isinstance(payload, dict):
+    jobs = payload.get("jobs", [])
+    batch_continue = bool(payload.get("continue_on_error", cli_continue))
+else:
+    raise SystemExit("batch manifest must be array or object")
+
+if not isinstance(jobs, list) or not jobs:
+    raise SystemExit("batch manifest has no jobs")
+
+print(json.dumps({"batch_continue_on_error": batch_continue}))
+for job in jobs:
+    if not isinstance(job, dict):
+        raise SystemExit("all jobs must be objects")
+    print(json.dumps(job, separators=(",", ":")))
+PY
+    )
+
+    [[ "${#job_lines[@]}" -ge 2 ]] || die "batch manifest has no valid jobs"
+
+    local batch_meta="${job_lines[0]}"
+    local effective_continue_on_error
+    effective_continue_on_error="$(jq -r '.batch_continue_on_error' <<<"${batch_meta}")"
+
+    local total=0 succeeded=0 failed=0
+    local jobs_json='[]'
+    local idx=0
+    local any_failed="false"
+
+    for job_json in "${job_lines[@]:1}"; do
+      idx=$((idx + 1))
+      total=$((total + 1))
+
+      local j_task j_backend j_session j_command
+      local j_repo_trust j_internet j_external_code j_cpu_heavy j_long_run
+      local j_estimated_cost j_confirm_budget j_confirm_critical j_input_contract
+      local j_claude_tmux j_dry_run
+
+      j_task="$(jq -r --arg d "${task}" '.task // $d' <<<"${job_json}")"
+      j_backend="$(jq -r --arg d "${backend}" '.backend // $d' <<<"${job_json}")"
+      j_session="$(jq -r --arg d "${session}" '.session // $d' <<<"${job_json}")"
+      j_command="$(jq -r --arg d "${command_text}" '.command // $d' <<<"${job_json}")"
+      j_repo_trust="$(jq -r --arg d "${repo_trust}" '.repo_trust // $d' <<<"${job_json}")"
+      j_internet="$(jq -r --arg d "${internet}" '.internet // $d' <<<"${job_json}")"
+      j_external_code="$(jq -r --arg d "${external_code}" '.external_code // $d' <<<"${job_json}")"
+      j_cpu_heavy="$(jq -r --arg d "${cpu_heavy}" '.cpu_heavy // $d' <<<"${job_json}")"
+      j_long_run="$(jq -r --arg d "${long_run}" '.long_run // $d' <<<"${job_json}")"
+      j_estimated_cost="$(jq -r '.estimated_cost_usd // empty' <<<"${job_json}")"
+      j_confirm_budget="$(jq -r '.confirm_budget // false' <<<"${job_json}")"
+      j_confirm_critical="$(jq -r '.confirm_critical // false' <<<"${job_json}")"
+      j_input_contract="$(jq -c '.input_contract // empty' <<<"${job_json}")"
+      j_claude_tmux="$(jq -r --arg d "${claude_tmux}" '.claude_tmux // $d' <<<"${job_json}")"
+      j_dry_run="$(jq -r --arg d "${dry_run}" '.dry_run // $d' <<<"${job_json}")"
+
+      local missing_reason=""
+      if [[ "${j_task}" == "null" || -z "${j_task}" ]]; then
+        missing_reason="missing task"
+      elif [[ "${j_session}" == "null" || -z "${j_session}" ]]; then
+        missing_reason="missing session"
+      elif [[ "${j_command}" == "null" || -z "${j_command}" ]]; then
+        missing_reason="missing command"
+      fi
+      if [[ -n "${missing_reason}" ]]; then
+        local invalid_result
+        invalid_result="$(jq -n \
+          --argjson index "${idx}" \
+          --arg task "${j_task}" \
+          --arg backend "${j_backend}" \
+          --arg session "${j_session}" \
+          --arg command "${j_command}" \
+          --arg reason "${missing_reason}" \
+          '{
+            index:$index,
+            task:(if $task == "null" then "" else $task end),
+            backend:(if $backend == "null" then "" else $backend end),
+            session:(if $session == "null" then "" else $session end),
+            command:(if $command == "null" then "" else $command end),
+            ok:false,
+            exit_code:2,
+            output:("invalid batch job: " + $reason)
+          }')"
+        jobs_json="$(jq -c --argjson item "${invalid_result}" '. + [$item]' <<<"${jobs_json}")"
+        failed=$((failed + 1))
+        any_failed="true"
+        if [[ "${effective_continue_on_error}" != "true" ]]; then
+          break
+        fi
+        continue
+      fi
+
+      local -a one_args=(
+        run
+        --task "${j_task}"
+        --backend "${j_backend}"
+        --session "${j_session}"
+        --command "${j_command}"
+        --repo-trust "${j_repo_trust}"
+        --internet "${j_internet}"
+        --external-code "${j_external_code}"
+        --cpu-heavy "${j_cpu_heavy}"
+        --long-run "${j_long_run}"
+        --claude-tmux "${j_claude_tmux}"
+        --json
+      )
+
+      if [[ -n "${j_estimated_cost}" ]]; then
+        one_args+=(--estimated-cost-usd "${j_estimated_cost}")
+      fi
+      if [[ "${j_confirm_budget}" == "true" ]]; then
+        one_args+=(--confirm-budget true)
+      fi
+      if [[ "${j_confirm_critical}" == "true" ]]; then
+        one_args+=(--confirm-critical true)
+      fi
+      if [[ -n "${j_input_contract}" && "${j_input_contract}" != "null" ]]; then
+        one_args+=(--input-contract "${j_input_contract}")
+      fi
+      if [[ "${j_dry_run}" == "true" ]]; then
+        one_args+=(--dry-run)
+      fi
+
+      set +e
+      local run_out
+      run_out="$("${ROOT}/bin/lacp-orchestrate" "${one_args[@]}" 2>&1)"
+      local run_rc=$?
+      set -e
+
+      local job_result
+      job_result="$(jq -n \
+        --argjson index "${idx}" \
+        --arg task "${j_task}" \
+        --arg backend "${j_backend}" \
+        --arg session "${j_session}" \
+        --arg command "${j_command}" \
+        --argjson exit_code "${run_rc}" \
+        --arg output "${run_out}" \
+        '{
+          index:$index,
+          task:$task,
+          backend:$backend,
+          session:$session,
+          command:$command,
+          ok:($exit_code==0),
+          exit_code:$exit_code,
+          output:$output
+        }')"
+      jobs_json="$(jq -c --argjson item "${job_result}" '. + [$item]' <<<"${jobs_json}")"
+
+      if [[ "${run_rc}" -eq 0 ]]; then
+        succeeded=$((succeeded + 1))
+      else
+        failed=$((failed + 1))
+        any_failed="true"
+        if [[ "${effective_continue_on_error}" != "true" ]]; then
+          break
+        fi
+      fi
+    done
+
+    local batch_ok="true"
+    if [[ "${any_failed}" == "true" ]]; then
+      batch_ok="false"
+    fi
+
+    if [[ "${as_json}" == "true" ]]; then
+      jq -n \
+        --argjson ok "$( [[ "${batch_ok}" == "true" ]] && echo true || echo false )" \
+        --argjson continue_on_error "$( [[ "${effective_continue_on_error}" == "true" ]] && echo true || echo false )" \
+        --argjson total "${total}" \
+        --argjson succeeded "${succeeded}" \
+        --argjson failed "${failed}" \
+        --argjson jobs "${jobs_json}" \
+        '{
+          ok:$ok,
+          summary:{
+            total:$total,
+            succeeded:$succeeded,
+            failed:$failed,
+            continue_on_error:$continue_on_error
+          },
+          jobs:$jobs
+        }'
+    else
+      log "batch complete total=${total} succeeded=${succeeded} failed=${failed} continue_on_error=${effective_continue_on_error}"
+    fi
+    [[ "${batch_ok}" == "true" ]]
+    return $?
+  fi
 
   [[ -n "${task}" ]] || die "--task is required"
   [[ -n "${session}" ]] || die "--session is required"

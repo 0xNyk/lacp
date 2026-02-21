@@ -102,4 +102,102 @@ export LACP_DMUX_RUN_TEMPLATE='dmux run --session "{session}" --command "{comman
   --repo-trust trusted \
   --claude-tmux false >/dev/null
 
+# batch manifest run (all success)
+cat > "${TMP}/batch-success.json" <<'EOF'
+{
+  "continue_on_error": false,
+  "jobs": [
+    {
+      "task": "batch job tmux",
+      "backend": "tmux",
+      "session": "batch-tmux",
+      "command": "echo batch tmux",
+      "repo_trust": "trusted",
+      "dry_run": true
+    },
+    {
+      "task": "batch job claude",
+      "backend": "claude_worktree",
+      "session": "batch-claude",
+      "command": "summarize batch",
+      "repo_trust": "trusted",
+      "claude_tmux": true,
+      "dry_run": true
+    }
+  ]
+}
+EOF
+
+"${ROOT}/bin/lacp-orchestrate" run \
+  --batch "${TMP}/batch-success.json" \
+  --json | jq -e '.ok == true and .summary.total == 2 and .summary.failed == 0' >/dev/null
+
+# batch stop-on-error behavior
+cat > "${TMP}/batch-fail-stop.json" <<'EOF'
+{
+  "continue_on_error": false,
+  "jobs": [
+    {
+      "task": "batch missing command",
+      "backend": "tmux",
+      "session": "batch-bad",
+      "repo_trust": "trusted",
+      "dry_run": true
+    },
+    {
+      "task": "batch should not run",
+      "backend": "dmux",
+      "session": "batch-skip",
+      "command": "echo skip",
+      "repo_trust": "trusted",
+      "dry_run": true
+    }
+  ]
+}
+EOF
+
+set +e
+stop_json="$("${ROOT}/bin/lacp-orchestrate" run --batch "${TMP}/batch-fail-stop.json" --json)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 1 ]]; then
+  echo "[orchestrate-test] FAIL expected batch stop-on-error rc=1, got ${rc}" >&2
+  exit 1
+fi
+echo "${stop_json}" | jq -e '.ok == false and .summary.total == 1 and .summary.failed == 1' >/dev/null
+
+# batch continue-on-error behavior
+cat > "${TMP}/batch-fail-continue.json" <<'EOF'
+{
+  "continue_on_error": true,
+  "jobs": [
+    {
+      "task": "batch missing command continue",
+      "backend": "tmux",
+      "session": "batch-bad2",
+      "repo_trust": "trusted",
+      "dry_run": true
+    },
+    {
+      "task": "batch should run",
+      "backend": "dmux",
+      "session": "batch-run2",
+      "command": "echo continue",
+      "repo_trust": "trusted",
+      "dry_run": true
+    }
+  ]
+}
+EOF
+
+set +e
+cont_json="$("${ROOT}/bin/lacp-orchestrate" run --batch "${TMP}/batch-fail-continue.json" --json)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 1 ]]; then
+  echo "[orchestrate-test] FAIL expected batch continue-on-error rc=1 with failed job, got ${rc}" >&2
+  exit 1
+fi
+echo "${cont_json}" | jq -e '.ok == false and .summary.total == 2 and .summary.failed == 1 and .summary.succeeded == 1 and .summary.continue_on_error == true' >/dev/null
+
 echo "[orchestrate-test] orchestrate tests passed"
