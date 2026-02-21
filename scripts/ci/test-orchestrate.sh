@@ -34,6 +34,7 @@ export LACP_REQUIRE_INPUT_CONTRACT="false"
 
 # Doctor should render both backends.
 doctor_json="$("${ROOT}/bin/lacp-orchestrate" doctor --json)"
+echo "${doctor_json}" | jq -e '.default_backend == "dmux"' >/dev/null
 echo "${doctor_json}" | jq -e '.backends.tmux.available == true' >/dev/null
 echo "${doctor_json}" | jq -e '.backends.dmux.available == true' >/dev/null
 echo "${doctor_json}" | jq -e '.backends.claude_worktree.available == true' >/dev/null

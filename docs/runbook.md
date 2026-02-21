@@ -90,13 +90,23 @@ Useful options:
 - `--skill-path <path>` (repeatable)
 - `--json`
 
-## Optional Orchestrator Adapter (tmux/dmux/claude_worktree)
+## Optional Orchestrator Adapter (dmux/tmux/claude_worktree)
 
 Use orchestration as an optional layer while keeping LACP as the gatekeeper:
 
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp orchestrate doctor --json | jq
+
+# dmux (default backend, safe dry-run)
+bin/lacp orchestrate run \
+  --task "start dmux swarm" \
+  --backend dmux \
+  --session "lacp-dmux" \
+  --command "codex --help" \
+  --repo-trust trusted \
+  --dry-run \
+  --json | jq
 
 # tmux (safe dry-run)
 bin/lacp orchestrate run \
@@ -111,9 +121,9 @@ bin/lacp orchestrate run \
 # dmux live execution requires a template
 export LACP_DMUX_RUN_TEMPLATE='dmux run --session "{session}" --command "{command}"'
 bin/lacp orchestrate run \
-  --task "start dmux swarm" \
+  --task "start dmux swarm live" \
   --backend dmux \
-  --session "lacp-dmux" \
+  --session "lacp-dmux-live" \
   --command "codex --help" \
   --repo-trust trusted
 
