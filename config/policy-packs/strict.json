@@ -1,0 +1,20 @@
+{
+  "name": "strict",
+  "description": "Hard guardrails for high-assurance local use; tight budget ceilings and local-only default.",
+  "sandbox_policy_patch": {
+    "routing": {
+      "remote_provider": "daytona",
+      "cost_ceiling_usd_by_risk_tier": {
+        "safe": 0.5,
+        "review": 2.0,
+        "critical": 5.0
+      },
+      "max_local_runtime_seconds": 1200
+    }
+  },
+  "env": {
+    "LACP_ALLOW_EXTERNAL_REMOTE": "false",
+    "LACP_REQUIRE_INPUT_CONTRACT": "true",
+    "LACP_INPUT_CONTRACT_CONFIDENCE_MIN": "0.80"
+  }
+}

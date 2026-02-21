@@ -75,8 +75,10 @@ LATEST_REMOTE_SMOKE="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/
 
 BENCH_GATE="unknown"
 BENCH_SUMMARY="n/a"
+BENCH_GATE_JSON="null"
 if [[ -n "${LATEST_BENCH}" ]]; then
   BENCH_GATE="$(jq -r '.gate_ok // "unknown"' "${LATEST_BENCH}" 2>/dev/null || echo "unknown")"
+  BENCH_GATE_JSON="$(jq -c '.gate_ok // null' "${LATEST_BENCH}" 2>/dev/null || echo "null")"
   BENCH_SUMMARY="$(jq -r '"hit@\(.summary.hit_rate_at_k // "n/a"), mrr@\(.summary.mrr_at_k // "n/a"), ndcg@\(.summary.ndcg_at_k // "n/a")"' "${LATEST_BENCH}" 2>/dev/null || echo "n/a")"
 fi
 
@@ -96,13 +98,25 @@ if [[ "${FORMAT}" == "json" ]]; then
     --argjson warn_count "${WARN_COUNT}" \
     --argjson fail_count "${FAIL_COUNT}" \
     --arg latest_benchmark "${LATEST_BENCH}" \
+    --argjson benchmark_gate_ok "${BENCH_GATE_JSON}" \
     --arg benchmark_gate "${BENCH_GATE}" \
     --arg benchmark_summary "${BENCH_SUMMARY}" \
     --arg latest_snapshot "${LATEST_SNAPSHOT}" \
     --arg latest_sandbox_run "${LATEST_SANDBOX_RUN}" \
     --arg latest_remote_smoke "${LATEST_REMOTE_SMOKE}" \
     '{
+      schema_version: "1",
+      kind: "status",
       generated_at_utc: $generated_at,
+      ok: ($doctor_ok and (($benchmark_gate_ok == null) or ($benchmark_gate_ok == true))),
+      summary: {
+        mode: $mode,
+        doctor_ok: $doctor_ok,
+        doctor_pass: $pass_count,
+        doctor_warn: $warn_count,
+        doctor_fail: $fail_count,
+        benchmark_gate_ok: $benchmark_gate_ok
+      },
       mode: $mode,
       allow_external_remote: $allow_remote,
       remote_provider: $remote_provider,

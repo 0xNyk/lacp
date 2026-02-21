@@ -18,6 +18,11 @@ Core:
 
 Ops:
   report        Summarize recent run/artifact health
+  canary        Evaluate 7-day promotion readiness gate
+  auto-rollback Run canary and fail-safe rollback actions on failure
+  schedule-health Manage scheduled local health checks (launchd)
+  policy-pack   Apply named policy baseline packs (starter/strict/enterprise)
+  release-prepare Run full pre-live go/no-go discipline checks
   cache-audit   Analyze prompt cache effectiveness from local histories
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
@@ -88,6 +93,21 @@ case "${cmd}" in
     ;;
   report)
     exec "${ROOT}/bin/lacp-report" "$@"
+    ;;
+  canary)
+    exec "${ROOT}/bin/lacp-canary" "$@"
+    ;;
+  auto-rollback)
+    exec "${ROOT}/bin/lacp-auto-rollback" "$@"
+    ;;
+  schedule-health)
+    exec "${ROOT}/bin/lacp-schedule-health" "$@"
+    ;;
+  policy-pack)
+    exec "${ROOT}/bin/lacp-policy-pack" "$@"
+    ;;
+  release-prepare)
+    exec "${ROOT}/bin/lacp-release-prepare" "$@"
     ;;
   cache-audit)
     exec "${ROOT}/bin/lacp-cache-audit" "$@"

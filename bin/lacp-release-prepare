@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-release-prepare [options]
+
+Run pre-live release discipline checks and summarize one go/no-go payload.
+
+Checks:
+  1) lacp-release-gate
+  2) lacp-canary
+  3) lacp-status-report
+  4) lacp-report
+
+Options:
+  --quick                        Use quick release-gate mode
+  --canary-days <n>              Canary lookback window (default: 7)
+  --skip-cache-gate              Skip cache guard in release-gate stage
+  --skip-skill-audit-gate        Skip skill audit in release-gate stage
+  --auto-rollback-on-fail        Trigger lacp-auto-rollback on failed checks
+  --json                         Emit JSON payload
+  -h, --help                     Show help
+EOF
+}
+
+QUICK=0
+CANARY_DAYS="${LACP_CANARY_DAYS}"
+SKIP_CACHE_GATE=0
+SKIP_SKILL_AUDIT_GATE=0
+AUTO_ROLLBACK=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick) QUICK=1; shift ;;
+    --canary-days) CANARY_DAYS="$2"; shift 2 ;;
+    --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
+    --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --auto-rollback-on-fail) AUTO_ROLLBACK=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+run_capture() {
+  local out_var="$1"
+  shift
+  local captured_out
+  set +e
+  captured_out="$("$@" 2>&1)"
+  local rc=$?
+  set -e
+  captured_out="$(printf '%s' "${captured_out}" | tr -d '\000-\010\013\014\016-\037')"
+  printf -v "${out_var}" '%s' "${captured_out}"
+  return "${rc}"
+}
+
+release_gate_json=""
+canary_json=""
+status_json=""
+report_json=""
+rollback_json="null"
+
+release_gate_rc=0
+canary_rc=0
+status_rc=0
+report_rc=0
+rollback_rc=0
+
+gate_args=("${ROOT}/bin/lacp-release-gate" --json)
+if [[ "${QUICK}" -eq 1 ]]; then
+  gate_args=("${ROOT}/bin/lacp-release-gate" --quick --json)
+fi
+if [[ "${SKIP_CACHE_GATE}" -eq 1 ]]; then
+  gate_args+=(--skip-cache)
+fi
+if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
+  gate_args+=(--skip-skill-audit)
+fi
+run_capture release_gate_json "${gate_args[@]}" || release_gate_rc=$?
+run_capture canary_json "${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json || canary_rc=$?
+run_capture status_json "${ROOT}/bin/lacp-status-report" --json || status_rc=$?
+run_capture report_json "${ROOT}/bin/lacp-report" --json || report_rc=$?
+
+overall_ok="true"
+if [[ "${release_gate_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 ]]; then
+  overall_ok="false"
+else
+  if [[ "$(echo "${canary_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
+  if [[ "$(echo "${status_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
+  if [[ "$(echo "${report_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
+fi
+
+release_gate_ok="false"
+canary_ok="false"
+status_ok="false"
+report_ok="false"
+if [[ "${release_gate_rc}" -eq 0 ]]; then release_gate_ok="true"; fi
+if echo "${canary_json}" | jq -e '.ok == true' >/dev/null 2>&1; then canary_ok="true"; fi
+if echo "${status_json}" | jq -e '.ok == true' >/dev/null 2>&1; then status_ok="true"; fi
+if echo "${report_json}" | jq -e '.ok == true' >/dev/null 2>&1; then report_ok="true"; fi
+
+if [[ "${overall_ok}" != "true" && "${AUTO_ROLLBACK}" -eq 1 ]]; then
+  set +e
+  rollback_json="$("${ROOT}/bin/lacp-auto-rollback" --days "${CANARY_DAYS}" --json 2>&1)"
+  rollback_rc=$?
+  set -e
+fi
+
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "release_prepare" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson quick "$([[ "${QUICK}" -eq 1 ]] && echo true || echo false)" \
+  --argjson canary_days "${CANARY_DAYS}" \
+  --argjson auto_rollback "$([[ "${AUTO_ROLLBACK}" -eq 1 ]] && echo true || echo false)" \
+  --argjson skip_cache_gate "$([[ "${SKIP_CACHE_GATE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson skip_skill_audit_gate "$([[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson release_gate_ok "$([[ "${release_gate_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson canary_ok "$([[ "${canary_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson status_ok "$([[ "${status_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson report_ok "$([[ "${report_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson ok "$([[ "${overall_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson release_gate_rc "${release_gate_rc}" \
+  --argjson canary_rc "${canary_rc}" \
+  --argjson status_rc "${status_rc}" \
+  --argjson report_rc "${report_rc}" \
+  --argjson rollback_rc "${rollback_rc}" \
+  --arg release_gate_raw "${release_gate_json}" \
+  --arg canary_raw "${canary_json}" \
+  --arg status_raw "${status_json}" \
+  --arg report_raw "${report_json}" \
+  --arg rollback_raw "${rollback_json}" \
+  '{
+    schema_version: $schema_version,
+    kind: $kind,
+    generated_at_utc: $generated_at_utc,
+    ok: $ok,
+    options: {
+      quick: $quick,
+      canary_days: $canary_days,
+      skip_cache_gate: $skip_cache_gate,
+      skip_skill_audit_gate: $skip_skill_audit_gate,
+      auto_rollback_on_fail: $auto_rollback
+    },
+    stages: {
+      release_gate: {
+        rc: $release_gate_rc,
+        ok: $release_gate_ok,
+        raw: $release_gate_raw
+      },
+      canary: {
+        rc: $canary_rc,
+        ok: $canary_ok,
+        result: (try ($canary_raw | fromjson) catch {ok:false, raw:$canary_raw})
+      },
+      status: {
+        rc: $status_rc,
+        ok: $status_ok,
+        result: (try ($status_raw | fromjson) catch {ok:false, raw:$status_raw})
+      },
+      report: {
+        rc: $report_rc,
+        ok: $report_ok,
+        result: (try ($report_raw | fromjson) catch {ok:false, raw:$report_raw})
+      },
+      rollback: {
+        rc: $rollback_rc,
+        result: (if $rollback_raw == "null" then null else {raw: $rollback_raw} end)
+      }
+    }
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Release Prepare",
+    "  ok=\(.ok) quick=\(.options.quick) canary_days=\(.options.canary_days)",
+    "  rc.release_gate=\(.stages.release_gate.rc) rc.canary=\(.stages.canary.rc) rc.status=\(.stages.status.rc) rc.report=\(.stages.report.rc)",
+    "  auto_rollback=\(.options.auto_rollback_on_fail) rc.rollback=\(.stages.rollback.rc)"
+  '
+fi
+
+if [[ "${overall_ok}" != "true" ]]; then
+  exit 1
+fi

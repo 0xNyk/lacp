@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-policy-pack list [--json]
+  lacp-policy-pack apply --pack starter|strict|enterprise [--dry-run] [--json]
+
+Policy packs apply a sandbox policy patch and env defaults in one operation.
+EOF
+}
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+PACKS_DIR="${ROOT}/config/policy-packs"
+ENV_FILE="${ROOT}/.env"
+AS_JSON=0
+DRY_RUN=0
+PACK_NAME=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pack) PACK_NAME="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd jq
+require_cmd python3
+require_dir "${PACKS_DIR}"
+
+list_packs_json() {
+  python3 - <<'PY' "${PACKS_DIR}"
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+items = []
+for path in sorted(root.glob("*.json")):
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        continue
+    items.append(
+        {
+            "name": payload.get("name", path.stem),
+            "description": payload.get("description", ""),
+            "file": str(path),
+        }
+    )
+print(json.dumps(items))
+PY
+}
+
+case "${SUB}" in
+  list)
+    packs_json="$(list_packs_json)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --argjson packs "${packs_json}" '{schema_version:"1", kind:"policy_pack_list", ok:true, packs:$packs}'
+    else
+      echo "${packs_json}" | jq -r '.[] | "\(.name)\t\(.description)"'
+    fi
+    ;;
+  apply)
+    [[ -n "${PACK_NAME}" ]] || die "--pack is required for apply"
+    pack_file="${PACKS_DIR}/${PACK_NAME}.json"
+    require_file "${pack_file}"
+    [[ -f "${ENV_FILE}" ]] || cp "${ROOT}/config/lacp.env.example" "${ENV_FILE}"
+
+    result_json="$(python3 - <<'PY' "${pack_file}" "${LACP_SANDBOX_POLICY_FILE}" "${ENV_FILE}" "${DRY_RUN}"
+import json
+import pathlib
+import re
+import sys
+
+pack_file = pathlib.Path(sys.argv[1])
+policy_file = pathlib.Path(sys.argv[2])
+env_file = pathlib.Path(sys.argv[3])
+dry_run = sys.argv[4] == "1"
+
+pack = json.loads(pack_file.read_text())
+policy = json.loads(policy_file.read_text())
+patch = pack.get("sandbox_policy_patch", {})
+env_updates = pack.get("env", {})
+
+def deep_merge(base, override):
+    if not isinstance(base, dict) or not isinstance(override, dict):
+        return override
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+merged_policy = deep_merge(policy, patch)
+
+original_env = env_file.read_text() if env_file.exists() else ""
+env_lines = original_env.splitlines()
+for key, value in env_updates.items():
+    pattern = re.compile(rf"^{re.escape(key)}=")
+    replaced = False
+    for i, line in enumerate(env_lines):
+        if pattern.match(line):
+            env_lines[i] = f'{key}="{value}"'
+            replaced = True
+            break
+    if not replaced:
+        env_lines.append(f'{key}="{value}"')
+
+new_env = "\n".join(env_lines).strip() + "\n"
+
+if not dry_run:
+    policy_file.write_text(json.dumps(merged_policy, indent=2) + "\n")
+    env_file.write_text(new_env)
+
+result = {
+    "schema_version": "1",
+    "kind": "policy_pack_apply",
+    "ok": True,
+    "pack": pack.get("name", pack_file.stem),
+    "description": pack.get("description", ""),
+    "dry_run": dry_run,
+    "policy_file": str(policy_file),
+    "env_file": str(env_file),
+    "policy_changed": policy != merged_policy,
+    "env_changed": original_env != new_env,
+    "env_updates": env_updates,
+}
+print(json.dumps(result))
+PY
+)"
+
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${result_json}"
+    else
+      echo "${result_json}" | jq -r '"policy-pack applied: \(.pack) dry_run=\(.dry_run) policy_changed=\(.policy_changed) env_changed=\(.env_changed)"'
+    fi
+    ;;
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac

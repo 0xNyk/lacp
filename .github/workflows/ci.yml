@@ -89,6 +89,18 @@ jobs:
           chmod +x scripts/ci/test-cache-guard.sh
           ./scripts/ci/test-cache-guard.sh
 
+      - name: Canary gate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-canary.sh
+          ./scripts/ci/test-canary.sh
+
+      - name: Auto rollback tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-auto-rollback.sh
+          ./scripts/ci/test-auto-rollback.sh
+
       - name: Skill audit tests
         run: |
           set -euo pipefail
@@ -160,6 +172,24 @@ jobs:
           set -euo pipefail
           chmod +x scripts/ci/test-workflow-run.sh
           ./scripts/ci/test-workflow-run.sh
+
+      - name: Scheduled health tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-schedule-health.sh
+          ./scripts/ci/test-schedule-health.sh
+
+      - name: Policy pack tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-policy-pack.sh
+          ./scripts/ci/test-policy-pack.sh
+
+      - name: Release prepare tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-release-prepare.sh
+          ./scripts/ci/test-release-prepare.sh
 
       - name: CLI wrapper and isolated env guard tests
         run: |

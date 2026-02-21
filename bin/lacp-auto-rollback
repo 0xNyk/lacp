@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-auto-rollback [options]
+
+Run canary gate and apply fail-safe rollback if unhealthy.
+
+Rollback actions (on canary failure):
+  1) set mode to local-only
+  2) unadopt local claude/codex wrappers
+  3) write rollback artifact in knowledge/data/rollbacks
+
+Options:
+  --days <n>                 Canary lookback days (default: 7)
+  --min-hit-rate <n>         Canary min avg hit_rate_at_k (default: 0.90)
+  --min-mrr <n>              Canary min avg mrr_at_k (default: 0.65)
+  --max-triage-issues <n>    Canary max triage issues (default: 2)
+  --bin-dir <dir>            Wrapper bin dir for unadopt (default: $HOME/.local/bin)
+  --skip-mode                Do not force local-only mode
+  --skip-unadopt             Do not remove wrappers
+  --dry-run                  Print planned actions only
+  --json                     Print JSON payload
+  -h, --help                 Show help
+EOF
+}
+
+DAYS="${LACP_CANARY_DAYS}"
+MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE}"
+MIN_MRR="${LACP_CANARY_MIN_MRR}"
+MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES}"
+BIN_DIR="${LACP_WRAPPER_BIN_DIR}"
+SKIP_MODE=0
+SKIP_UNADOPT=0
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days) DAYS="$2"; shift 2 ;;
+    --min-hit-rate) MIN_HIT_RATE="$2"; shift 2 ;;
+    --min-mrr) MIN_MRR="$2"; shift 2 ;;
+    --max-triage-issues) MAX_TRIAGE_ISSUES="$2"; shift 2 ;;
+    --bin-dir) BIN_DIR="$2"; shift 2 ;;
+    --skip-mode) SKIP_MODE=1; shift ;;
+    --skip-unadopt) SKIP_UNADOPT=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd jq
+
+canary_json="$("${ROOT}/bin/lacp-canary" \
+  --days "${DAYS}" \
+  --min-hit-rate "${MIN_HIT_RATE}" \
+  --min-mrr "${MIN_MRR}" \
+  --max-triage-issues "${MAX_TRIAGE_ISSUES}" \
+  --json)"
+
+canary_ok="$(echo "${canary_json}" | jq -r '.ok')"
+declare -a actions=()
+mode_json='null'
+unadopt_json='null'
+rollback_applied="false"
+rollback_reason=""
+
+if [[ "${canary_ok}" == "true" ]]; then
+  rollback_reason="canary healthy"
+else
+  rollback_reason="canary unhealthy"
+  if [[ "${SKIP_MODE}" -ne 1 ]]; then
+    actions+=("mode_local_only")
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      mode_json="$("${ROOT}/bin/lacp-mode" local-only --json)"
+    fi
+  fi
+  if [[ "${SKIP_UNADOPT}" -ne 1 ]]; then
+    actions+=("unadopt_local_wrappers")
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      unadopt_json="$("${ROOT}/bin/lacp-unadopt-local" --bin-dir "${BIN_DIR}" --json)"
+    fi
+  fi
+  if [[ "${#actions[@]}" -gt 0 ]]; then
+    rollback_applied="true"
+  fi
+fi
+
+generated_at_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+rollbacks_dir="${LACP_KNOWLEDGE_ROOT}/data/rollbacks"
+mkdir -p "${rollbacks_dir}"
+roll_tag="$(date -u +%Y%m%dT%H%M%SZ)"
+roll_file="${rollbacks_dir}/rollback-${roll_tag}.json"
+
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "auto_rollback" \
+  --arg generated_at_utc "${generated_at_utc}" \
+  --arg rollback_reason "${rollback_reason}" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson rollback_applied "$([[ "${rollback_applied}" == "true" ]] && echo true || echo false)" \
+  --argjson canary "${canary_json}" \
+  --argjson actions "$(printf '%s\n' "${actions[@]}" | jq -R . | jq -s .)" \
+  --argjson mode_result "${mode_json}" \
+  --argjson unadopt_result "${unadopt_json}" \
+  --arg roll_file "${roll_file}" \
+  '{
+    schema_version: $schema_version,
+    kind: $kind,
+    generated_at_utc: $generated_at_utc,
+    dry_run: $dry_run,
+    rollback_reason: $rollback_reason,
+    rollback_applied: $rollback_applied,
+    canary: $canary,
+    actions: $actions,
+    mode_result: $mode_result,
+    unadopt_result: $unadopt_result,
+    artifact_file: $roll_file
+  }')"
+
+printf '%s\n' "${result_json}" > "${roll_file}"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Auto Rollback",
+    "  generated_at_utc=\(.generated_at_utc)",
+    "  canary_ok=\(.canary.ok) rollback_applied=\(.rollback_applied) dry_run=\(.dry_run)",
+    "  actions=" + (if (.actions|length)==0 then "<none>" else (.actions|join(",")) end),
+    "  artifact_file=\(.artifact_file)"
+  '
+fi
+
+if [[ "${canary_ok}" != "true" ]]; then
+  exit 1
+fi
