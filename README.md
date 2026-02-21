@@ -246,6 +246,8 @@ Notes:
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
+- `bin/lacp-adopt-local`: install reversible local `claude`/`codex` wrappers that route through LACP
+- `bin/lacp-unadopt-local`: remove LACP-managed local wrappers and restore previous shims
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
@@ -375,6 +377,10 @@ bin/lacp swarm launch --manifest ./swarm.json --json | jq
 bin/lacp swarm up --manifest ./swarm.json --json | jq
 bin/lacp swarm tui --manifest ./swarm.json --dry-run --json | jq
 bin/lacp swarm status --latest --json | jq
+
+# adopt/revert default local command routing
+bin/lacp adopt-local --json | jq
+bin/lacp unadopt-local --json | jq
 
 # preferred
 bin/lacp test

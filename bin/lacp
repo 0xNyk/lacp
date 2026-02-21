@@ -33,6 +33,8 @@ Ops:
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
+  adopt-local   Install local claude/codex wrappers that route through LACP
+  unadopt-local Remove LACP-managed local claude/codex wrappers
   route         Show routing decision
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
@@ -131,6 +133,12 @@ case "${cmd}" in
     ;;
   workflow-run)
     exec "${ROOT}/bin/lacp-workflow-run" "$@"
+    ;;
+  adopt-local)
+    exec "${ROOT}/bin/lacp-adopt-local" "$@"
+    ;;
+  unadopt-local)
+    exec "${ROOT}/bin/lacp-unadopt-local" "$@"
     ;;
   route)
     exec "${ROOT}/bin/lacp-route" "$@"

@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - `lacp-orchestrate run --batch <manifest>` for multi-session launches with deterministic stop/continue-on-error behavior.
 - `lacp-orchestrate` default backend switched to `dmux` (override with `LACP_ORCHESTRATOR_BACKEND` or `--backend`).
 - `bin/lacp-swarm` dmux-first swarm lifecycle (`init`, `plan`, `launch`, `up`, `tui`, `status`) with artifacted launches under `knowledge/data/swarms`.
+- `bin/lacp-adopt-local` and `bin/lacp-unadopt-local` for reversible local default routing of `claude`/`codex` through LACP policy gates.
 - Harness contract layer:
   - `config/harness/tasks.schema.json`
   - `config/harness/sandbox-profiles.yaml`
@@ -38,6 +39,7 @@ All notable changes to this project will be documented in this file.
 - Worktree command CI coverage: `scripts/ci/test-worktree.sh`.
 - Orchestrate CI expanded with batch-manifest execution coverage.
 - Swarm command CI coverage: `scripts/ci/test-swarm.sh`.
+- Local wrapper adopt/unadopt CI coverage: `scripts/ci/test-adopt-local.sh`.
 - Workflow cost-policy gate: `scripts/ci/test-workflow-cost-policy.sh` enforcing official actions-only and blocking paid-provider workflow hooks.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.

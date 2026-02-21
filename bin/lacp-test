@@ -127,6 +127,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-cache-guard.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-audit.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-factory.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-adopt-local.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-harness-contracts.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-harness-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-harness-run.sh"
