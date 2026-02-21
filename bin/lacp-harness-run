@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except Exception as exc:
+    print(f"[lacp] ERROR: missing yaml support: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def utc_stamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True, env=env)
+
+
+def topological_order(tasks: list[dict]) -> list[dict]:
+    by_id = {t["id"]: t for t in tasks}
+    indegree = {t["id"]: 0 for t in tasks}
+    edges: dict[str, list[str]] = {t["id"]: [] for t in tasks}
+    for t in tasks:
+        for dep in t.get("depends_on", []):
+            edges.setdefault(dep, []).append(t["id"])
+            indegree[t["id"]] += 1
+    queue = [tid for tid, d in indegree.items() if d == 0]
+    ordered: list[str] = []
+    while queue:
+        cur = queue.pop(0)
+        ordered.append(cur)
+        for nxt in edges.get(cur, []):
+            indegree[nxt] -= 1
+            if indegree[nxt] == 0:
+                queue.append(nxt)
+    if len(ordered) != len(tasks):
+        raise ValueError("dependency graph has a cycle")
+    return [by_id[tid] for tid in ordered]
+
+
+def map_profile_to_sandbox_args(profile: dict, task_title: str, dry_run: bool) -> list[str]:
+    route = str(profile.get("route", "trusted_local"))
+    args = ["--task", task_title]
+    if route == "trusted_local":
+        args += ["--repo-trust", "trusted"]
+    elif route == "local_sandbox":
+        args += ["--repo-trust", "unknown", "--external-code", "true"]
+    elif route == "remote_sandbox":
+        args += ["--repo-trust", "unknown", "--cpu-heavy", "true", "--long-run", "true"]
+    else:
+        args += ["--repo-trust", "unknown"]
+    if dry_run:
+        args.append("--dry-run")
+    return args
+
+
+def run_verification_checks(policy: dict, workdir: Path) -> tuple[bool, list[dict]]:
+    checks = policy.get("required", {}).get("checks", [])
+    min_passed = int(policy.get("thresholds", {}).get("min_passed_checks", len(checks)))
+    results: list[dict] = []
+    passed = 0
+    for check in checks:
+        cid = str(check.get("id", "check"))
+        command = str(check.get("command", "")).strip()
+        if not command:
+            results.append({"id": cid, "command": command, "exit_code": 2, "ok": False, "error": "missing command"})
+            continue
+        cp = run_cmd(["/usr/bin/env", "bash", "-lc", f"cd {json.dumps(str(workdir))} && {command}"])
+        ok = cp.returncode == 0
+        if ok:
+            passed += 1
+        results.append(
+            {
+                "id": cid,
+                "command": command,
+                "exit_code": cp.returncode,
+                "ok": ok,
+                "stdout": cp.stdout[-2000:],
+                "stderr": cp.stderr[-2000:],
+            }
+        )
+    return passed >= min_passed, results
+
+
+def run_task_attempt(
+    root: Path,
+    workdir: Path,
+    task: dict,
+    profile: dict,
+    policy: dict,
+    run_dir: Path,
+    stage: str,
+    attempt_no: int,
+    dry_run: bool,
+) -> tuple[bool, dict]:
+    runner = task.get("runner") or {}
+    runner_cmd = str(runner.get("command", "")).strip()
+    if not runner_cmd:
+        record = {
+            "stage": stage,
+            "attempt": attempt_no,
+            "ok": False,
+            "error": "task missing runner.command",
+            "task_id": task.get("id"),
+        }
+        return False, record
+
+    env = os.environ.copy()
+    env["LACP_HARNESS_TASK_ID"] = str(task.get("id"))
+    env["LACP_HARNESS_STAGE"] = stage
+    for k, v in (runner.get("env") or {}).items():
+        env[str(k)] = str(v)
+
+    runner_shell_cmd = f"cd {json.dumps(str(workdir))} && {runner_cmd}"
+    sandbox_args = map_profile_to_sandbox_args(profile, str(task.get("title", task.get("id"))), dry_run)
+    cmd = [str(root / "bin/lacp-sandbox-run"), *sandbox_args, "--", "/usr/bin/env", "bash", "-lc", runner_shell_cmd]
+    run_cp = run_cmd(cmd, env=env)
+
+    verify_ok = False
+    verify_results: list[dict] = []
+    if run_cp.returncode == 0:
+        verify_ok, verify_results = run_verification_checks(policy, workdir)
+
+    ok = run_cp.returncode == 0 and verify_ok
+    record = {
+        "task_id": task.get("id"),
+        "stage": stage,
+        "attempt": attempt_no,
+        "ok": ok,
+        "runner": {
+            "command": runner_cmd,
+            "exit_code": run_cp.returncode,
+            "stdout": run_cp.stdout[-4000:],
+            "stderr": run_cp.stderr[-4000:],
+        },
+        "verification": {
+            "ok": verify_ok,
+            "results": verify_results,
+        },
+    }
+    out_file = run_dir / str(task["id"]) / f"{stage}-attempt-{attempt_no:02d}.json"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(json.dumps(record, indent=2) + "\n")
+    return ok, record
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Execute harness tasks in dependency order with loop retries.")
+    parser.add_argument("--tasks", required=True, help="Path to tasks.json")
+    parser.add_argument("--profiles", default="config/harness/sandbox-profiles.yaml", help="Path to sandbox profiles YAML")
+    parser.add_argument(
+        "--verification",
+        default="config/harness/verification-policy.yaml",
+        help="Path to verification policy YAML",
+    )
+    parser.add_argument("--workdir", default=".", help="Working directory for task commands")
+    parser.add_argument("--run-id", default="", help="Optional run id")
+    parser.add_argument("--continue-on-fail", action="store_true", help="Continue later tasks after failures")
+    parser.add_argument("--dry-run", action="store_true", help="Dry run for sandboxed command execution")
+    parser.add_argument("--json", action="store_true", help="Emit JSON summary")
+    args = parser.parse_args()
+
+    root_env = os.environ.get("LACP_SCRIPT_ROOT", "")
+    if not root_env:
+        print("[lacp] ERROR: missing LACP_SCRIPT_ROOT", file=sys.stderr)
+        return 2
+    root = Path(root_env).resolve()
+    tasks_file = Path(args.tasks).resolve()
+    profiles_file = (root / args.profiles).resolve() if not Path(args.profiles).is_absolute() else Path(args.profiles)
+    verification_file = (
+        (root / args.verification).resolve() if not Path(args.verification).is_absolute() else Path(args.verification)
+    )
+    workdir = Path(args.workdir).resolve()
+    run_id = args.run_id.strip() or f"run-{utc_stamp()}-{os.getpid()}"
+
+    validate_cp = run_cmd(
+        [
+            str(root / "bin/lacp-harness-validate"),
+            "--tasks",
+            str(tasks_file),
+            "--profiles",
+            str(profiles_file),
+            "--verification",
+            str(verification_file),
+            "--json",
+        ]
+    )
+    if validate_cp.returncode != 0:
+        if args.json:
+            payload = {
+                "ok": False,
+                "error": "harness validation failed",
+                "validator_output": validate_cp.stdout,
+            }
+            print(json.dumps(payload, indent=2))
+        else:
+            print("[lacp] ERROR: harness validation failed", file=sys.stderr)
+            print(validate_cp.stdout, file=sys.stderr)
+        return 1
+
+    tasks_payload = json.loads(tasks_file.read_text())
+    profiles_payload = yaml.safe_load(profiles_file.read_text())
+    verification_payload = yaml.safe_load(verification_file.read_text())
+    tasks = topological_order(tasks_payload["tasks"])
+    profiles_map = profiles_payload.get("profiles", {})
+    verification_map = verification_payload.get("policies", {})
+
+    knowledge_root = Path(os.environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / "control/knowledge/knowledge-memory")))
+    run_dir = knowledge_root / "data" / "harness-runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    summary: list[dict] = []
+    succeeded = 0
+    failed = 0
+    blocked = 0
+
+    failed_ids: set[str] = set()
+    for task in tasks:
+        task_id = str(task["id"])
+        deps = task.get("depends_on", [])
+        dep_failed = [d for d in deps if d in failed_ids]
+        if dep_failed:
+            blocked += 1
+            failed_ids.add(task_id)
+            summary.append(
+                {
+                    "task_id": task_id,
+                    "status": "blocked",
+                    "reason": f"dependency_failed:{','.join(dep_failed)}",
+                }
+            )
+            if not args.continue_on_fail:
+                break
+            continue
+
+        profile = profiles_map[task["sandbox_profile"]]
+        policy = verification_map[task["verification_policy"]]
+        loops = task["iterations"]
+
+        task_ok = False
+        records: list[dict] = []
+        for i in range(1, int(loops["loop_1_max"]) + 1):
+            ok, rec = run_task_attempt(root, workdir, task, profile, policy, run_dir, "loop1", i, args.dry_run)
+            records.append(rec)
+            if ok:
+                task_ok = True
+                break
+
+        if not task_ok:
+            for i in range(1, int(loops["loop_2_max"]) + 1):
+                ok, rec = run_task_attempt(root, workdir, task, profile, policy, run_dir, "loop2", i, args.dry_run)
+                records.append(rec)
+                if ok:
+                    task_ok = True
+                    break
+
+        if task_ok and int(loops.get("quality_loop_max", 0)) > 0:
+            quality_ok = False
+            for i in range(1, int(loops["quality_loop_max"]) + 1):
+                ok, verify_results = run_verification_checks(policy, workdir)
+                rec = {
+                    "task_id": task_id,
+                    "stage": "quality",
+                    "attempt": i,
+                    "ok": ok,
+                    "verification": {"ok": ok, "results": verify_results},
+                }
+                out_file = run_dir / task_id / f"quality-attempt-{i:02d}.json"
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+                out_file.write_text(json.dumps(rec, indent=2) + "\n")
+                records.append(rec)
+                if ok:
+                    quality_ok = True
+                    break
+            task_ok = quality_ok
+
+        if task_ok:
+            succeeded += 1
+            status = "succeeded"
+        else:
+            failed += 1
+            failed_ids.add(task_id)
+            status = "failed"
+            if not args.continue_on_fail:
+                summary.append({"task_id": task_id, "status": status, "attempts": len(records)})
+                break
+
+        summary.append({"task_id": task_id, "status": status, "attempts": len(records)})
+
+    ok = failed == 0 and blocked == 0
+    payload = {
+        "ok": ok,
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "summary": {
+            "total": len(tasks),
+            "succeeded": succeeded,
+            "failed": failed,
+            "blocked": blocked,
+        },
+        "tasks": summary,
+    }
+    (run_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n")
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"[lacp] harness run {run_id} complete: ok={str(ok).lower()} succeeded={succeeded} failed={failed} blocked={blocked}")
+        print(f"[lacp] artifacts={run_dir}")
+
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

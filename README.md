@@ -236,6 +236,7 @@ Notes:
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
 - `bin/lacp-release-gate`: run strict pre-live go/no-go checks (tests + doctor + cache + skills)
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
+- `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
 - `bin/lacp-orchestrate`: optional tmux/dmux orchestration adapter (still routed through LACP gates)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
@@ -270,6 +271,7 @@ Validate a generated task plan:
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp harness-validate --tasks ./tasks.json --json | jq
+bin/lacp harness-run --tasks ./tasks.json --workdir . --json | jq
 ```
 
 ## Security Model
