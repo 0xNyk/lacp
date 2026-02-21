@@ -119,6 +119,12 @@ jobs:
           chmod +x scripts/ci/test-pr-preflight.sh
           ./scripts/ci/test-pr-preflight.sh
 
+      - name: Worktree command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-worktree.sh
+          ./scripts/ci/test-worktree.sh
+
       - name: Orchestrate tests
         run: |
           set -euo pipefail

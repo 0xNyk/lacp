@@ -27,6 +27,7 @@ Ops:
   harness-run  Execute tasks.json with dependency-aware loop retries
   browser-evidence-validate Validate browser evidence manifest contract
   orchestrate   Run optional tmux/dmux orchestration through LACP gates
+  worktree      Manage git worktree lifecycle for isolated agent runs
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
@@ -110,6 +111,9 @@ case "${cmd}" in
     ;;
   orchestrate)
     exec "${ROOT}/bin/lacp-orchestrate" "$@"
+    ;;
+  worktree)
+    exec "${ROOT}/bin/lacp-worktree" "$@"
     ;;
   migrate)
     exec "${ROOT}/bin/lacp-migrate" "$@"

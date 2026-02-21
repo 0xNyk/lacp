@@ -36,6 +36,7 @@ class Lacp < Formula
       lacp-harness-run
       lacp-browser-evidence-validate
       lacp-orchestrate
+      lacp-worktree
       lacp-migrate
       lacp-incident-drill
       lacp-workflow-run
