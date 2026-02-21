@@ -12,6 +12,7 @@ Usage:
   lacp-worktree create --name <id> [--repo-root <path>] [--base <ref>] [--branch <name>] [--path <dir>] [--json]
   lacp-worktree remove (--name <id> | --path <dir>) [--repo-root <path>] [--force] [--json]
   lacp-worktree prune [--repo-root <path>] [--dry-run] [--json]
+  lacp-worktree gc [--repo-root <path>] [--max-age-hours <n>] [--managed-only true|false] [--branch-prefix <prefix>] [--force] [--dry-run] [--json]
   lacp-worktree doctor [--repo-root <path>] [--json]
 
 Notes:
@@ -261,6 +262,182 @@ cmd_doctor() {
   fi
 }
 
+cmd_gc() {
+  local repo_root="$PWD"
+  local max_age_hours="72"
+  local managed_only="true"
+  local branch_prefix="wt/"
+  local force="false"
+  local dry_run="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --max-age-hours) max_age_hours="$2"; shift 2 ;;
+      --managed-only) managed_only="$2"; shift 2 ;;
+      --branch-prefix) branch_prefix="$2"; shift 2 ;;
+      --force) force="true"; shift ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ "${max_age_hours}" =~ ^[0-9]+$ ]] || die "--max-age-hours must be an integer"
+  [[ "${managed_only}" == "true" || "${managed_only}" == "false" ]] || die "--managed-only must be true|false"
+
+  require_repo "${repo_root}"
+
+  local root_abs
+  root_abs="$(cd "${repo_root}" && pwd -P)"
+  local managed_root="${root_abs}/.worktrees"
+
+  python3 - <<'PY' "${repo_root}" "${max_age_hours}" "${managed_only}" "${branch_prefix}" "${force}" "${dry_run}" "${as_json}" "${managed_root}"
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+max_age_hours = int(sys.argv[2])
+managed_only = sys.argv[3] == "true"
+branch_prefix = sys.argv[4]
+force = sys.argv[5] == "true"
+dry_run = sys.argv[6] == "true"
+as_json = sys.argv[7] == "true"
+managed_root = Path(sys.argv[8]).resolve()
+
+cp = subprocess.run(
+    ["git", "-C", str(repo_root), "worktree", "list", "--porcelain"],
+    capture_output=True,
+    text=True,
+)
+if cp.returncode != 0:
+    print(f"[lacp] ERROR: git worktree list failed: {cp.stderr.strip()}", file=sys.stderr)
+    raise SystemExit(1)
+
+entries: list[dict] = []
+cur: dict = {}
+for line in cp.stdout.splitlines():
+    if not line.strip():
+        if cur:
+            entries.append(cur)
+            cur = {}
+        continue
+    parts = line.split(" ", 1)
+    key = parts[0]
+    val = parts[1] if len(parts) > 1 else ""
+    if key == "worktree":
+        cur["path"] = val
+    elif key == "branch":
+        cur["branch"] = val.replace("refs/heads/", "")
+    elif key == "HEAD":
+        cur["head"] = val
+    elif key == "locked":
+        cur["locked"] = True
+if cur:
+    entries.append(cur)
+
+now = dt.datetime.now(dt.timezone.utc)
+threshold = dt.timedelta(hours=max_age_hours)
+
+candidates: list[dict] = []
+kept: list[dict] = []
+removed: list[dict] = []
+failed: list[dict] = []
+
+for item in entries:
+    path_str = str(item.get("path", "")).strip()
+    if not path_str:
+        continue
+    path = Path(path_str).resolve()
+    branch = str(item.get("branch", ""))
+    locked = bool(item.get("locked", False))
+
+    if path == repo_root:
+        kept.append({"path": str(path), "reason": "main-worktree"})
+        continue
+    if locked:
+        kept.append({"path": str(path), "reason": "locked"})
+        continue
+    if managed_only and not str(path).startswith(str(managed_root) + os.sep):
+        kept.append({"path": str(path), "reason": "outside-managed-root"})
+        continue
+    if branch_prefix and (not branch or not branch.startswith(branch_prefix)):
+        kept.append({"path": str(path), "reason": "branch-prefix-mismatch"})
+        continue
+    if not path.exists():
+        age_ok = True
+        age_hours = None
+    else:
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
+        age = now - mtime
+        age_ok = age >= threshold
+        age_hours = age.total_seconds() / 3600.0
+    if not age_ok:
+        kept.append({"path": str(path), "reason": "age-below-threshold", "age_hours": round(age_hours or 0.0, 2)})
+        continue
+
+    candidates.append(
+        {
+            "path": str(path),
+            "branch": branch or None,
+            "age_hours": None if age_hours is None else round(age_hours, 2),
+        }
+    )
+
+for c in candidates:
+    if dry_run:
+        removed.append({**c, "dry_run": True})
+        continue
+    cmd = ["git", "-C", str(repo_root), "worktree", "remove"]
+    if force:
+        cmd.append("--force")
+    cmd.append(c["path"])
+    rc = subprocess.run(cmd, capture_output=True, text=True)
+    if rc.returncode == 0:
+        removed.append(c)
+    else:
+        failed.append({**c, "error": rc.stderr.strip() or rc.stdout.strip()})
+
+ok = len(failed) == 0
+payload = {
+    "ok": ok,
+    "summary": {
+        "total_worktrees": len(entries),
+        "candidates": len(candidates),
+        "removed": len(removed),
+        "failed": len(failed),
+        "max_age_hours": max_age_hours,
+        "managed_only": managed_only,
+        "branch_prefix": branch_prefix,
+        "dry_run": dry_run,
+        "force": force,
+    },
+    "candidates": candidates,
+    "removed": removed,
+    "failed": failed,
+    "kept": kept[:50],
+}
+
+if as_json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(
+        f"[lacp] worktree gc complete ok={str(ok).lower()} "
+        f"candidates={len(candidates)} removed={len(removed)} failed={len(failed)}"
+    )
+
+raise SystemExit(0 if ok else 1)
+PY
+}
+
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local sub="$1"
@@ -271,6 +448,7 @@ main() {
     create) cmd_create "$@" ;;
     remove) cmd_remove "$@" ;;
     prune) cmd_prune "$@" ;;
+    gc) cmd_gc "$@" ;;
     doctor) cmd_doctor "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown subcommand: ${sub}" ;;

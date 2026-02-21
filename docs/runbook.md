@@ -131,7 +131,11 @@ bin/lacp orchestrate run \
 # create/list/remove worktrees directly
 bin/lacp worktree create --repo-root . --name "lacp-claude-batch-a" --base HEAD --json | jq
 bin/lacp worktree list --repo-root . --json | jq
+bin/lacp worktree gc --repo-root . --max-age-hours 72 --managed-only true --branch-prefix "wt/" --dry-run --json | jq
 bin/lacp worktree remove --repo-root . --name "lacp-claude-batch-a" --force --json | jq
+
+# batch orchestration
+bin/lacp orchestrate run --batch ./orchestrate-batch.json --json | jq
 ```
 
 ## Operating Mode

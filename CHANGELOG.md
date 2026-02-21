@@ -19,6 +19,8 @@ All notable changes to this project will be documented in this file.
 - `lacp-orchestrate` now supports `claude_worktree` backend with optional `--claude-tmux` wiring into Claude native worktree isolation.
 - `scripts/runners/claude-worktree-runner.sh` for policy-gated Claude `--worktree` dispatch.
 - `bin/lacp-worktree` for explicit git worktree lifecycle management (`list/create/remove/prune/doctor`).
+- `bin/lacp-worktree gc` retention mode (`--max-age-hours`, `--managed-only`, `--branch-prefix`) for stale worktree cleanup.
+- `lacp-orchestrate run --batch <manifest>` for multi-session launches with deterministic stop/continue-on-error behavior.
 - Harness contract layer:
   - `config/harness/tasks.schema.json`
   - `config/harness/sandbox-profiles.yaml`
@@ -32,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - PR preflight CI coverage: `scripts/ci/test-pr-preflight.sh`.
 - Orchestrate CI expanded with `claude_worktree` backend coverage.
 - Worktree command CI coverage: `scripts/ci/test-worktree.sh`.
+- Orchestrate CI expanded with batch-manifest execution coverage.
 - `bin/lacp-workflow-run` deterministic multi-role workflow skeleton (`planner -> developer -> verifier -> tester -> reviewer`).
 - MCP auth policy file (`config/mcp-auth-policy.json`) and doctor policy validation checks.
 - Release workflow (`.github/workflows/release.yml`) generating versioned tarball + `SHA256SUMS`.

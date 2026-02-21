@@ -240,7 +240,7 @@ Notes:
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
 - `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
 - `bin/lacp-orchestrate`: optional tmux/dmux/claude_worktree orchestration adapter (still routed through LACP gates)
-- `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/doctor`)
+- `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/gc/doctor`)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
@@ -360,6 +360,10 @@ bin/lacp orchestrate run \
 bin/lacp worktree doctor --repo-root . --json | jq
 bin/lacp worktree create --repo-root . --name "batch-a" --base HEAD --json | jq
 bin/lacp worktree list --repo-root . --json | jq
+bin/lacp worktree gc --repo-root . --max-age-hours 72 --managed-only true --branch-prefix "wt/" --dry-run --json | jq
+
+# batch orchestration manifest
+bin/lacp orchestrate run --batch ./orchestrate-batch.json --json | jq
 
 # preferred
 bin/lacp test
