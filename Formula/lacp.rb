@@ -31,6 +31,8 @@ class Lacp < Formula
       lacp-cache-guard
       lacp-skill-audit
       lacp-skill-factory
+      lacp-adopt-local
+      lacp-unadopt-local
       lacp-release-gate
       lacp-pr-preflight
       lacp-harness-validate

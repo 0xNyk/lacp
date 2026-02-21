@@ -154,6 +154,10 @@ bin/lacp swarm launch --manifest ./swarm.json --json | jq
 bin/lacp swarm up --manifest ./swarm.json --json | jq
 bin/lacp swarm tui --manifest ./swarm.json --dry-run --json | jq
 bin/lacp swarm status --latest --json | jq
+
+# adopt/revert local default claude/codex routing via LACP
+bin/lacp adopt-local --json | jq
+bin/lacp unadopt-local --json | jq
 ```
 
 ## Operating Mode
