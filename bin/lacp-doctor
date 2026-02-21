@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-doctor [--json] [--fix]
+Usage: lacp-doctor [--json] [--fix] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
 Exits non-zero if required checks fail.
@@ -16,6 +16,9 @@ EOF
 
 AS_JSON=0
 FIX=0
+FIX_DEPS=0
+AUTO_DEPS_DRY_RUN=0
+AUTO_DEPS_FORCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,6 +30,19 @@ while [[ $# -gt 0 ]]; do
       FIX=1
       shift
       ;;
+    --fix-deps)
+      FIX_DEPS=1
+      shift
+      ;;
+    --auto-deps-dry-run)
+      FIX_DEPS=1
+      AUTO_DEPS_DRY_RUN=1
+      shift
+      ;;
+    --auto-deps-force)
+      AUTO_DEPS_FORCE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -36,6 +52,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${FIX_DEPS}" -eq 1 ]]; then
+  lacp_auto_install_deps "$([[ "${AUTO_DEPS_DRY_RUN}" -eq 1 ]] && echo true || echo false)" "$([[ "${AUTO_DEPS_FORCE}" -eq 1 ]] && echo true || echo false)"
+fi
 
 if [[ "${FIX}" -eq 1 ]]; then
   mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"

@@ -16,6 +16,9 @@ Options:
   --min-hit-rate <n>         Minimum average hit_rate_at_k (default: 0.90)
   --min-mrr <n>              Minimum average mrr_at_k (default: 0.65)
   --max-triage-issues <n>    Maximum total triage issues in window (default: 2)
+  --since-clean-baseline     Use baseline timestamp from baseline file as additional cutoff
+  --baseline-file <path>     Baseline file path (default: <knowledge>/data/benchmarks/canary-baseline.json)
+  --set-clean-baseline       Write baseline file at current UTC timestamp and exit
   --json                     Print JSON payload
   -h, --help                 Show this help
 EOF
@@ -25,6 +28,9 @@ DAYS="${LACP_CANARY_DAYS}"
 MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE}"
 MIN_MRR="${LACP_CANARY_MIN_MRR}"
 MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES}"
+SINCE_CLEAN_BASELINE=0
+SET_CLEAN_BASELINE=0
+BASELINE_FILE="${LACP_KNOWLEDGE_ROOT}/data/benchmarks/canary-baseline.json"
 AS_JSON=0
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +51,18 @@ while [[ $# -gt 0 ]]; do
       MAX_TRIAGE_ISSUES="$2"
       shift 2
       ;;
+    --since-clean-baseline)
+      SINCE_CLEAN_BASELINE=1
+      shift
+      ;;
+    --baseline-file)
+      BASELINE_FILE="$2"
+      shift 2
+      ;;
+    --set-clean-baseline)
+      SET_CLEAN_BASELINE=1
+      shift
+      ;;
     --json)
       AS_JSON=1
       shift
@@ -64,7 +82,34 @@ require_cmd jq
 
 BENCH_DIR="${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 
-result_json="$(python3 - <<'PY' "${BENCH_DIR}" "${DAYS}" "${MIN_HIT_RATE}" "${MIN_MRR}" "${MAX_TRIAGE_ISSUES}"
+if [[ "${SET_CLEAN_BASELINE}" -eq 1 ]]; then
+  mkdir -p "$(dirname "${BASELINE_FILE}")"
+  baseline_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n \
+    --arg schema_version "1" \
+    --arg kind "canary_baseline" \
+    --arg baseline_utc "${baseline_now}" \
+    '{
+      schema_version: $schema_version,
+      kind: $kind,
+      baseline_utc: $baseline_utc
+    }' > "${BASELINE_FILE}"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n --arg baseline_file "${BASELINE_FILE}" --arg baseline_utc "${baseline_now}" '{ok:true, baseline_file:$baseline_file, baseline_utc:$baseline_utc}'
+  else
+    log "set clean baseline: ${baseline_now} (${BASELINE_FILE})"
+  fi
+  exit 0
+fi
+
+BASELINE_UTC=""
+if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+  [[ -f "${BASELINE_FILE}" ]] || die "Baseline file not found: ${BASELINE_FILE}. Run: lacp canary --set-clean-baseline"
+  BASELINE_UTC="$(jq -r '.baseline_utc // ""' "${BASELINE_FILE}" 2>/dev/null || true)"
+  [[ -n "${BASELINE_UTC}" ]] || die "Baseline file invalid: missing baseline_utc in ${BASELINE_FILE}"
+fi
+
+result_json="$(python3 - <<'PY' "${BENCH_DIR}" "${DAYS}" "${MIN_HIT_RATE}" "${MIN_MRR}" "${MAX_TRIAGE_ISSUES}" "${BASELINE_UTC}" "${BASELINE_FILE}" "$([[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]] && echo true || echo false)"
 import datetime as dt
 import json
 import pathlib
@@ -76,9 +121,22 @@ days = int(sys.argv[2])
 min_hit = float(sys.argv[3])
 min_mrr = float(sys.argv[4])
 max_triage_issues = int(sys.argv[5])
+baseline_utc = sys.argv[6]
+baseline_file = sys.argv[7]
+use_baseline = sys.argv[8] == "true"
 
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(days=days)
+effective_cutoff = cutoff
+
+baseline_dt = None
+if use_baseline:
+    try:
+        baseline_dt = dt.datetime.strptime(baseline_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except Exception:
+        baseline_dt = None
+    if baseline_dt is not None and baseline_dt > effective_cutoff:
+        effective_cutoff = baseline_dt
 
 rows = []
 if bench_dir.exists():
@@ -97,7 +155,7 @@ if bench_dir.exists():
         else:
             generated = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
 
-        if generated < cutoff:
+        if generated < effective_cutoff:
             continue
 
         summary = payload.get("summary", {}) or {}
@@ -148,6 +206,10 @@ payload = {
     "window": {
         "days": days,
         "cutoff_utc": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "effective_cutoff_utc": effective_cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "baseline_mode": use_baseline,
+        "baseline_file": baseline_file if use_baseline else None,
+        "baseline_utc": baseline_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if baseline_dt is not None else None,
     },
     "thresholds": {
         "min_hit_rate_at_k": min_hit,
@@ -179,7 +241,7 @@ fi
 echo "${result_json}" | jq -r '
   "LACP Canary",
   "  generated_at_utc=\(.generated_at_utc)",
-  "  window.days=\(.window.days) sample_count=\(.summary.benchmark_count)",
+  "  window.days=\(.window.days) cutoff=\(.window.effective_cutoff_utc) sample_count=\(.summary.benchmark_count)",
   "  avg.hit_rate_at_k=\(.summary.avg_hit_rate_at_k) avg.mrr_at_k=\(.summary.avg_mrr_at_k)",
   "  triage.total=\(.summary.triage_issues_total) gate_failures=\(.summary.gate_failures)",
   "  promotion_ready=\(.promotion_ready)",

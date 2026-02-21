@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
+- `lacp-canary` clean baseline controls: `--set-clean-baseline`, `--since-clean-baseline`.
 - `bin/lacp-auto-rollback` fail-safe rollback command (forces `local-only` + unadopts local wrappers) on unhealthy canary.
 - `bin/lacp-schedule-health` launchd automation for periodic local health artifacts (`doctor/status/report`).
 - `bin/lacp-policy-pack` with baseline packs:
@@ -14,13 +15,17 @@ All notable changes to this project will be documented in this file.
   - `config/policy-packs/enterprise.json`
 - `bin/lacp-release-prepare` one-command release discipline (`release-gate` + `canary` + `status` + `report`) with optional rollback trigger.
 - CI coverage for new surfaces:
+  - `scripts/ci/test-auto-deps.sh`
   - `scripts/ci/test-canary.sh`
+  - `scripts/ci/test-canary-baseline.sh`
   - `scripts/ci/test-auto-rollback.sh`
   - `scripts/ci/test-schedule-health.sh`
   - `scripts/ci/test-policy-pack.sh`
   - `scripts/ci/test-release-prepare.sh`
 
 ### Changed
+- `bin/lacp-install` now supports fresh-system dependency bootstrap on macOS (`--auto-deps`, `--auto-deps-dry-run`).
+- `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
 - `bin/lacp-status-report` and `bin/lacp-report` JSON outputs now share top-level schema fields (`schema_version`, `kind`, `ok`, `summary`).
 - `bin/lacp` top-level dispatcher expanded with new commands (`canary`, `auto-rollback`, `schedule-health`, `policy-pack`, `release-prepare`).

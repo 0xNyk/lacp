@@ -17,6 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
 
 ```bash
 cd ~/control/frameworks/lacp
+bin/lacp install --profile starter --auto-deps-dry-run
 bin/lacp verify --hours 24
 bin/lacp test --quick
 bin/lacp test --isolated
@@ -40,6 +41,8 @@ bin/lacp report --hours 24
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp canary --json
+bin/lacp canary --set-clean-baseline
+bin/lacp canary --since-clean-baseline --json
 bin/lacp auto-rollback --json
 bin/lacp skill-audit --json
 bin/lacp policy-pack list --json
@@ -54,6 +57,7 @@ scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json
 bin/lacp migrate --json
+bin/lacp doctor --fix-deps --auto-deps-dry-run --json
 bin/lacp schedule-health status --json
 bin/lacp status
 ```

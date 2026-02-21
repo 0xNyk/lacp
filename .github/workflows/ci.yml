@@ -89,11 +89,23 @@ jobs:
           chmod +x scripts/ci/test-cache-guard.sh
           ./scripts/ci/test-cache-guard.sh
 
+      - name: Auto deps dry-run tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-auto-deps.sh
+          ./scripts/ci/test-auto-deps.sh
+
       - name: Canary gate tests
         run: |
           set -euo pipefail
           chmod +x scripts/ci/test-canary.sh
           ./scripts/ci/test-canary.sh
+
+      - name: Canary baseline tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-canary-baseline.sh
+          ./scripts/ci/test-canary-baseline.sh
 
       - name: Auto rollback tests
         run: |
