@@ -32,6 +32,7 @@ class Lacp < Formula
       lacp-skill-audit
       lacp-release-gate
       lacp-harness-validate
+      lacp-harness-run
       lacp-orchestrate
       lacp-migrate
       lacp-incident-drill
