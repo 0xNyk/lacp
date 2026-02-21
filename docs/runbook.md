@@ -43,6 +43,7 @@ bin/lacp skill-audit --json
 bin/lacp release-gate --quick
 bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
 bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json
+bin/lacp worktree doctor --repo-root . --json
 bin/lacp orchestrate doctor --json
 scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
@@ -126,6 +127,11 @@ bin/lacp orchestrate run \
   --claude-tmux true \
   --dry-run \
   --json | jq
+
+# create/list/remove worktrees directly
+bin/lacp worktree create --repo-root . --name "lacp-claude-batch-a" --base HEAD --json | jq
+bin/lacp worktree list --repo-root . --json | jq
+bin/lacp worktree remove --repo-root . --name "lacp-claude-batch-a" --force --json | jq
 ```
 
 ## Operating Mode

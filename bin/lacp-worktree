@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  lacp-worktree list [--repo-root <path>] [--json]
+  lacp-worktree create --name <id> [--repo-root <path>] [--base <ref>] [--branch <name>] [--path <dir>] [--json]
+  lacp-worktree remove (--name <id> | --path <dir>) [--repo-root <path>] [--force] [--json]
+  lacp-worktree prune [--repo-root <path>] [--dry-run] [--json]
+  lacp-worktree doctor [--repo-root <path>] [--json]
+
+Notes:
+  - Default repo root is current working directory.
+  - Default worktree path is <repo-root>/.worktrees/<name>.
+  - Default branch name is wt/<name>.
+USAGE
+}
+
+json_escape() {
+  jq -Rn --arg v "$1" '$v'
+}
+
+require_repo() {
+  local repo_root="$1"
+  git -C "${repo_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Not a git repository: ${repo_root}"
+}
+
+sanitize_name() {
+  local value="$1"
+  if [[ ! "${value}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    die "Invalid name '${value}'. Allowed: letters, numbers, dot, underscore, dash"
+  fi
+  printf '%s' "${value}"
+}
+
+cmd_list() {
+  local repo_root="$PWD"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  require_repo "${repo_root}"
+
+  local porcelain
+  porcelain="$(git -C "${repo_root}" worktree list --porcelain)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    python3 - <<'PY' "${porcelain}"
+import json
+import sys
+
+raw = sys.argv[1].splitlines()
+out = []
+cur = {}
+for line in raw:
+    if not line.strip():
+        if cur:
+            out.append(cur)
+            cur = {}
+        continue
+    parts = line.split(" ", 1)
+    key = parts[0]
+    val = parts[1] if len(parts) > 1 else True
+    if key == "worktree":
+        cur["path"] = val
+    elif key == "HEAD":
+        cur["head"] = val
+    elif key == "branch":
+        cur["branch"] = val.replace("refs/heads/", "")
+    elif key == "detached":
+        cur["detached"] = True
+    elif key == "locked":
+        cur["locked"] = True
+    elif key == "prunable":
+        cur["prunable"] = val if isinstance(val, str) else True
+if cur:
+    out.append(cur)
+print(json.dumps({"ok": True, "worktrees": out}, indent=2))
+PY
+  else
+    git -C "${repo_root}" worktree list
+  fi
+}
+
+cmd_create() {
+  local repo_root="$PWD"
+  local name=""
+  local base="HEAD"
+  local branch=""
+  local path=""
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      --base) base="$2"; shift 2 ;;
+      --branch) branch="$2"; shift 2 ;;
+      --path) path="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${name}" ]] || die "--name is required"
+  name="$(sanitize_name "${name}")"
+  require_repo "${repo_root}"
+
+  if [[ -z "${branch}" ]]; then
+    branch="wt/${name}"
+  fi
+
+  if [[ -z "${path}" ]]; then
+    path="${repo_root}/.worktrees/${name}"
+  fi
+
+  mkdir -p "$(dirname "${path}")"
+
+  if git -C "${repo_root}" show-ref --verify --quiet "refs/heads/${branch}"; then
+    git -C "${repo_root}" worktree add "${path}" "${branch}" >/dev/null
+  else
+    git -C "${repo_root}" worktree add -b "${branch}" "${path}" "${base}" >/dev/null
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --arg path "${path}" \
+      --arg branch "${branch}" \
+      --arg base "${base}" \
+      '{ok:true,path:$path,branch:$branch,base:$base}'
+  else
+    log "worktree created path=${path} branch=${branch}"
+  fi
+}
+
+cmd_remove() {
+  local repo_root="$PWD"
+  local name=""
+  local path=""
+  local force="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      --path) path="$2"; shift 2 ;;
+      --force) force="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  require_repo "${repo_root}"
+
+  if [[ -n "${name}" && -n "${path}" ]]; then
+    die "Use either --name or --path, not both"
+  fi
+  if [[ -z "${name}" && -z "${path}" ]]; then
+    die "--name or --path is required"
+  fi
+
+  if [[ -n "${name}" ]]; then
+    name="$(sanitize_name "${name}")"
+    path="${repo_root}/.worktrees/${name}"
+  fi
+
+  if [[ "${force}" == "true" ]]; then
+    git -C "${repo_root}" worktree remove --force "${path}" >/dev/null
+  else
+    git -C "${repo_root}" worktree remove "${path}" >/dev/null
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n --arg path "${path}" '{ok:true,path:$path,removed:true}'
+  else
+    log "worktree removed path=${path}"
+  fi
+}
+
+cmd_prune() {
+  local repo_root="$PWD"
+  local dry_run="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  require_repo "${repo_root}"
+
+  local out
+  if [[ "${dry_run}" == "true" ]]; then
+    out="$(git -C "${repo_root}" worktree prune --dry-run 2>&1 || true)"
+  else
+    out="$(git -C "${repo_root}" worktree prune 2>&1 || true)"
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n --arg output "${out}" --argjson dry_run "$( [[ "${dry_run}" == "true" ]] && echo true || echo false )" '{ok:true,dry_run:$dry_run,output:$output}'
+  else
+    [[ -n "${out}" ]] && printf '%s\n' "${out}"
+    log "worktree prune complete"
+  fi
+}
+
+cmd_doctor() {
+  local repo_root="$PWD"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  require_repo "${repo_root}"
+  local git_path
+  git_path="$(command -v git || true)"
+  local wt_root="${repo_root}/.worktrees"
+
+  local count
+  count="$(git -C "${repo_root}" worktree list --porcelain | rg -c '^worktree ' || true)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --arg repo_root "${repo_root}" \
+      --arg git_path "${git_path}" \
+      --arg wt_root "${wt_root}" \
+      --argjson worktree_count "${count:-0}" \
+      --argjson root_exists "$( [[ -d "${wt_root}" ]] && echo true || echo false )" \
+      '{ok:true,repo_root:$repo_root,git:$git_path,worktree_root:$wt_root,worktree_root_exists:$root_exists,worktree_count:$worktree_count}'
+  else
+    log "repo_root=${repo_root}"
+    log "git=${git_path:-missing}"
+    log "worktree_root=${wt_root}"
+    log "worktree_count=${count:-0}"
+  fi
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 0; }
+  local sub="$1"
+  shift || true
+
+  case "${sub}" in
+    list) cmd_list "$@" ;;
+    create) cmd_create "$@" ;;
+    remove) cmd_remove "$@" ;;
+    prune) cmd_prune "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    -h|--help|help) usage ;;
+    *) die "Unknown subcommand: ${sub}" ;;
+  esac
+}
+
+main "$@"
