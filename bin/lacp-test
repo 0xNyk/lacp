@@ -132,6 +132,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-browser-evidence-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-pr-preflight.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-worktree.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-swarm.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-orchestrate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-release-gate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-workflow-run.sh"

@@ -35,6 +35,7 @@ fi
 "${ROOT}/bin/lacp" browser-evidence-validate --help >/dev/null
 "${ROOT}/bin/lacp" orchestrate --help >/dev/null
 "${ROOT}/bin/lacp" worktree --help >/dev/null
+"${ROOT}/bin/lacp" swarm --help >/dev/null
 "${ROOT}/bin/lacp" workflow-run --help >/dev/null
 
 # Pin .env to sentinel values and assert isolated runs do not mutate it.
