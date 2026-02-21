@@ -151,6 +151,8 @@ bin/lacp orchestrate run --batch ./orchestrate-batch.json --json | jq
 bin/lacp swarm init --manifest ./swarm.json --json | jq
 bin/lacp swarm plan --manifest ./swarm.json --json | jq
 bin/lacp swarm launch --manifest ./swarm.json --json | jq
+bin/lacp swarm up --manifest ./swarm.json --json | jq
+bin/lacp swarm tui --manifest ./swarm.json --dry-run --json | jq
 bin/lacp swarm status --latest --json | jq
 ```
 
