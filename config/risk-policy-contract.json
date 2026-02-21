@@ -1,0 +1,58 @@
+{
+  "version": "1",
+  "riskTierRules": {
+    "high": [
+      "bin/**",
+      "scripts/runners/**",
+      "config/sandbox-policy.json",
+      "config/mcp-auth-policy.json"
+    ],
+    "medium": [
+      "scripts/ci/**",
+      "config/harness/**",
+      "docs/runbook.md"
+    ],
+    "low": ["**"]
+  },
+  "mergePolicy": {
+    "high": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "harness-smoke",
+        "Browser Evidence",
+        "CI Pipeline"
+      ]
+    },
+    "medium": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "harness-smoke",
+        "CI Pipeline"
+      ]
+    },
+    "low": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "CI Pipeline"
+      ]
+    }
+  },
+  "docsDriftRules": [
+    {
+      "match": ["config/**", "bin/**", "scripts/**"],
+      "requiresAny": ["docs/runbook.md", "docs/framework-scope.md"]
+    }
+  ],
+  "reviewAgent": {
+    "requiredTiers": ["high", "medium"],
+    "mustMatchHeadSha": true,
+    "maxWaitMinutes": 20,
+    "actionableSeverities": ["critical", "high", "medium"]
+  },
+  "browserEvidence": {
+    "requiredTiers": ["high"],
+    "manifestSchema": "config/harness/browser-evidence.schema.json",
+    "requiredEntrypointKinds": ["ui-flow", "auth-flow"],
+    "maxArtifactAgeHours": 24
+  }
+}

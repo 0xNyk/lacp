@@ -107,6 +107,18 @@ jobs:
           chmod +x scripts/ci/test-harness-run.sh
           ./scripts/ci/test-harness-run.sh
 
+      - name: Browser evidence validation tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-browser-evidence-validate.sh
+          ./scripts/ci/test-browser-evidence-validate.sh
+
+      - name: PR preflight tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-pr-preflight.sh
+          ./scripts/ci/test-pr-preflight.sh
+
       - name: Orchestrate tests
         run: |
           set -euo pipefail

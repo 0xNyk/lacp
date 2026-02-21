@@ -41,6 +41,8 @@ bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp skill-audit --json
 bin/lacp release-gate --quick
+bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
+bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json
 bin/lacp orchestrate doctor --json
 scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
@@ -56,6 +58,9 @@ Use these files as the source of truth for harness workflows:
 - `config/harness/tasks.schema.json`
 - `config/harness/sandbox-profiles.yaml`
 - `config/harness/verification-policy.yaml`
+- `config/harness/browser-evidence.schema.json`
+- `config/risk-policy-contract.json`
+- `config/risk-policy-contract.schema.json`
 
 Validate locally:
 
