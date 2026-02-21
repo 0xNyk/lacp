@@ -28,6 +28,7 @@ fi
 "${ROOT}/bin/lacp" cache-audit --help >/dev/null
 "${ROOT}/bin/lacp" cache-guard --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null
+"${ROOT}/bin/lacp" skill-factory --help >/dev/null
 "${ROOT}/bin/lacp" release-gate --help >/dev/null
 "${ROOT}/bin/lacp" pr-preflight --help >/dev/null
 "${ROOT}/bin/lacp" harness-validate --help >/dev/null

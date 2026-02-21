@@ -21,6 +21,7 @@ Ops:
   cache-audit   Analyze prompt cache effectiveness from local histories
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
+  skill-factory Manage auto-skill-factory capture/record/lifecycle workflows
   release-gate  Run strict pre-live go/no-go gates
   pr-preflight  Evaluate PR policy gates (risk tier/checks/review/evidence)
   harness-validate Validate tasks.json against harness contracts
@@ -94,6 +95,9 @@ case "${cmd}" in
     ;;
   skill-audit)
     exec "${ROOT}/bin/lacp-skill-audit" "$@"
+    ;;
+  skill-factory)
+    exec "${ROOT}/bin/lacp-skill-factory" "$@"
     ;;
   release-gate)
     exec "${ROOT}/bin/lacp-release-gate" "$@"
