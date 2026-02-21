@@ -22,7 +22,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-worktree gc` retention mode (`--max-age-hours`, `--managed-only`, `--branch-prefix`) for stale worktree cleanup.
 - `lacp-orchestrate run --batch <manifest>` for multi-session launches with deterministic stop/continue-on-error behavior.
 - `lacp-orchestrate` default backend switched to `dmux` (override with `LACP_ORCHESTRATOR_BACKEND` or `--backend`).
-- `bin/lacp-swarm` dmux-first swarm lifecycle (`init`, `plan`, `launch`, `status`) with artifacted launches under `knowledge/data/swarms`.
+- `bin/lacp-swarm` dmux-first swarm lifecycle (`init`, `plan`, `launch`, `up`, `tui`, `status`) with artifacted launches under `knowledge/data/swarms`.
 - Harness contract layer:
   - `config/harness/tasks.schema.json`
   - `config/harness/sandbox-profiles.yaml`

@@ -11,6 +11,8 @@ Usage:
   lacp-swarm init --manifest <path> [--force] [--json]
   lacp-swarm plan --manifest <path> [--json]
   lacp-swarm launch --manifest <path> [--json]
+  lacp-swarm up --manifest <path> [--force-init] [--json]
+  lacp-swarm tui [--session <name> | --manifest <path> | --latest] [--dry-run] [--json]
   lacp-swarm status [--latest | --id <swarm-id> | --file <path>] [--json]
 
 Notes:
@@ -337,6 +339,137 @@ PY
   [[ "${orch_rc}" -eq 0 ]]
 }
 
+cmd_up() {
+  local manifest=""
+  local force_init="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manifest) manifest="$2"; shift 2 ;;
+      --force-init) force_init="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${manifest}" ]] || die "--manifest is required"
+
+  local manifest_path
+  manifest_path="$(python3 - <<'PY' "${manifest}"
+import pathlib
+import sys
+print(pathlib.Path(sys.argv[1]).expanduser().resolve())
+PY
+)"
+
+  local initialized="false"
+  if [[ "${force_init}" == "true" || ! -f "${manifest_path}" ]]; then
+    initialized="true"
+    if [[ "${force_init}" == "true" ]]; then
+      "${ROOT}/bin/lacp-swarm" init --manifest "${manifest_path}" --force >/dev/null
+    else
+      "${ROOT}/bin/lacp-swarm" init --manifest "${manifest_path}" >/dev/null
+    fi
+  fi
+
+  local launch_out launch_rc
+  set +e
+  launch_out="$("${ROOT}/bin/lacp-swarm" launch --manifest "${manifest_path}" --json 2>&1)"
+  launch_rc=$?
+  set -e
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --argjson initialized "${initialized}" \
+      --arg manifest "${manifest_path}" \
+      --argjson launch "$(jq -c '.' <<<"${launch_out}" 2>/dev/null || jq -nc --arg raw "${launch_out}" '{ok:false,raw:$raw}')" \
+      '{ok:($launch.ok // false),initialized:$initialized,manifest:$manifest,launch:$launch}'
+  else
+    if [[ "${initialized}" == "true" ]]; then
+      log "swarm manifest initialized: ${manifest_path}"
+    fi
+    if [[ "${launch_rc}" -eq 0 ]]; then
+      log "swarm up complete manifest=${manifest_path}"
+    else
+      echo "${launch_out}" >&2
+    fi
+  fi
+
+  [[ "${launch_rc}" -eq 0 ]]
+}
+
+cmd_tui() {
+  local session=""
+  local manifest=""
+  local latest="false"
+  local dry_run="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session) session="$2"; shift 2 ;;
+      --manifest) manifest="$2"; shift 2 ;;
+      --latest) latest="true"; shift ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ -z "${session}" && -n "${manifest}" ]]; then
+    require_file "${manifest}"
+    session="$(jq -r '.jobs[]? | select(.backend == "dmux") | .session // empty' "${manifest}" | head -n 1)"
+    if [[ -z "${session}" ]]; then
+      session="$(jq -r '.jobs[]? | .session // empty' "${manifest}" | head -n 1)"
+    fi
+  fi
+
+  if [[ -z "${session}" ]]; then
+    if [[ "${latest}" == "true" || -z "${manifest}" ]]; then
+      local artifact
+      artifact="$(latest_file "$(swarm_dir)/swarm-*.json" || true)"
+      if [[ -n "${artifact}" ]]; then
+        session="$(jq -r '.launch.jobs[]? | select(.backend == "dmux") | .session // empty' "${artifact}" | head -n 1)"
+        if [[ -z "${session}" ]]; then
+          session="$(jq -r '.launch.jobs[]? | .session // empty' "${artifact}" | head -n 1)"
+        fi
+      fi
+    fi
+  fi
+
+  if ! command -v dmux >/dev/null 2>&1; then
+    die "dmux not found in PATH"
+  fi
+
+  local cmd="dmux"
+  local tui_template="${LACP_DMUX_TUI_TEMPLATE:-}"
+  if [[ -n "${session}" && -n "${tui_template}" ]]; then
+    cmd="${tui_template//\{session\}/${session}}"
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --arg session "${session}" \
+      --arg command "${cmd}" \
+      --argjson dry_run "${dry_run}" \
+      '{ok:true,session:($session|if length>0 then . else null end),command:$command,dry_run:$dry_run}'
+    [[ "${dry_run}" == "true" ]] && return 0
+  elif [[ -n "${session}" ]]; then
+    log "opening dmux (session hint=${session})"
+  else
+    log "opening dmux"
+  fi
+
+  if [[ "${dry_run}" == "true" ]]; then
+    return 0
+  fi
+
+  /usr/bin/env bash -lc "${cmd}"
+}
+
 cmd_status() {
   local latest="false"
   local id=""
@@ -392,6 +525,8 @@ main() {
     init) cmd_init "$@" ;;
     plan) cmd_plan "$@" ;;
     launch) cmd_launch "$@" ;;
+    up) cmd_up "$@" ;;
+    tui) cmd_tui "$@" ;;
     status) cmd_status "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown subcommand: ${sub}" ;;

@@ -241,7 +241,7 @@ Notes:
 - `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
 - `bin/lacp-orchestrate`: optional dmux/tmux/claude_worktree orchestration adapter (still routed through LACP gates)
 - `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/gc/doctor`)
-- `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/status`) with policy-gated batch execution
+- `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/up/tui/status`) with policy-gated batch execution
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
@@ -370,6 +370,8 @@ bin/lacp orchestrate run --batch ./orchestrate-batch.json --json | jq
 bin/lacp swarm init --manifest ./swarm.json --json | jq
 bin/lacp swarm plan --manifest ./swarm.json --json | jq
 bin/lacp swarm launch --manifest ./swarm.json --json | jq
+bin/lacp swarm up --manifest ./swarm.json --json | jq
+bin/lacp swarm tui --manifest ./swarm.json --dry-run --json | jq
 bin/lacp swarm status --latest --json | jq
 
 # preferred
