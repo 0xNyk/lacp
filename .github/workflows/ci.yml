@@ -95,6 +95,12 @@ jobs:
           chmod +x scripts/ci/test-skill-audit.sh
           ./scripts/ci/test-skill-audit.sh
 
+      - name: Adopt local wrapper tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-adopt-local.sh
+          ./scripts/ci/test-adopt-local.sh
+
       - name: Harness contracts tests
         run: |
           set -euo pipefail
