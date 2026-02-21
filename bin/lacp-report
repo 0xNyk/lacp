@@ -76,7 +76,8 @@ if runs_dir.exists():
 
 total = len(runs)
 executed = sum(1 for r in runs if r.get("executed") is True)
-success = sum(1 for r in runs if int(r.get("exit_code", 1)) == 0)
+success = sum(1 for r in runs if r.get("executed") is True and int(r.get("exit_code", 1)) == 0)
+success_all = sum(1 for r in runs if int(r.get("exit_code", 1)) == 0)
 blocked_review = sum(1 for r in runs if int(r.get("exit_code", 0)) == 8)
 blocked_critical = sum(1 for r in runs if int(r.get("exit_code", 0)) == 9)
 blocked_budget = sum(1 for r in runs if int(r.get("exit_code", 0)) == 10)
@@ -102,6 +103,7 @@ payload = {
         "total": total,
         "executed": executed,
         "success": success,
+        "success_all": success_all,
         "blocked_review": blocked_review,
         "blocked_critical": blocked_critical,
         "blocked_budget": blocked_budget,
@@ -122,7 +124,7 @@ else
     "LACP Report",
     "  generated_at_utc=\(.generated_at_utc)",
     "  window_hours=\(.window_hours)",
-    "  runs.total=\(.runs.total) runs.executed=\(.runs.executed) runs.success=\(.runs.success)",
+    "  runs.total=\(.runs.total) runs.executed=\(.runs.executed) runs.success=\(.runs.success) runs.success_all=\(.runs.success_all)",
     "  blocked.review=\(.runs.blocked_review) blocked.critical=\(.runs.blocked_critical) blocked.budget=\(.runs.blocked_budget)",
     "  benchmark.path=\(.artifacts.latest_benchmark.path // "<none>")",
     "  benchmark.gate_ok=\(.artifacts.latest_benchmark.gate_ok)",
