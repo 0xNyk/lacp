@@ -43,6 +43,7 @@ bin/lacp skill-audit --json
 bin/lacp release-gate --quick
 bin/lacp orchestrate doctor --json
 scripts/ci/test-harness-contracts.sh
+bin/lacp harness-validate --tasks ./tasks.json --json
 bin/lacp migrate --json
 bin/lacp status
 ```
