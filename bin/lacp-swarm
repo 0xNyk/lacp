@@ -1,0 +1,401 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  lacp-swarm init --manifest <path> [--force] [--json]
+  lacp-swarm plan --manifest <path> [--json]
+  lacp-swarm launch --manifest <path> [--json]
+  lacp-swarm status [--latest | --id <swarm-id> | --file <path>] [--json]
+
+Notes:
+  - Manifests are JSON and dmux-first by default.
+  - launch delegates execution through `lacp-orchestrate run --batch`, so all LACP gates remain active.
+USAGE
+}
+
+swarm_dir() {
+  printf '%s/data/swarms' "${LACP_KNOWLEDGE_ROOT}"
+}
+
+swarm_file_from_id() {
+  local id="$1"
+  printf '%s/%s.json' "$(swarm_dir)" "${id}"
+}
+
+cmd_init() {
+  local manifest=""
+  local force="false"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manifest) manifest="$2"; shift 2 ;;
+      --force) force="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${manifest}" ]] || die "--manifest is required"
+  local manifest_path
+  manifest_path="$(python3 - <<'PY' "${manifest}"
+import pathlib
+import sys
+print(pathlib.Path(sys.argv[1]).expanduser().resolve())
+PY
+)"
+
+  if [[ -f "${manifest_path}" && "${force}" != "true" ]]; then
+    die "Manifest already exists: ${manifest_path} (pass --force to overwrite)"
+  fi
+
+  mkdir -p "$(dirname "${manifest_path}")"
+  cat > "${manifest_path}" <<'JSON'
+{
+  "version": "1",
+  "name": "lacp-swarm",
+  "continue_on_error": false,
+  "defaults": {
+    "backend": "dmux",
+    "repo_trust": "trusted",
+    "dry_run": true
+  },
+  "jobs": [
+    {
+      "task": "analysis stream",
+      "session": "swarm-analysis",
+      "command": "codex --help"
+    },
+    {
+      "task": "implementation stream",
+      "session": "swarm-impl",
+      "command": "claude --help",
+      "backend": "claude_worktree",
+      "claude_tmux": true
+    }
+  ]
+}
+JSON
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n --arg manifest "${manifest_path}" '{ok:true,manifest:$manifest,created:true}'
+  else
+    log "swarm manifest created: ${manifest_path}"
+  fi
+}
+
+cmd_plan() {
+  local manifest=""
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manifest) manifest="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${manifest}" ]] || die "--manifest is required"
+  require_file "${manifest}"
+
+  python3 - <<'PY' "${manifest}" "${ROOT}" "${as_json}"
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1]).resolve()
+root = Path(sys.argv[2]).resolve()
+as_json = sys.argv[3] == "true"
+
+errors: list[str] = []
+warnings: list[str] = []
+
+try:
+    payload = json.loads(manifest_path.read_text())
+except Exception as exc:
+    print(f"[lacp] ERROR: invalid manifest json: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+if not isinstance(payload, dict):
+    print("[lacp] ERROR: manifest root must be object", file=sys.stderr)
+    raise SystemExit(2)
+
+version = payload.get("version")
+if not isinstance(version, str) or not version.strip():
+    errors.append("version must be non-empty string")
+
+name = payload.get("name")
+if not isinstance(name, str) or not name.strip():
+    errors.append("name must be non-empty string")
+
+defaults = payload.get("defaults", {})
+if defaults is None:
+    defaults = {}
+if not isinstance(defaults, dict):
+    errors.append("defaults must be an object")
+    defaults = {}
+
+continue_on_error = bool(payload.get("continue_on_error", False))
+jobs = payload.get("jobs")
+if not isinstance(jobs, list) or not jobs:
+    errors.append("jobs must be a non-empty array")
+    jobs = []
+
+cp = subprocess.run([str(root / "bin/lacp-orchestrate"), "doctor", "--json"], capture_output=True, text=True)
+backend_state = {}
+if cp.returncode == 0:
+    try:
+        backend_state = json.loads(cp.stdout)
+    except Exception:
+        warnings.append("failed to parse orchestrate doctor output")
+else:
+    warnings.append("unable to read orchestrate backend health")
+
+healthy_backends = {}
+for bname, binfo in (backend_state.get("backends", {}) if isinstance(backend_state, dict) else {}).items():
+    if isinstance(binfo, dict):
+        healthy_backends[bname] = bool(binfo.get("available", False))
+
+supported_backends = {"tmux", "dmux", "claude_worktree"}
+planned_jobs = []
+seen_sessions: set[str] = set()
+
+for idx, job in enumerate(jobs):
+    prefix = f"jobs[{idx}]"
+    if not isinstance(job, dict):
+        errors.append(f"{prefix} must be an object")
+        continue
+
+    merged = {}
+    merged.update(defaults)
+    merged.update(job)
+
+    task = merged.get("task")
+    session = merged.get("session")
+    command = merged.get("command")
+    backend = merged.get("backend", "dmux")
+
+    if not isinstance(task, str) or not task.strip():
+        errors.append(f"{prefix}.task missing")
+    if not isinstance(session, str) or not session.strip():
+        errors.append(f"{prefix}.session missing")
+    elif session in seen_sessions:
+        errors.append(f"{prefix}.session duplicated: {session}")
+    else:
+        seen_sessions.add(session)
+    if not isinstance(command, str) or not command.strip():
+        errors.append(f"{prefix}.command missing")
+
+    if not isinstance(backend, str) or backend not in supported_backends:
+        errors.append(f"{prefix}.backend must be one of {sorted(supported_backends)}")
+        backend = "dmux"
+
+    if backend in healthy_backends and not healthy_backends.get(backend, False):
+        warnings.append(f"{prefix}.backend unavailable on this host: {backend}")
+
+    planned_jobs.append(merged)
+
+ok = len(errors) == 0
+result = {
+    "ok": ok,
+    "manifest": str(manifest_path),
+    "summary": {
+        "name": name,
+        "jobs": len(planned_jobs),
+        "continue_on_error": continue_on_error,
+        "errors": len(errors),
+        "warnings": len(warnings),
+    },
+    "backend_health": healthy_backends,
+    "planned": {
+        "continue_on_error": continue_on_error,
+        "jobs": planned_jobs,
+    },
+    "errors": errors,
+    "warnings": warnings,
+}
+
+if as_json:
+    print(json.dumps(result, indent=2))
+else:
+    if ok:
+        print(f"[lacp] swarm plan ok jobs={len(planned_jobs)}")
+    else:
+        print(f"[lacp] swarm plan failed errors={len(errors)}", file=sys.stderr)
+        for item in errors:
+            print(f" - {item}", file=sys.stderr)
+
+raise SystemExit(0 if ok else 1)
+PY
+}
+
+cmd_launch() {
+  local manifest=""
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --manifest) manifest="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${manifest}" ]] || die "--manifest is required"
+  require_file "${manifest}"
+
+  local plan_out
+  set +e
+  plan_out="$("${ROOT}/bin/lacp-swarm" plan --manifest "${manifest}" --json 2>&1)"
+  local plan_rc=$?
+  set -e
+
+  if [[ "${plan_rc}" -ne 0 ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      jq -n --arg out "${plan_out}" '{ok:false,error:"plan_failed",plan_output:$out}'
+    else
+      echo "${plan_out}" >&2
+    fi
+    return 1
+  fi
+
+  local tmp_batch
+  tmp_batch="$(mktemp)"
+  trap 'rm -f "${tmp_batch:-}"' RETURN
+  jq '.planned' <<<"${plan_out}" > "${tmp_batch}"
+
+  local orch_out
+  set +e
+  orch_out="$("${ROOT}/bin/lacp-orchestrate" run --batch "${tmp_batch}" --json 2>&1)"
+  local orch_rc=$?
+  set -e
+
+  local swarm_id
+  swarm_id="swarm-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  local artifacts_dir
+  artifacts_dir="$(swarm_dir)"
+  mkdir -p "${artifacts_dir}"
+  local artifact_file
+  artifact_file="$(swarm_file_from_id "${swarm_id}")"
+
+  python3 - <<'PY' "${artifact_file}" "${manifest}" "${plan_out}" "${orch_out}" "${orch_rc}" "${swarm_id}"
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+artifact_path = Path(sys.argv[1])
+manifest = str(Path(sys.argv[2]).resolve())
+plan_raw = sys.argv[3]
+orch_raw = sys.argv[4]
+orch_rc = int(sys.argv[5])
+swarm_id = sys.argv[6]
+
+try:
+    plan = json.loads(plan_raw)
+except Exception:
+    plan = {"ok": False, "raw": plan_raw}
+
+try:
+    launch = json.loads(orch_raw)
+except Exception:
+    launch = {"ok": False, "raw": orch_raw}
+
+payload = {
+    "ok": orch_rc == 0,
+    "swarm_id": swarm_id,
+    "manifest": manifest,
+    "plan": plan,
+    "launch": launch,
+}
+artifact_path.write_text(json.dumps(payload, indent=2) + "\n")
+PY
+
+  local rendered
+  rendered="$(cat "${artifact_file}")"
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq --arg artifact "${artifact_file}" '. + {artifact:$artifact}' <<<"${rendered}"
+  else
+    log "swarm launch complete id=${swarm_id} artifact=${artifact_file}"
+  fi
+
+  [[ "${orch_rc}" -eq 0 ]]
+}
+
+cmd_status() {
+  local latest="false"
+  local id=""
+  local file=""
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --latest) latest="true"; shift ;;
+      --id) id="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  local target=""
+  if [[ -n "${file}" ]]; then
+    target="$(python3 - <<'PY' "${file}"
+import pathlib
+import sys
+print(pathlib.Path(sys.argv[1]).expanduser().resolve())
+PY
+)"
+  elif [[ -n "${id}" ]]; then
+    target="$(swarm_file_from_id "${id}")"
+  else
+    latest="true"
+  fi
+
+  if [[ "${latest}" == "true" ]]; then
+    target="$(latest_file "$(swarm_dir)/swarm-*.json" || true)"
+    [[ -n "${target}" ]] || die "No swarm artifacts found in $(swarm_dir)"
+  fi
+
+  require_file "${target}"
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq '. + {artifact:input_filename}' "${target}"
+  else
+    jq -r '"[lacp] swarm_id=\(.swarm_id) ok=\(.ok) jobs=\(.launch.summary.total // 0) succeeded=\(.launch.summary.succeeded // 0) failed=\(.launch.summary.failed // 0)"' "${target}"
+    log "artifact=${target}"
+  fi
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 0; }
+  local sub="$1"
+  shift || true
+
+  case "${sub}" in
+    init) cmd_init "$@" ;;
+    plan) cmd_plan "$@" ;;
+    launch) cmd_launch "$@" ;;
+    status) cmd_status "$@" ;;
+    -h|--help|help) usage ;;
+    *) die "Unknown subcommand: ${sub}" ;;
+  esac
+}
+
+main "$@"
