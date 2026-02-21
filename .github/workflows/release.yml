@@ -46,11 +46,17 @@ jobs:
           cd dist
           sha256sum "lacp-${{ steps.vars.outputs.version }}.tar.gz" > SHA256SUMS
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.vars.outputs.tag }}
-          generate_release_notes: true
-          files: |
-            dist/lacp-${{ steps.vars.outputs.version }}.tar.gz
-            dist/SHA256SUMS
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          TAR="dist/lacp-${{ steps.vars.outputs.version }}.tar.gz"
+          SUMS="dist/SHA256SUMS"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${TAR}" "${SUMS}" --clobber
+          else
+            gh release create "${TAG}" "${TAR}" "${SUMS}" --generate-notes
+          fi
