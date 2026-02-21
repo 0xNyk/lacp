@@ -186,6 +186,9 @@ check_file "$(automation_script run_memory_benchmark_suite.sh)" "script:run_memo
 check_file "$(automation_script capture_snapshot.py)" "script:capture_snapshot.py"
 check_file "${LACP_SANDBOX_POLICY_FILE}" "config:sandbox_policy"
 check_file "${LACP_MCP_AUTH_POLICY_FILE}" "config:mcp_auth_policy"
+check_file "${LACP_ROOT}/config/harness/tasks.schema.json" "config:harness_tasks_schema"
+check_file "${LACP_ROOT}/config/harness/sandbox-profiles.yaml" "config:harness_sandbox_profiles"
+check_file "${LACP_ROOT}/config/harness/verification-policy.yaml" "config:harness_verification_policy"
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
   add_check "config:sandbox_policy_json" "PASS" "valid json"

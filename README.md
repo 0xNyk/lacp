@@ -74,6 +74,11 @@ Recommended:
 - route decision engine: `bin/lacp-route`
 - execution adapter: `bin/lacp-sandbox-run`
 
+### Harness Contract Layer
+- task planning schema: `config/harness/tasks.schema.json`
+- sandbox profile catalog: `config/harness/sandbox-profiles.yaml`
+- verification policy catalog: `config/harness/verification-policy.yaml`
+
 ### Remote Provider Layer
 - setup helper: `bin/lacp-remote-setup`
 - remote smoke helper: `bin/lacp-remote-smoke`
@@ -245,6 +250,19 @@ Notes:
 - `bin/lacp-sandbox-run`: route + risk-tier/budget gates + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring
 - `bin/lacp-remote-smoke`: provider-aware smoke test with artifact output
+
+## Harness Engineering Contracts
+
+Use these files to formalize your orchestrator workflow from specs to loops:
+
+- `config/harness/tasks.schema.json`: contract for generated `tasks.json` plans.
+- `config/harness/sandbox-profiles.yaml`: reproducible sandbox/runtime presets.
+- `config/harness/verification-policy.yaml`: per-task verification requirements and thresholds.
+
+This maps directly to:
+- spec -> orchestrator-generated tasks
+- task -> sandbox profile + verification policy
+- loop attempts -> checkable gate outcomes
 
 ## Security Model
 

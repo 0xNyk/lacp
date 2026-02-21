@@ -1,0 +1,89 @@
+version: "1.0"
+default_profile: "local-safe"
+profiles:
+  local-safe:
+    description: "Local trusted runs with no internet and strict resource caps."
+    route: "trusted_local"
+    backend: "local"
+    network: "off"
+    tool_allowlist:
+      - "bash"
+      - "python3"
+      - "jq"
+      - "rg"
+      - "git"
+    filesystem:
+      writable_roots:
+        - "$LACP_AUTOMATION_ROOT"
+        - "$LACP_KNOWLEDGE_ROOT"
+        - "$LACP_DRAFTS_ROOT"
+    resources:
+      cpu_limit: "2"
+      memory_mb: 2048
+      timeout_seconds: 900
+    risk_tier: "safe"
+
+  local-untrusted:
+    description: "Unknown or third-party code in local sandbox route."
+    route: "local_sandbox"
+    backend: "local"
+    network: "restricted"
+    tool_allowlist:
+      - "bash"
+      - "python3"
+      - "jq"
+      - "rg"
+      - "git"
+      - "npm"
+    filesystem:
+      writable_roots:
+        - "$LACP_AUTOMATION_ROOT"
+        - "$LACP_KNOWLEDGE_ROOT"
+    resources:
+      cpu_limit: "4"
+      memory_mb: 4096
+      timeout_seconds: 1800
+    risk_tier: "review"
+
+  remote-daytona:
+    description: "Remote sandbox via Daytona for heavy or long-running tasks."
+    route: "remote_sandbox"
+    backend: "daytona"
+    network: "on"
+    tool_allowlist:
+      - "bash"
+      - "python3"
+      - "jq"
+      - "rg"
+      - "git"
+      - "docker"
+    filesystem:
+      writable_roots:
+        - "/workspace"
+    resources:
+      cpu_limit: "8"
+      memory_mb: 16384
+      timeout_seconds: 7200
+    risk_tier: "review"
+
+  remote-e2b:
+    description: "Remote sandbox via E2B for burst workloads."
+    route: "remote_sandbox"
+    backend: "e2b"
+    network: "on"
+    tool_allowlist:
+      - "bash"
+      - "python3"
+      - "jq"
+      - "rg"
+      - "git"
+      - "node"
+    filesystem:
+      writable_roots:
+        - "/workspace"
+    resources:
+      cpu_limit: "8"
+      memory_mb: 16384
+      timeout_seconds: 7200
+    risk_tier: "review"
+
