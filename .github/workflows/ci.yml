@@ -95,6 +95,12 @@ jobs:
           chmod +x scripts/ci/test-harness-contracts.sh
           ./scripts/ci/test-harness-contracts.sh
 
+      - name: Harness validate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-harness-validate.sh
+          ./scripts/ci/test-harness-validate.sh
+
       - name: Orchestrate tests
         run: |
           set -euo pipefail
