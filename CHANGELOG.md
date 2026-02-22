@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
+- `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.
+- `bin/lacp-vendor-watch` to track local Claude/Codex versions and upstream docs/changelog drift snapshots.
+- `bin/lacp-automations-tui` unified local automation dashboard for schedule/orchestrate/worktree/swarm/wrapper/vendor state.
 - `lacp-canary` clean baseline controls: `--set-clean-baseline`, `--since-clean-baseline`.
 - `bin/lacp-auto-rollback` fail-safe rollback command (forces `local-only` + unadopts local wrappers) on unhealthy canary.
 - `bin/lacp-schedule-health` launchd automation for periodic local health artifacts (`doctor/status/report`).
@@ -14,7 +18,13 @@ All notable changes to this project will be documented in this file.
   - `config/policy-packs/strict.json`
   - `config/policy-packs/enterprise.json`
 - `bin/lacp-release-prepare` one-command release discipline (`release-gate` + `canary` + `status` + `report`) with optional rollback trigger.
+- `bin/lacp-loop` one-task control loop (`intent -> execute -> observe -> adapt`) with optional verify/canary/auto-rollback stages.
+- `bin/lacp-sandbox-run --context-contract` with mutating-run context enforcement (`host/cwd/git branch/worktree`) and structured evidence in run artifacts.
 - CI coverage for new surfaces:
+  - `scripts/ci/test-bootstrap-system.sh`
+  - `scripts/ci/test-canary-optimize.sh`
+  - `scripts/ci/test-vendor-watch.sh`
+  - `scripts/ci/test-automations-tui.sh`
   - `scripts/ci/test-auto-deps.sh`
   - `scripts/ci/test-canary.sh`
   - `scripts/ci/test-canary-baseline.sh`
@@ -22,14 +32,21 @@ All notable changes to this project will be documented in this file.
   - `scripts/ci/test-schedule-health.sh`
   - `scripts/ci/test-policy-pack.sh`
   - `scripts/ci/test-release-prepare.sh`
+  - `scripts/ci/test-loop.sh`
 
 ### Changed
-- `bin/lacp-install` now supports fresh-system dependency bootstrap on macOS (`--auto-deps`, `--auto-deps-dry-run`).
+- `bin/lacp-install` now enables fresh-system dependency auto-detection by default on macOS/Homebrew (`--no-auto-deps` opt-out, `--auto-deps-dry-run` supported).
+- `bin/lacp-onboard` now performs default dependency auto-detection/remediation on macOS/Homebrew (`--no-auto-deps` opt-out).
+- `bin/lacp-canary-optimize --json` now keeps JSON parse-safe output even in `--dry-run` mode.
+- `bin/lacp-release-prepare` now supports baseline-aware canary evaluation (`--since-clean-baseline`, `--baseline-file`).
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
 - `bin/lacp-status-report` and `bin/lacp-report` JSON outputs now share top-level schema fields (`schema_version`, `kind`, `ok`, `summary`).
 - `bin/lacp` top-level dispatcher expanded with new commands (`canary`, `auto-rollback`, `schedule-health`, `policy-pack`, `release-prepare`).
+- `bin/lacp` top-level dispatcher expanded with `canary-optimize`.
+- `bin/lacp` top-level dispatcher expanded with `loop`.
 - Homebrew formula command export list updated for new binaries.
+- Security controls CI now covers context-contract gate behavior (`missing`, `mismatch`, `pass`) for mutating commands.
 
 ## [0.1.0] - 2026-02-20
 

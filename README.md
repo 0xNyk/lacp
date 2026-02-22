@@ -104,6 +104,24 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 - Pass `--estimated-cost-usd <N>` to `bin/lacp-sandbox-run`.
 - If estimate exceeds the tier ceiling, run is blocked unless `--confirm-budget true` is explicitly provided.
 
+## Context Contract Gate
+
+- Mutating commands in `bin/lacp-sandbox-run` require a context contract by default (`LACP_REQUIRE_CONTEXT_CONTRACT=true`).
+- Pass `--context-contract '<json>'` with one or more expectations:
+  - `expected_host`
+  - `expected_cwd_prefix`
+  - `expected_git_branch`
+  - `expected_git_worktree`
+- Example:
+
+```bash
+bin/lacp-sandbox-run \
+  --task "create local venv" \
+  --repo-trust trusted \
+  --context-contract '{"expected_host":"my-host","expected_cwd_prefix":"/Users/nyk/control"}' \
+  -- python3 -m venv .venv
+```
+
 ## Quick Start
 
 ```bash
@@ -232,6 +250,7 @@ Notes:
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
+- `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
@@ -361,6 +380,9 @@ bin/lacp canary --since-clean-baseline --json | jq
 bin/lacp vendor-watch --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
+
+# one-task control loop
+bin/lacp loop --task "trusted smoke" --repo-trust trusted --dry-run --json -- /bin/echo hello
 
 # fail-safe rollback if canary is unhealthy
 bin/lacp auto-rollback --json | jq
