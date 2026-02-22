@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-canary-optimize [options]
+
+Run a bounded canary optimization loop:
+  1) (optional) set clean baseline
+  2) run verify with candidate LACP_BENCH_TOP_K values
+  3) evaluate canary after each iteration
+  4) optionally persist best top-k into .env
+
+Options:
+  --iterations <n>           Max optimization iterations (default: 4)
+  --hours <n>                Verify window hours per iteration (default: LACP_VERIFY_HOURS)
+  --days <n>                 Canary lookback days (default: LACP_CANARY_DAYS)
+  --min-hit-rate <n>         Canary min average hit_rate_at_k (default: LACP_CANARY_MIN_HIT_RATE)
+  --min-mrr <n>              Canary min average mrr_at_k (default: LACP_CANARY_MIN_MRR)
+  --max-triage-issues <n>    Canary max total triage issues (default: LACP_CANARY_MAX_TRIAGE_ISSUES)
+  --top-k-candidates <csv>   Candidate top-k list (default: "8,10,12,16")
+  --set-clean-baseline       Set clean baseline before optimization (default: true)
+  --no-set-clean-baseline    Do not set clean baseline
+  --since-clean-baseline     Evaluate canary since clean baseline (default: true)
+  --no-since-clean-baseline  Evaluate canary on regular lookback window
+  --apply-env                Persist best LACP_BENCH_TOP_K into .env (default: true)
+  --no-apply-env             Do not write .env
+  --dry-run                  Print planned actions only
+  --json                     Print JSON result
+  -h, --help                 Show help
+EOF
+}
+
+ITERATIONS=4
+HOURS="${LACP_VERIFY_HOURS}"
+DAYS="${LACP_CANARY_DAYS}"
+MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE}"
+MIN_MRR="${LACP_CANARY_MIN_MRR}"
+MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES}"
+TOP_K_CANDIDATES="8,10,12,16"
+SET_CLEAN_BASELINE=1
+SINCE_CLEAN_BASELINE=1
+APPLY_ENV=1
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --iterations) ITERATIONS="$2"; shift 2 ;;
+    --hours) HOURS="$2"; shift 2 ;;
+    --days) DAYS="$2"; shift 2 ;;
+    --min-hit-rate) MIN_HIT_RATE="$2"; shift 2 ;;
+    --min-mrr) MIN_MRR="$2"; shift 2 ;;
+    --max-triage-issues) MAX_TRIAGE_ISSUES="$2"; shift 2 ;;
+    --top-k-candidates) TOP_K_CANDIDATES="$2"; shift 2 ;;
+    --set-clean-baseline) SET_CLEAN_BASELINE=1; shift ;;
+    --no-set-clean-baseline) SET_CLEAN_BASELINE=0; shift ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --no-since-clean-baseline) SINCE_CLEAN_BASELINE=0; shift ;;
+    --apply-env) APPLY_ENV=1; shift ;;
+    --no-apply-env) APPLY_ENV=0; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd jq
+require_cmd python3
+
+canary_opt_log() {
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '[lacp] %s\n' "$*" >&2
+  else
+    log "$*"
+  fi
+}
+
+if ! [[ "${ITERATIONS}" =~ ^[0-9]+$ ]] || [[ "${ITERATIONS}" -lt 1 ]]; then
+  die "--iterations must be a positive integer"
+fi
+
+current_top_k="${LACP_BENCH_TOP_K}"
+candidates_csv="${TOP_K_CANDIDATES}"
+if [[ -n "${current_top_k}" ]]; then
+  candidates_csv="${current_top_k},${candidates_csv}"
+fi
+
+parse_json="$(python3 - <<'PY' "${candidates_csv}"
+import json
+import sys
+
+raw = [x.strip() for x in sys.argv[1].split(",") if x.strip()]
+seen = set()
+vals = []
+for item in raw:
+    try:
+        n = int(item)
+    except Exception:
+        continue
+    if n < 1 or n in seen:
+        continue
+    seen.add(n)
+    vals.append(n)
+print(json.dumps(vals))
+PY
+)"
+
+candidate_count="$(echo "${parse_json}" | jq 'length')"
+if [[ "${candidate_count}" -eq 0 ]]; then
+  die "No valid top-k candidates from --top-k-candidates"
+fi
+
+if [[ "${SET_CLEAN_BASELINE}" -eq 1 ]]; then
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    canary_opt_log "dry-run: would set clean baseline"
+  else
+    "${ROOT}/bin/lacp-canary" --set-clean-baseline >/dev/null
+  fi
+fi
+
+canary_args=(--days "${DAYS}" --min-hit-rate "${MIN_HIT_RATE}" --min-mrr "${MIN_MRR}" --max-triage-issues "${MAX_TRIAGE_ISSUES}" --json)
+if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+  canary_args+=(--since-clean-baseline)
+fi
+
+declare -a iteration_json=()
+best_score=""
+best_top_k=""
+best_canary="{}"
+final_ok="false"
+
+i=0
+while IFS= read -r topk; do
+  i=$((i + 1))
+  if [[ "${i}" -gt "${ITERATIONS}" ]]; then
+    break
+  fi
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    canary_opt_log "dry-run: would run verify with LACP_BENCH_TOP_K=${topk} hours=${HOURS}"
+    canary_json="$(jq -n --argjson topk "${topk}" '{ok:false, summary:{benchmark_count:0,avg_hit_rate_at_k:0.0,avg_mrr_at_k:0.0,triage_issues_total:0,gate_failures:0}, failures:["dry-run"], trial_top_k:$topk}')"
+  else
+    LACP_BENCH_TOP_K="${topk}" "${ROOT}/bin/lacp-verify" --hours "${HOURS}" >/dev/null
+    canary_json="$("${ROOT}/bin/lacp-canary" "${canary_args[@]}")"
+  fi
+
+  score="$(python3 - <<'PY' "${canary_json}"
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+s = data.get("summary", {}) or {}
+ok = bool(data.get("ok", False))
+hit = float(s.get("avg_hit_rate_at_k", 0.0) or 0.0)
+mrr = float(s.get("avg_mrr_at_k", 0.0) or 0.0)
+triage = int(s.get("triage_issues_total", 0) or 0)
+gate = int(s.get("gate_failures", 0) or 0)
+bench = int(s.get("benchmark_count", 0) or 0)
+score = (1000 if ok else 0) + (hit * 100) + (mrr * 100) - (triage * 5) - (gate * 15) + bench
+print(f"{score:.6f}")
+PY
+)"
+
+row="$(jq -n \
+  --argjson iteration "${i}" \
+  --argjson top_k "${topk}" \
+  --arg score "${score}" \
+  --argjson canary "${canary_json}" \
+  '{iteration:$iteration, top_k:$top_k, score:($score|tonumber), canary:$canary}')"
+  iteration_json+=("${row}")
+
+  if [[ -z "${best_score}" ]] || python3 - <<'PY' "${score}" "${best_score}"
+import sys
+curr = float(sys.argv[1])
+best = float(sys.argv[2]) if sys.argv[2] else float("-inf")
+raise SystemExit(0 if curr > best else 1)
+PY
+  then
+    best_score="${score}"
+    best_top_k="${topk}"
+    best_canary="${canary_json}"
+  fi
+
+  if [[ "$(echo "${canary_json}" | jq -r '.ok')" == "true" ]]; then
+    final_ok="true"
+    break
+  fi
+done < <(echo "${parse_json}" | jq -r '.[]')
+
+if [[ -z "${best_top_k}" ]]; then
+  best_top_k="${current_top_k}"
+fi
+
+env_changed="false"
+env_file="${ROOT}/.env"
+if [[ "${APPLY_ENV}" -eq 1 && "${DRY_RUN}" -eq 0 && -n "${best_top_k}" && "${best_top_k}" != "${current_top_k}" ]]; then
+  [[ -f "${env_file}" ]] || cp "${ROOT}/config/lacp.env.example" "${env_file}"
+  python3 - <<'PY' "${env_file}" "${best_top_k}"
+import pathlib
+import re
+import sys
+
+env_file = pathlib.Path(sys.argv[1])
+value = sys.argv[2]
+lines = env_file.read_text().splitlines()
+key = "LACP_BENCH_TOP_K"
+pat = re.compile(rf"^{re.escape(key)}=")
+done = False
+for i, line in enumerate(lines):
+    if pat.match(line):
+        lines[i] = f'{key}="{value}"'
+        done = True
+        break
+if not done:
+    lines.append(f'{key}="{value}"')
+env_file.write_text("\n".join(lines).strip() + "\n")
+PY
+  env_changed="true"
+fi
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  final_ok="false"
+elif [[ "$(echo "${best_canary}" | jq -r '.ok // false')" == "true" ]]; then
+  final_ok="true"
+fi
+
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "canary_optimize" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson ok "$([[ "${final_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson apply_env "$([[ "${APPLY_ENV}" -eq 1 ]] && echo true || echo false)" \
+  --argjson env_changed "$([[ "${env_changed}" == "true" ]] && echo true || echo false)" \
+  --argjson set_clean_baseline "$([[ "${SET_CLEAN_BASELINE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson since_clean_baseline "$([[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson hours "${HOURS}" \
+  --argjson days "${DAYS}" \
+  --argjson iterations_max "${ITERATIONS}" \
+  --argjson current_top_k "${current_top_k}" \
+  --argjson best_top_k "${best_top_k}" \
+  --argjson best_score "${best_score:-0}" \
+  --argjson best_canary "${best_canary}" \
+  --argjson attempts "$(printf '%s\n' "${iteration_json[@]}" | jq -s '.')" \
+  '{
+    schema_version:$schema_version,
+    kind:$kind,
+    generated_at_utc:$generated_at_utc,
+    ok:$ok,
+    dry_run:$dry_run,
+    options:{
+      hours:$hours,
+      days:$days,
+      iterations_max:$iterations_max,
+      set_clean_baseline:$set_clean_baseline,
+      since_clean_baseline:$since_clean_baseline,
+      apply_env:$apply_env
+    },
+    tuning:{
+      current_top_k:$current_top_k,
+      best_top_k:$best_top_k,
+      env_changed:$env_changed,
+      best_score:$best_score
+    },
+    best_canary:$best_canary,
+    attempts:$attempts
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Canary Optimize",
+    "  ok=\(.ok) dry_run=\(.dry_run)",
+    "  best_top_k=\(.tuning.best_top_k) env_changed=\(.tuning.env_changed)",
+    "  attempts=\(.attempts|length) best_score=\(.tuning.best_score)",
+    "  best_canary.ok=\(.best_canary.ok // false) hit=\(.best_canary.summary.avg_hit_rate_at_k // 0) mrr=\(.best_canary.summary.avg_mrr_at_k // 0)"
+  '
+fi
+
+if [[ "${final_ok}" != "true" ]]; then
+  exit 1
+fi

@@ -17,6 +17,7 @@ Options:
   --skip-doctor             Skip doctor gate
   --skip-cache              Skip cache guard gate
   --skip-skill-audit        Skip skill audit gate
+  --skip-shell-hardening    Skip shell/hook hardening gate
   --skill-path <path>       Override skill root for audit (repeatable)
   --cache-min-hit-rate <n>  Minimum cache hit rate (default: 0.70)
   --cache-min-events <n>    Minimum cache usage events (default: 100)
@@ -32,6 +33,7 @@ RUN_TESTS=1
 RUN_DOCTOR=1
 RUN_CACHE=1
 RUN_SKILL_AUDIT=1
+RUN_SHELL_HARDENING=1
 CACHE_MIN_HIT_RATE="0.70"
 CACHE_MIN_EVENTS="100"
 CACHE_HOURS="72"
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-skill-audit)
       RUN_SKILL_AUDIT=0
+      shift
+      ;;
+    --skip-shell-hardening)
+      RUN_SHELL_HARDENING=0
       shift
       ;;
     --skill-path)
@@ -139,6 +145,10 @@ if [[ "${RUN_CACHE}" -eq 1 ]]; then
     --json
 fi
 
+if [[ "${RUN_SHELL_HARDENING}" -eq 1 ]]; then
+  run_check "shell_hardening" "/bin/bash" "${ROOT}/scripts/ci/test-shell-and-hooks-hardening.sh"
+fi
+
 if [[ "${RUN_SKILL_AUDIT}" -eq 1 ]]; then
   if [[ "${#SKILL_PATHS[@]}" -gt 0 ]]; then
     declare -a skill_args=()
@@ -180,4 +190,3 @@ fi
 if [[ "${AS_JSON}" -eq 0 ]]; then
   log "release gate passed"
 fi
-

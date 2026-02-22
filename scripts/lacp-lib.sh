@@ -22,6 +22,7 @@ export LACP_REMOTE_APPROVAL_FILE="${LACP_REMOTE_APPROVAL_FILE:-${LACP_KNOWLEDGE_
 export LACP_KNOWLEDGE_GRAPH_ROOT="${LACP_KNOWLEDGE_GRAPH_ROOT:-${LACP_KNOWLEDGE_ROOT}}"
 export LACP_REQUIRE_INPUT_CONTRACT="${LACP_REQUIRE_INPUT_CONTRACT:-true}"
 export LACP_INPUT_CONTRACT_CONFIDENCE_MIN="${LACP_INPUT_CONTRACT_CONFIDENCE_MIN:-0.70}"
+export LACP_REQUIRE_CONTEXT_CONTRACT="${LACP_REQUIRE_CONTEXT_CONTRACT:-true}"
 export LACP_CANARY_DAYS="${LACP_CANARY_DAYS:-7}"
 export LACP_CANARY_MIN_HIT_RATE="${LACP_CANARY_MIN_HIT_RATE:-0.90}"
 export LACP_CANARY_MIN_MRR="${LACP_CANARY_MIN_MRR:-0.65}"
@@ -130,4 +131,19 @@ lacp_auto_install_deps() {
 
   log "auto-deps: installing formulas: ${missing[*]}"
   brew install "${missing[@]}"
+}
+
+lacp_wrapper_managed_state() {
+  local cmd_name="$1"
+  local wrapper_path="${LACP_WRAPPER_BIN_DIR}/${cmd_name}"
+
+  if [[ ! -f "${wrapper_path}" ]]; then
+    echo "missing"
+    return 0
+  fi
+  if rg -q 'LACP_MANAGED_WRAPPER=1' "${wrapper_path}" 2>/dev/null; then
+    echo "managed"
+  else
+    echo "unmanaged"
+  fi
 }
