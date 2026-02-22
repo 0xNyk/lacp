@@ -279,6 +279,7 @@ Notes:
 - `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/gc/doctor`)
 - `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/up/tui/status`) with policy-gated batch execution
   - supports advisory `reservations` per job and reports collisions in plan/artifacts (no hard locks)
+  - `swarm status --json` includes `collaboration_summary` with top conflicts for fast triage
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton with explicit `plan->act` handoff token enforcement

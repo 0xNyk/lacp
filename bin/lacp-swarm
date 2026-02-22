@@ -595,9 +595,71 @@ PY
   require_file "${target}"
 
   if [[ "${as_json}" == "true" ]]; then
-    jq '. + {artifact:input_filename}' "${target}"
+    jq '
+      . as $root
+      | ($root.plan.collaboration.collisions // []) as $collisions
+      | ($collisions
+          | map({
+              type: (.type // "unknown"),
+              left_session: (.left.session // ""),
+              right_session: (.right.session // ""),
+              left_path: (.left.path // ""),
+              right_path: (.right.path // "")
+            })
+          | map(. + {key: ((.left_session + "|" + .right_session + "|" + .left_path + "|" + .right_path))})
+          | group_by(.key)
+          | map({
+              key: .[0].key,
+              type: .[0].type,
+              left_session: .[0].left_session,
+              right_session: .[0].right_session,
+              left_path: .[0].left_path,
+              right_path: .[0].right_path,
+              count: length
+            })
+          | sort_by(.count)
+          | reverse
+          | .[:5]) as $top_conflicts
+      | . + {
+          artifact: input_filename,
+          collaboration_summary: {
+            reservations_total: ($root.plan.collaboration.reservations_total // 0),
+            collisions_total: ($root.plan.collaboration.collisions_total // 0),
+            top_conflicts: $top_conflicts
+          }
+        }' "${target}"
   else
     jq -r '"[lacp] swarm_id=\(.swarm_id) ok=\(.ok) jobs=\(.launch.summary.total // 0) succeeded=\(.launch.summary.succeeded // 0) failed=\(.launch.summary.failed // 0)"' "${target}"
+    jq -r '
+      . as $root
+      | ($root.plan.collaboration.collisions_total // 0) as $collisions_total
+      | ($root.plan.collaboration.reservations_total // 0) as $reservations_total
+      | ($root.plan.collaboration.collisions // [])
+      | map({
+          left_session: (.left.session // ""),
+          right_session: (.right.session // ""),
+          left_path: (.left.path // ""),
+          right_path: (.right.path // ""),
+          key: ((.left.session // "") + "|" + (.right.session // "") + "|" + (.left.path // "") + "|" + (.right.path // ""))
+        })
+      | group_by(.key)
+      | map({
+          key: .[0].key,
+          left_session: .[0].left_session,
+          right_session: .[0].right_session,
+          left_path: .[0].left_path,
+          right_path: .[0].right_path,
+          count: length
+        })
+      | sort_by(.count)
+      | reverse
+      | .[:1]
+      | if $collisions_total > 0 and (length > 0) then
+          "[lacp] reservations=\($reservations_total) collisions=\($collisions_total) top=\(.[0].left_session):\(.[0].left_path) <-> \(.[0].right_session):\(.[0].right_path) x\(.[0].count)"
+        else
+          "[lacp] reservations=\($reservations_total) collisions=\($collisions_total)"
+        end
+    ' "${target}"
     log "artifact=${target}"
   fi
 }
