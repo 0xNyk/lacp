@@ -18,6 +18,7 @@ Usage:
 Notes:
   - Manifests are JSON and dmux-first by default.
   - launch delegates execution through `lacp-orchestrate run --batch`, so all LACP gates remain active.
+  - reservations are advisory (no hard lock); collisions are surfaced in plan warnings/artifacts.
 USAGE
 }
 
@@ -73,14 +74,20 @@ PY
     {
       "task": "analysis stream",
       "session": "swarm-analysis",
-      "command": "codex --help"
+      "command": "codex --help",
+      "reservations": [
+        "docs/analysis-notes.md"
+      ]
     },
     {
       "task": "implementation stream",
       "session": "swarm-impl",
       "command": "claude --help",
       "backend": "claude_worktree",
-      "claude_tmux": true
+      "claude_tmux": true,
+      "reservations": [
+        "src/feature-impl/"
+      ]
     }
   ]
 }
@@ -173,6 +180,24 @@ for bname, binfo in (backend_state.get("backends", {}) if isinstance(backend_sta
 supported_backends = {"tmux", "dmux", "claude_worktree"}
 planned_jobs = []
 seen_sessions: set[str] = set()
+reservation_index: list[dict] = []
+
+def normalize_reservation(value: str) -> str:
+    token = (value or "").strip()
+    token = token.replace("\\", "/")
+    token = token.lstrip("./")
+    while "//" in token:
+        token = token.replace("//", "/")
+    return token.rstrip("/")
+
+def reservations_overlap(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if a.startswith(b + "/") or b.startswith(a + "/"):
+        return True
+    return False
 
 for idx, job in enumerate(jobs):
     prefix = f"jobs[{idx}]"
@@ -207,7 +232,63 @@ for idx, job in enumerate(jobs):
     if backend in healthy_backends and not healthy_backends.get(backend, False):
         warnings.append(f"{prefix}.backend unavailable on this host: {backend}")
 
+    reservations_raw = merged.get("reservations", merged.get("files", []))
+    reservations: list[str] = []
+    if reservations_raw is None:
+        reservations_raw = []
+    if not isinstance(reservations_raw, list):
+        errors.append(f"{prefix}.reservations must be array of strings when provided")
+    else:
+        for ridx, raw in enumerate(reservations_raw):
+            if not isinstance(raw, str) or not raw.strip():
+                errors.append(f"{prefix}.reservations[{ridx}] must be non-empty string")
+                continue
+            token = normalize_reservation(raw)
+            if token:
+                reservations.append(token)
+
+    merged["reservations"] = reservations
+    for token in reservations:
+        reservation_index.append(
+            {
+                "job_index": idx,
+                "session": session if isinstance(session, str) else "",
+                "task": task if isinstance(task, str) else "",
+                "path": token,
+            }
+        )
+
     planned_jobs.append(merged)
+
+collisions = []
+for i, left in enumerate(reservation_index):
+    for j in range(i + 1, len(reservation_index)):
+        right = reservation_index[j]
+        if left["session"] == right["session"]:
+            continue
+        if not reservations_overlap(left["path"], right["path"]):
+            continue
+        collision_type = "exact" if left["path"] == right["path"] else "overlap"
+        collisions.append(
+            {
+                "type": collision_type,
+                "left": {
+                    "job_index": left["job_index"],
+                    "session": left["session"],
+                    "task": left["task"],
+                    "path": left["path"],
+                },
+                "right": {
+                    "job_index": right["job_index"],
+                    "session": right["session"],
+                    "task": right["task"],
+                    "path": right["path"],
+                },
+            }
+        )
+        warnings.append(
+            f"reservation collision ({collision_type}): {left['session']}:{left['path']} <-> {right['session']}:{right['path']}"
+        )
 
 ok = len(errors) == 0
 result = {
@@ -224,6 +305,11 @@ result = {
     "planned": {
         "continue_on_error": continue_on_error,
         "jobs": planned_jobs,
+    },
+    "collaboration": {
+        "reservations_total": len(reservation_index),
+        "collisions_total": len(collisions),
+        "collisions": collisions[:100],
     },
     "errors": errors,
     "warnings": warnings,
