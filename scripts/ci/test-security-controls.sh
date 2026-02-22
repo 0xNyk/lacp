@@ -55,5 +55,13 @@ run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh context missing" --r
 run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote mismatch" --repo-trust trusted --context-contract "${SSH_BAD_REMOTE_CONTEXT_CONTRACT}" -- ssh -G leads@jarv
 run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote pass" --repo-trust trusted --context-contract "${SSH_GOOD_CONTEXT_CONTRACT}" -- ssh -G leads@jarv
 
+export LACP_REQUIRE_SESSION_FINGERPRINT="true"
+GOOD_SESSION_FP="$("${ROOT}/bin/lacp-session-fingerprint")"
+BAD_SESSION_FP="deadbeefdeadbeefdeadbeef"
+run_expect_rc 13 "${ROOT}/bin/lacp-sandbox-run" --task "session fp missing" --repo-trust trusted --context-contract "${GOOD_CONTEXT_CONTRACT}" -- /bin/mkdir -p "${TMP}/fp-missing"
+run_expect_rc 13 "${ROOT}/bin/lacp-sandbox-run" --task "session fp bad" --repo-trust trusted --context-contract "${GOOD_CONTEXT_CONTRACT}" --session-fingerprint "${BAD_SESSION_FP}" -- /bin/mkdir -p "${TMP}/fp-bad"
+run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "session fp pass" --repo-trust trusted --context-contract "${GOOD_CONTEXT_CONTRACT}" --session-fingerprint "${GOOD_SESSION_FP}" -- /bin/mkdir -p "${TMP}/fp-good"
+export LACP_REQUIRE_SESSION_FINGERPRINT="false"
+
 "${ROOT}/bin/lacp-doctor" --json | jq -e '.ok == true' >/dev/null
 echo "[security-test] security controls tests passed"

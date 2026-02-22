@@ -254,6 +254,7 @@ Notes:
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
+- `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
@@ -394,6 +395,10 @@ bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json
 
 # run loop with profile-derived context contract (no raw JSON needed)
 bin/lacp loop --task "safe migration prep" --repo-trust trusted --context-profile high-risk-migration --json -- /bin/mkdir -p /tmp/lacp-migration
+
+# derive and apply session fingerprint
+FP="$(bin/lacp session-fingerprint)"
+bin/lacp run --task "guarded edit" --repo-trust trusted --context-contract "$(bin/lacp context-profile render --profile local-dev)" --session-fingerprint "${FP}" -- /bin/mkdir -p /tmp/lacp-guarded
 
 # aggregate failed run traces into root-cause clusters
 bin/lacp trace-triage --hours 24 --json | jq

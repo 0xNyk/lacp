@@ -21,6 +21,7 @@ Ops:
   loop          Intent -> execute -> observe -> adapt control loop
   trace-triage  Cluster recent failed runs into root-cause groups
   context-profile List/render reusable context-contract profiles
+  session-fingerprint Emit deterministic runtime session fingerprint
   report        Summarize recent run/artifact health
   canary        Evaluate 7-day promotion readiness gate
   canary-optimize Run bounded verify/canary optimization loop
@@ -113,6 +114,9 @@ case "${cmd}" in
     ;;
   context-profile)
     exec "${ROOT}/bin/lacp-context-profile" "$@"
+    ;;
+  session-fingerprint)
+    exec "${ROOT}/bin/lacp-session-fingerprint" "$@"
     ;;
   canary)
     exec "${ROOT}/bin/lacp-canary" "$@"
