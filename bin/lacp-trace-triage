@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-trace-triage [--hours N] [--limit N] [--json]
+
+Aggregate recent failed sandbox-run traces into deterministic root-cause clusters.
+EOF
+}
+
+HOURS="${LACP_VERIFY_HOURS}"
+LIMIT=200
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hours)
+      HOURS="$2"
+      shift 2
+      ;;
+    --limit)
+      LIMIT="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd python3
+require_cmd jq
+
+RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+
+result_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${LIMIT}"
+import datetime as dt
+import json
+import pathlib
+import re
+import sys
+from collections import defaultdict
+
+runs_dir = pathlib.Path(sys.argv[1])
+hours = int(sys.argv[2])
+limit = int(sys.argv[3])
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(hours=hours)
+
+policy_codes = {8, 9, 10, 11, 12}
+
+def remediation_for(cause: str) -> list[str]:
+    if cause == "context_drift":
+        return [
+            "Pin mutating/remote commands with --context-contract expectations.",
+            "Isolate sessions per task using worktrees/swarm sessions to prevent cross-window drift.",
+        ]
+    if cause == "policy_block":
+        return [
+            "Review route/risk policy gates and add explicit confirmations when intended.",
+            "Provide required contracts (--input-contract / --context-contract) for high-risk commands.",
+        ]
+    if cause == "env_missing":
+        return [
+            "Run `lacp doctor --json` and `lacp bootstrap` to repair missing local dependencies.",
+            "Check configured runner paths and required environment roots.",
+        ]
+    if cause == "test_fail":
+        return [
+            "Inspect command stderr/stdout for failing assertion or runtime error.",
+            "Re-run with deterministic contracts and reduced scope to isolate the defect.",
+        ]
+    if cause == "regression":
+        return [
+            "Run `lacp canary --json` and `lacp report --json` to confirm benchmark/regression signals.",
+            "Promote a fix through loop verify/canary before widening rollout.",
+        ]
+    return ["Inspect trace details and rerun with --json for deeper stage-level evidence."]
+
+def classify(run: dict) -> tuple[str, list[str]]:
+    error = str(run.get("error") or "")
+    code = int(run.get("exit_code") or 0)
+    reasons = run.get("reasons") or []
+    signals = []
+
+    if "context contract gate" in error.lower() or "context mismatch" in error.lower() or code == 12:
+        return "context_drift", [f"exit_code={code}", f"error={error}"]
+
+    if code in policy_codes or "blocked by" in error.lower():
+        return "policy_block", [f"exit_code={code}", f"error={error}"]
+
+    if code in (126, 127) or "not found" in error.lower() or "missing" in error.lower():
+        return "env_missing", [f"exit_code={code}", f"error={error}"]
+
+    if isinstance(reasons, list) and any("remote provider unavailable" in str(r).lower() for r in reasons):
+        return "env_missing", [f"exit_code={code}", "reasons.remote_provider_unavailable=true"]
+
+    return "test_fail", [f"exit_code={code}", f"error={error}"]
+
+def signature(error: str, code: int) -> str:
+    compact = re.sub(r"\s+", " ", (error or "").strip())
+    compact = re.sub(r"/[A-Za-z0-9._/-]+", "<path>", compact)
+    compact = re.sub(r"\d+", "<n>", compact)
+    if not compact:
+        compact = "unknown-error"
+    return f"rc={code}::{compact[:120]}"
+
+runs = []
+if runs_dir.exists():
+    for p in sorted(runs_dir.glob("run-*.json")):
+        try:
+            payload = json.loads(p.read_text())
+            ts = payload.get("started_at_utc")
+            if not ts:
+                continue
+            started = dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+            if started < cutoff:
+                continue
+            payload["_file"] = str(p)
+            payload["_started"] = ts
+            runs.append(payload)
+        except Exception:
+            continue
+
+runs = runs[-limit:]
+failed = [r for r in runs if int(r.get("exit_code") or 0) != 0]
+
+clusters: dict[str, dict] = {}
+rankings: dict[str, dict[str, dict]] = defaultdict(dict)
+failures = []
+
+for run in failed:
+    cause, signals = classify(run)
+    code = int(run.get("exit_code") or 0)
+    err = str(run.get("error") or "")
+    sig = signature(err, code)
+    if cause not in clusters:
+        clusters[cause] = {
+            "cause": cause,
+            "count": 0,
+            "remediation_hints": remediation_for(cause),
+        }
+    clusters[cause]["count"] += 1
+
+    entry = rankings[cause].setdefault(sig, {"signature": sig, "count": 0, "examples": []})
+    entry["count"] += 1
+    if len(entry["examples"]) < 3:
+        entry["examples"].append(run.get("_file"))
+
+    failures.append(
+        {
+            "started_at_utc": run.get("_started"),
+            "run_file": run.get("_file"),
+            "cause": cause,
+            "exit_code": code,
+            "error": err if err else None,
+            "signals": signals,
+        }
+    )
+
+cluster_list = []
+for cause, cluster in sorted(clusters.items(), key=lambda kv: kv[1]["count"], reverse=True):
+    sigs = sorted(rankings[cause].values(), key=lambda x: x["count"], reverse=True)[:5]
+    item = dict(cluster)
+    item["signatures"] = sigs
+    cluster_list.append(item)
+
+top_cause = cluster_list[0]["cause"] if cluster_list else None
+recommendations = []
+for c in cluster_list[:3]:
+    recommendations.extend(c.get("remediation_hints", []))
+
+# de-duplicate recommendations
+deduped = []
+seen = set()
+for r in recommendations:
+    if r in seen:
+        continue
+    seen.add(r)
+    deduped.append(r)
+
+payload = {
+    "schema_version": "1",
+    "kind": "trace_triage",
+    "generated_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "ok": True,
+    "summary": {
+        "window_hours": hours,
+        "limit": limit,
+        "runs_total": len(runs),
+        "failed_runs": len(failed),
+        "clusters": len(cluster_list),
+        "top_cause": top_cause,
+    },
+    "clusters": cluster_list,
+    "recommendations": deduped,
+    "failures": failures[:100],
+}
+
+print(json.dumps(payload, indent=2))
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Trace Triage",
+    "  window_hours=\(.summary.window_hours) limit=\(.summary.limit)",
+    "  runs_total=\(.summary.runs_total) failed_runs=\(.summary.failed_runs) clusters=\(.summary.clusters)",
+    "  top_cause=\(.summary.top_cause // "<none>")",
+    "  recommendations=\(.recommendations | length)"
+  '
+fi
+

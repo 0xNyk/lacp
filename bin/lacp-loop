@@ -201,6 +201,147 @@ if [[ "${loop_ok}" != "true" && "${AUTO_ROLLBACK}" -eq 1 ]]; then
   run_capture rollback_json "${ROOT}/bin/lacp-auto-rollback" --days "${CANARY_DAYS}" --json || rollback_rc=$?
 fi
 
+classifier_json="$(python3 - <<'PY' "${loop_ok}" "${execute_rc}" "${verify_rc}" "${canary_rc}" "${status_rc}" "${report_rc}" "${execute_json}" "${verify_json}" "${canary_json}" "${status_json}" "${report_json}"
+import json
+import sys
+
+loop_ok = sys.argv[1] == "true"
+execute_rc = int(sys.argv[2])
+verify_rc = int(sys.argv[3])
+canary_rc = int(sys.argv[4])
+status_rc = int(sys.argv[5])
+report_rc = int(sys.argv[6])
+execute_raw = sys.argv[7]
+verify_raw = sys.argv[8]
+canary_raw = sys.argv[9]
+status_raw = sys.argv[10]
+report_raw = sys.argv[11]
+
+def parse(raw):
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+execute = parse(execute_raw)
+verify = parse(verify_raw)
+canary = parse(canary_raw)
+status = parse(status_raw)
+report = parse(report_raw)
+
+signals = []
+hints = []
+primary = None
+secondary = []
+
+execute_error = str(execute.get("error") or "")
+execute_exit_code = int(execute.get("exit_code", execute_rc) or execute_rc)
+executed = bool(execute.get("executed", False))
+ctx_required = bool(((execute.get("context_contract") or {}).get("required")) if isinstance(execute, dict) else False)
+ctx_valid = bool(((execute.get("context_contract") or {}).get("valid")) if isinstance(execute, dict) else False)
+
+policy_block_codes = {8, 9, 10, 11, 12}
+
+if not loop_ok:
+    if execute_exit_code in policy_block_codes or "blocked by" in execute_error.lower():
+        primary = "policy_block"
+        signals.append(f"execute.exit_code={execute_exit_code}")
+        if execute_error:
+            signals.append(f"execute.error={execute_error}")
+        hints.append("Review route/risk gates and required confirmations (`--confirm-critical`, `--confirm-budget`).")
+        hints.append("Provide required contracts (`--input-contract`, `--context-contract`) for risky or mutating/remote-target runs.")
+
+    if (ctx_required and not ctx_valid) or "context contract gate" in execute_error.lower() or "context mismatch" in execute_error.lower():
+        if primary is None:
+            primary = "context_drift"
+        elif primary != "context_drift":
+            secondary.append("context_drift")
+        signals.append("context_contract.invalid=true")
+        hints.append("Pin execution context with `--context-contract` (`expected_host`, `expected_cwd_prefix`, `expected_git_branch`, `expected_git_worktree`, `expected_remote_host`).")
+        hints.append("Run in dedicated worktree/session per task to avoid cross-window drift.")
+
+    if canary_rc != 0:
+        if primary is None:
+            primary = "regression"
+        elif primary != "regression":
+            secondary.append("regression")
+        signals.append("canary.rc!=0")
+        hints.append("Inspect canary failures and run `lacp canary --json` + `lacp report --json` to confirm regression source.")
+
+    canary_ok = canary.get("ok") if isinstance(canary, dict) else None
+    if canary_ok is False:
+        if primary is None:
+            primary = "regression"
+        elif primary != "regression":
+            secondary.append("regression")
+        signals.append("canary.ok=false")
+
+    benchmark_gate_ok = None
+    if isinstance(status, dict):
+        benchmark_gate_ok = ((status.get("summary") or {}).get("benchmark_gate_ok"))
+    if benchmark_gate_ok is False:
+        if primary is None:
+            primary = "regression"
+        elif primary != "regression":
+            secondary.append("regression")
+        signals.append("status.summary.benchmark_gate_ok=false")
+
+    if execute_rc != 0 and primary is None:
+        if execute_exit_code in (126, 127) or "not found" in execute_error.lower() or "missing" in execute_error.lower():
+            primary = "env_missing"
+            signals.append(f"execute.exit_code={execute_exit_code}")
+            hints.append("Verify local dependencies and configured runners (`lacp doctor --json`, `lacp bootstrap`).")
+        else:
+            primary = "test_fail"
+            signals.append(f"execute.exit_code={execute_exit_code}")
+            hints.append("Investigate failing command output and re-run with deterministic inputs/contracts.")
+
+    for stage_name, rc, payload in (
+        ("verify", verify_rc, verify),
+        ("status", status_rc, status),
+        ("report", report_rc, report),
+    ):
+        if rc != 0:
+            if primary is None:
+                primary = "env_missing"
+            elif primary != "env_missing":
+                secondary.append("env_missing")
+            signals.append(f"{stage_name}.rc={rc}")
+            hints.append(f"Check `{stage_name}` stage dependencies and artifact roots (`LACP_AUTOMATION_ROOT`, `LACP_KNOWLEDGE_ROOT`).")
+        elif isinstance(payload, dict) and payload.get("ok") is False and stage_name in {"status", "report"}:
+            if primary is None:
+                primary = "regression"
+            elif primary != "regression":
+                secondary.append("regression")
+            signals.append(f"{stage_name}.ok=false")
+
+if primary is None:
+    confidence = 1.0 if loop_ok else 0.4
+else:
+    confidence = 0.95 if primary in {"policy_block", "context_drift"} else 0.8
+
+# de-duplicate while preserving order
+def dedupe(items):
+    seen = set()
+    out = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+payload = {
+    "primary_cause": primary,
+    "secondary_causes": dedupe(secondary),
+    "signals": dedupe(signals),
+    "remediation_hints": dedupe(hints),
+    "confidence": confidence,
+}
+print(json.dumps(payload))
+PY
+)"
+
 cmd_json="$(printf '%s\0' "$@" | xargs -0 -n1 printf '%s\n' | jq -R . | jq -s .)"
 result_json="$(jq -n \
   --arg schema_version "1" \
@@ -233,6 +374,7 @@ result_json="$(jq -n \
   --arg status_raw "${status_json}" \
   --arg report_raw "${report_json}" \
   --arg rollback_raw "${rollback_json}" \
+  --arg classifier_raw "${classifier_json}" \
   '{
     schema_version: $schema_version,
     kind: $kind,
@@ -283,7 +425,14 @@ result_json="$(jq -n \
         rollback_rc: $rollback_rc,
         result: (if $rollback_raw == "null" then null else {raw: $rollback_raw} end)
       }
-    }
+    },
+    analysis: (try ($classifier_raw | fromjson) catch {
+      primary_cause: null,
+      secondary_causes: [],
+      signals: ["classifier_parse_error"],
+      remediation_hints: ["re-run with --json and inspect stage outputs directly"],
+      confidence: 0.0
+    })
   }')"
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
