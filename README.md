@@ -252,6 +252,7 @@ Notes:
 - `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
+- `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
@@ -277,7 +278,7 @@ Notes:
 - `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/up/tui/status`) with policy-gated batch execution
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
-- `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton
+- `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton with explicit `plan->act` handoff token enforcement
 - `bin/lacp-adopt-local`: install reversible local `claude`/`codex` wrappers that route through LACP
 - `bin/lacp-unadopt-local`: remove LACP-managed local wrappers and restore previous shims
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
@@ -382,8 +383,11 @@ bin/lacp vendor-watch --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
 
-# one-task control loop
+# one-task control loop (includes failure classification + remediation hints in .analysis)
 bin/lacp loop --task "trusted smoke" --repo-trust trusted --dry-run --json -- /bin/echo hello
+
+# aggregate failed run traces into root-cause clusters
+bin/lacp trace-triage --hours 24 --json | jq
 
 # fail-safe rollback if canary is unhealthy
 bin/lacp auto-rollback --json | jq
