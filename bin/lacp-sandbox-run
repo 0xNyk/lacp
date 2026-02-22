@@ -100,7 +100,8 @@ validate_context_contract() {
   local actual_cwd="$3"
   local actual_git_branch="$4"
   local actual_git_worktree="$5"
-  python3 - <<'PY' "${raw_json}" "${actual_host}" "${actual_cwd}" "${actual_git_branch}" "${actual_git_worktree}"
+  local actual_remote_host="$6"
+  python3 - <<'PY' "${raw_json}" "${actual_host}" "${actual_cwd}" "${actual_git_branch}" "${actual_git_worktree}" "${actual_remote_host}"
 import json
 import pathlib
 import sys
@@ -110,6 +111,7 @@ actual_host = sys.argv[2].strip()
 actual_cwd = str(pathlib.Path(sys.argv[3]).expanduser().resolve())
 actual_git_branch = sys.argv[4].strip()
 actual_git_worktree = sys.argv[5].strip()
+actual_remote_host = sys.argv[6].strip()
 
 try:
     obj = json.loads(raw)
@@ -125,9 +127,10 @@ expected_host = str(obj.get("expected_host") or "").strip()
 expected_cwd_prefix = str(obj.get("expected_cwd_prefix") or "").strip()
 expected_git_branch = str(obj.get("expected_git_branch") or "").strip()
 expected_git_worktree = str(obj.get("expected_git_worktree") or "").strip()
+expected_remote_host = str(obj.get("expected_remote_host") or "").strip()
 
-if not any([expected_host, expected_cwd_prefix, expected_git_branch, expected_git_worktree]):
-    print("contract must include at least one expectation: expected_host|expected_cwd_prefix|expected_git_branch|expected_git_worktree")
+if not any([expected_host, expected_cwd_prefix, expected_git_branch, expected_git_worktree, expected_remote_host]):
+    print("contract must include at least one expectation: expected_host|expected_cwd_prefix|expected_git_branch|expected_git_worktree|expected_remote_host")
     raise SystemExit(1)
 
 if expected_host and expected_host.lower() != actual_host.lower():
@@ -157,6 +160,14 @@ if expected_git_worktree:
     if expected_worktree != actual_worktree_norm:
         print(f"git worktree mismatch: expected={expected_worktree} actual={actual_worktree_norm}")
         raise SystemExit(1)
+
+if expected_remote_host:
+    if not actual_remote_host:
+        print(f"remote host mismatch: expected={expected_remote_host} actual=<none>")
+        raise SystemExit(1)
+    if expected_remote_host.lower() != actual_remote_host.lower():
+        print(f"remote host mismatch: expected={expected_remote_host} actual={actual_remote_host}")
+        raise SystemExit(1)
 PY
 }
 
@@ -185,6 +196,110 @@ command_is_mutating() {
   esac
 
   return 1
+}
+
+command_remote_target_host() {
+  local cmd_json="[]"
+  if [[ $# -gt 0 ]]; then
+    cmd_json="$(json_escape_cmd "$@")"
+  fi
+  python3 - <<'PY' "${cmd_json}"
+import json
+import re
+import sys
+from urllib.parse import urlparse
+
+try:
+    argv = json.loads(sys.argv[1])
+except Exception:
+    argv = []
+
+if not isinstance(argv, list) or not argv:
+    print("")
+    raise SystemExit(0)
+
+cmd = str(argv[0]).split("/")[-1].lower()
+args = [str(x) for x in argv[1:]]
+
+def host_from_spec(spec: str) -> str:
+    spec = spec.strip()
+    if not spec:
+        return ""
+    if spec.startswith("scp://"):
+        try:
+            parsed = urlparse(spec)
+            return (parsed.hostname or "").strip()
+        except Exception:
+            return ""
+    if "::" in spec:
+        left = spec.split("::", 1)[0]
+    elif ":" in spec and not spec.startswith("/"):
+        left = spec.split(":", 1)[0]
+    else:
+        left = spec
+    if "@" in left:
+        left = left.split("@", 1)[1]
+    if left.startswith("[") and "]" in left:
+        left = left[1:].split("]", 1)[0]
+    return left.strip()
+
+def parse_ssh_style(tokens: list[str]) -> str:
+    opts_with_arg = {
+        "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m",
+        "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w"
+    }
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            if i + 1 < len(tokens):
+                return host_from_spec(tokens[i + 1])
+            return ""
+        if token in opts_with_arg:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        return host_from_spec(token)
+    return ""
+
+def parse_copy_style(tokens: list[str]) -> str:
+    opts_with_arg = {
+        "-c", "-D", "-e", "-F", "-i", "-J", "-l", "-m", "-O",
+        "-o", "-P", "-S", "-X"
+    }
+    for i, token in enumerate(tokens):
+        if token == "--":
+            continue
+        if token in opts_with_arg:
+            continue
+        if i > 0 and tokens[i - 1] in opts_with_arg:
+            continue
+        if token.startswith("-"):
+            continue
+        if token.startswith("/"):
+            continue
+        if re.match(r"^[A-Za-z]:[\\/]", token):
+            continue
+        if "@" in token or "scp://" in token or "::" in token:
+            host = host_from_spec(token)
+            if host:
+                return host
+        if ":" in token:
+            host = host_from_spec(token)
+            if host and "/" not in host:
+                return host
+    return ""
+
+host = ""
+if cmd in {"ssh", "sftp"}:
+    host = parse_ssh_style(args)
+elif cmd in {"scp", "rsync"}:
+    host = parse_copy_style(args)
+
+print(host)
+PY
 }
 
 as_bool() {
@@ -434,6 +549,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   ACTUAL_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   ACTUAL_GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
+ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD[@]}")"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   if [[ "${LACP_REQUIRE_INPUT_CONTRACT}" == "true" ]] && [[ "${RISK_TIER}" != "safe" ]] && [[ "${INTERNET}" == "true" || "${EXTERNAL_CODE}" == "true" || "${SENSITIVE_DATA}" == "true" ]]; then
@@ -453,18 +569,18 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
     fi
   fi
 
-  if command_is_mutating "${CMD[@]}"; then
+  if command_is_mutating "${CMD[@]}" || [[ -n "${ACTUAL_REMOTE_HOST}" ]]; then
     CONTEXT_CONTRACT_REQUIRED="true"
   fi
 
   if [[ "${LACP_REQUIRE_CONTEXT_CONTRACT}" == "true" ]] && [[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]]; then
     if [[ -z "${CONTEXT_CONTRACT}" ]]; then
       EXEC_RC=12
-      ERROR_MSG="blocked by context contract gate: pass --context-contract with expected_host/cwd/branch/worktree for mutating command"
-    elif validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" >/dev/null 2>&1; then
+      ERROR_MSG="blocked by context contract gate: pass --context-contract with expected_host/cwd/branch/worktree/remote_host for mutating or remote-target command"
+    elif validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}" >/dev/null 2>&1; then
       CONTEXT_CONTRACT_VALID="true"
     else
-      CONTEXT_CONTRACT_ERROR="$(validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" 2>&1 || true)"
+      CONTEXT_CONTRACT_ERROR="$(validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}" 2>&1 || true)"
       EXEC_RC=12
       ERROR_MSG="blocked by context contract gate: invalid --context-contract (${CONTEXT_CONTRACT_ERROR})"
     fi
@@ -624,6 +740,7 @@ jq -n \
   --arg actual_cwd "${ACTUAL_CWD}" \
   --arg actual_git_branch "${ACTUAL_GIT_BRANCH}" \
   --arg actual_git_worktree "${ACTUAL_GIT_WORKTREE}" \
+  --arg actual_remote_host "${ACTUAL_REMOTE_HOST}" \
   --argjson reasons "${REASONS_JSON}" \
   --arg remote_provider "${REMOTE_PROVIDER}" \
   --argjson route_decision "${ROUTE_JSON}" \
@@ -662,7 +779,8 @@ jq -n \
         host: $actual_host,
         cwd: $actual_cwd,
         git_branch: (if $actual_git_branch == "" then null else $actual_git_branch end),
-        git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end)
+        git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end),
+        remote_host: (if $actual_remote_host == "" then null else $actual_remote_host end)
       }
     },
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
@@ -701,6 +819,7 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --arg actual_cwd "${ACTUAL_CWD}" \
     --arg actual_git_branch "${ACTUAL_GIT_BRANCH}" \
     --arg actual_git_worktree "${ACTUAL_GIT_WORKTREE}" \
+    --arg actual_remote_host "${ACTUAL_REMOTE_HOST}" \
     --argjson exit_code "${EXEC_RC}" \
     --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
@@ -734,7 +853,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
           host: $actual_host,
           cwd: $actual_cwd,
           git_branch: (if $actual_git_branch == "" then null else $actual_git_branch end),
-          git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end)
+          git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end),
+          remote_host: (if $actual_remote_host == "" then null else $actual_remote_host end)
         }
       },
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),

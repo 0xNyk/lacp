@@ -166,7 +166,7 @@ rollback_rc=0
 run_capture execute_json "${execute_cmd[@]}" || execute_rc=$?
 
 if [[ "${WITH_VERIFY}" -eq 1 ]]; then
-  run_capture verify_json "${ROOT}/bin/lacp-verify" --hours "${VERIFY_HOURS}" --json || verify_rc=$?
+  run_capture verify_json "${ROOT}/bin/lacp-verify" --hours "${VERIFY_HOURS}" || verify_rc=$?
 fi
 
 canary_args=("${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json)

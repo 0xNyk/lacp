@@ -106,12 +106,13 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 
 ## Context Contract Gate
 
-- Mutating commands in `bin/lacp-sandbox-run` require a context contract by default (`LACP_REQUIRE_CONTEXT_CONTRACT=true`).
+- Mutating commands and remote-target commands (`ssh`/`scp`/`rsync`/`sftp`) in `bin/lacp-sandbox-run` require a context contract by default (`LACP_REQUIRE_CONTEXT_CONTRACT=true`).
 - Pass `--context-contract '<json>'` with one or more expectations:
   - `expected_host`
   - `expected_cwd_prefix`
   - `expected_git_branch`
   - `expected_git_worktree`
+  - `expected_remote_host`
 - Example:
 
 ```bash

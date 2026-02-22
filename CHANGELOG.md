@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-release-prepare` one-command release discipline (`release-gate` + `canary` + `status` + `report`) with optional rollback trigger.
 - `bin/lacp-loop` one-task control loop (`intent -> execute -> observe -> adapt`) with optional verify/canary/auto-rollback stages.
 - `bin/lacp-sandbox-run --context-contract` with mutating-run context enforcement (`host/cwd/git branch/worktree`) and structured evidence in run artifacts.
+- `bin/lacp-sandbox-run` context-contract gate now covers remote-target commands (`ssh`/`scp`/`rsync`/`sftp`) with `expected_remote_host` validation.
 - CI coverage for new surfaces:
   - `scripts/ci/test-bootstrap-system.sh`
   - `scripts/ci/test-canary-optimize.sh`
