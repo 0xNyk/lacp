@@ -18,6 +18,9 @@ echo "${ok_json}" | jq -e '.kind == "control_loop"' >/dev/null
 echo "${ok_json}" | jq -e '.ok == true' >/dev/null
 echo "${ok_json}" | jq -e '.stages.execute.rc == 0' >/dev/null
 
+verify_json="$("/bin/bash" "${ROOT}/bin/lacp-loop" --task "trusted with verify" --repo-trust trusted --dry-run --with-verify --verify-hours 1 --json -- /bin/echo "hello-verify")"
+echo "${verify_json}" | jq -e '.stages.verify.rc == 0' >/dev/null
+
 set +e
 "/bin/bash" "${ROOT}/bin/lacp-loop" --task "missing context contract" --repo-trust trusted --json -- /bin/mkdir -p "${TMP}/ctx-missing" >/dev/null
 rc=$?
