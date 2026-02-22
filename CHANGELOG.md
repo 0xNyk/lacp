@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-session-fingerprint` to compute deterministic runtime fingerprints (`host/cwd/branch/worktree/remote-host`).
 - `config/context-profiles.json` profile catalog with variable substitution and required-var guards.
 - `bin/lacp-swarm plan` now supports advisory `reservations` per job and emits collision analysis under `.collaboration` (artifacted with swarm launches).
+- `bin/lacp-swarm status` now emits `collaboration_summary` (including `top_conflicts`) in JSON mode and concise collision triage hints in text mode.
 - `bin/lacp-sandbox-run --context-contract` with mutating-run context enforcement (`host/cwd/git branch/worktree`) and structured evidence in run artifacts.
 - `bin/lacp-sandbox-run` context-contract gate now covers remote-target commands (`ssh`/`scp`/`rsync`/`sftp`) with `expected_remote_host` validation.
 - CI coverage for new surfaces:
