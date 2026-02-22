@@ -278,6 +278,7 @@ Notes:
 - `bin/lacp-orchestrate`: optional dmux/tmux/claude_worktree orchestration adapter (still routed through LACP gates)
 - `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/gc/doctor`)
 - `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/up/tui/status`) with policy-gated batch execution
+  - supports advisory `reservations` per job and reports collisions in plan/artifacts (no hard locks)
 - `bin/lacp-migrate`: migrate existing local roots into `.env` (dry-run by default)
 - `bin/lacp-incident-drill`: run scenario-based incident readiness drills
 - `bin/lacp-workflow-run`: deterministic planner→developer→verifier→tester→reviewer workflow skeleton with explicit `plan->act` handoff token enforcement
