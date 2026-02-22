@@ -213,6 +213,7 @@ check_file "${LACP_ROOT}/config/harness/verification-policy.yaml" "config:harnes
 check_file "${LACP_ROOT}/config/harness/browser-evidence.schema.json" "config:harness_browser_evidence_schema"
 check_file "${LACP_ROOT}/config/risk-policy-contract.json" "config:risk_policy_contract"
 check_file "${LACP_ROOT}/config/risk-policy-contract.schema.json" "config:risk_policy_contract_schema"
+check_file "${LACP_ROOT}/config/context-profiles.json" "config:context_profiles"
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
   add_check "config:sandbox_policy_json" "PASS" "valid json"
@@ -230,6 +231,12 @@ if [[ -f "${LACP_ROOT}/config/risk-policy-contract.schema.json" ]] && jq empty "
   add_check "config:risk_policy_contract_schema_json" "PASS" "valid json"
 elif [[ -f "${LACP_ROOT}/config/risk-policy-contract.schema.json" ]]; then
   add_check "config:risk_policy_contract_schema_json" "FAIL" "invalid json"
+fi
+
+if [[ -f "${LACP_ROOT}/config/context-profiles.json" ]] && jq empty "${LACP_ROOT}/config/context-profiles.json" >/dev/null 2>&1; then
+  add_check "config:context_profiles_json" "PASS" "valid json"
+elif [[ -f "${LACP_ROOT}/config/context-profiles.json" ]]; then
+  add_check "config:context_profiles_json" "FAIL" "invalid json"
 fi
 
 if [[ -f "${LACP_ROOT}/config/harness/browser-evidence.schema.json" ]] && jq empty "${LACP_ROOT}/config/harness/browser-evidence.schema.json" >/dev/null 2>&1; then

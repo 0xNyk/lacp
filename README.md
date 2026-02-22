@@ -253,6 +253,7 @@ Notes:
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
+- `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
@@ -385,6 +386,14 @@ bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-aud
 
 # one-task control loop (includes failure classification + remediation hints in .analysis)
 bin/lacp loop --task "trusted smoke" --repo-trust trusted --dry-run --json -- /bin/echo hello
+
+# render reusable context contracts
+bin/lacp context-profile list --json | jq
+bin/lacp context-profile render --profile local-dev --json | jq
+bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json | jq
+
+# run loop with profile-derived context contract (no raw JSON needed)
+bin/lacp loop --task "safe migration prep" --repo-trust trusted --context-profile high-risk-migration --json -- /bin/mkdir -p /tmp/lacp-migration
 
 # aggregate failed run traces into root-cause clusters
 bin/lacp trace-triage --hours 24 --json | jq
