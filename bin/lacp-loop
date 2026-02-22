@@ -30,6 +30,7 @@ Routing options:
   --context-contract '<json>'
   --context-profile <name>
   --context-profile-var KEY=VALUE   (repeatable; used with --context-profile)
+  --session-fingerprint <value|auto>
 
 Loop options:
   --dry-run                 Do not execute command
@@ -81,6 +82,7 @@ INPUT_CONTRACT=""
 CONTEXT_CONTRACT=""
 CONTEXT_PROFILE=""
 declare -a CONTEXT_PROFILE_VARS=()
+SESSION_FINGERPRINT=""
 
 DRY_RUN=0
 WITH_VERIFY=0
@@ -110,6 +112,7 @@ while [[ $# -gt 0 ]]; do
     --context-contract) CONTEXT_CONTRACT="$2"; shift 2 ;;
     --context-profile) CONTEXT_PROFILE="$2"; shift 2 ;;
     --context-profile-var) CONTEXT_PROFILE_VARS+=("$2"); shift 2 ;;
+    --session-fingerprint) SESSION_FINGERPRINT="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --with-verify) WITH_VERIFY=1; shift ;;
     --verify-hours) VERIFY_HOURS="$2"; REPORT_HOURS="$2"; shift 2 ;;
@@ -145,6 +148,9 @@ if [[ -n "${CONTEXT_PROFILE}" ]]; then
   fi
   CONTEXT_CONTRACT="$(jq -c '.context_contract' <<<"${profile_raw}")"
 fi
+if [[ "${SESSION_FINGERPRINT}" == "auto" ]]; then
+  SESSION_FINGERPRINT="$("${ROOT}/bin/lacp-session-fingerprint")"
+fi
 
 execute_cmd=(
   "${ROOT}/bin/lacp-sandbox-run"
@@ -166,6 +172,9 @@ if [[ -n "${INPUT_CONTRACT}" ]]; then
 fi
 if [[ -n "${CONTEXT_CONTRACT}" ]]; then
   execute_cmd+=(--context-contract "${CONTEXT_CONTRACT}")
+fi
+if [[ -n "${SESSION_FINGERPRINT}" ]]; then
+  execute_cmd+=(--session-fingerprint "${SESSION_FINGERPRINT}")
 fi
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   execute_cmd+=(--dry-run)
