@@ -30,6 +30,9 @@ Execution options:
   --input-contract '<json>'
                  Structured preflight contract required for risky runs when
                  LACP_REQUIRE_INPUT_CONTRACT=true.
+  --context-contract '<json>'
+                 Structured execution-context contract required for mutating
+                 runs when LACP_REQUIRE_CONTEXT_CONTRACT=true.
 
 Environment:
   LACP_LOCAL_SANDBOX_RUNNER   Optional executable for local_sandbox tier. Called as:
@@ -89,6 +92,99 @@ if float(obj["confidence"]) < min_conf or float(obj["confidence"]) > 1.0:
     print(f"confidence must be between {min_conf} and 1.0")
     raise SystemExit(1)
 PY
+}
+
+validate_context_contract() {
+  local raw_json="$1"
+  local actual_host="$2"
+  local actual_cwd="$3"
+  local actual_git_branch="$4"
+  local actual_git_worktree="$5"
+  python3 - <<'PY' "${raw_json}" "${actual_host}" "${actual_cwd}" "${actual_git_branch}" "${actual_git_worktree}"
+import json
+import pathlib
+import sys
+
+raw = sys.argv[1]
+actual_host = sys.argv[2].strip()
+actual_cwd = str(pathlib.Path(sys.argv[3]).expanduser().resolve())
+actual_git_branch = sys.argv[4].strip()
+actual_git_worktree = sys.argv[5].strip()
+
+try:
+    obj = json.loads(raw)
+except Exception as exc:
+    print(f"invalid json: {exc}")
+    raise SystemExit(1)
+
+if not isinstance(obj, dict):
+    print("contract must be a json object")
+    raise SystemExit(1)
+
+expected_host = str(obj.get("expected_host") or "").strip()
+expected_cwd_prefix = str(obj.get("expected_cwd_prefix") or "").strip()
+expected_git_branch = str(obj.get("expected_git_branch") or "").strip()
+expected_git_worktree = str(obj.get("expected_git_worktree") or "").strip()
+
+if not any([expected_host, expected_cwd_prefix, expected_git_branch, expected_git_worktree]):
+    print("contract must include at least one expectation: expected_host|expected_cwd_prefix|expected_git_branch|expected_git_worktree")
+    raise SystemExit(1)
+
+if expected_host and expected_host.lower() != actual_host.lower():
+    print(f"host mismatch: expected={expected_host} actual={actual_host}")
+    raise SystemExit(1)
+
+if expected_cwd_prefix:
+    expected_prefix = str(pathlib.Path(expected_cwd_prefix).expanduser().resolve())
+    if not actual_cwd.startswith(expected_prefix):
+        print(f"cwd mismatch: expected_prefix={expected_prefix} actual={actual_cwd}")
+        raise SystemExit(1)
+
+if expected_git_branch:
+    if not actual_git_branch:
+        print(f"git branch mismatch: expected={expected_git_branch} actual=<none>")
+        raise SystemExit(1)
+    if expected_git_branch != actual_git_branch:
+        print(f"git branch mismatch: expected={expected_git_branch} actual={actual_git_branch}")
+        raise SystemExit(1)
+
+if expected_git_worktree:
+    if not actual_git_worktree:
+        print(f"git worktree mismatch: expected={expected_git_worktree} actual=<none>")
+        raise SystemExit(1)
+    expected_worktree = str(pathlib.Path(expected_git_worktree).expanduser().resolve())
+    actual_worktree_norm = str(pathlib.Path(actual_git_worktree).expanduser().resolve())
+    if expected_worktree != actual_worktree_norm:
+        print(f"git worktree mismatch: expected={expected_worktree} actual={actual_worktree_norm}")
+        raise SystemExit(1)
+PY
+}
+
+command_is_mutating() {
+  local cmd_base=""
+  local first="${1:-}"
+  [[ -n "${first}" ]] || return 1
+  cmd_base="$(basename "${first}")"
+
+  case "${cmd_base}" in
+    rm|mv|cp|mkdir|rmdir|touch|install|chmod|chown|ln|sed|tee) return 0 ;;
+    pip|pip3|npm|pnpm|yarn|poetry|virtualenv) return 0 ;;
+    uv)
+      [[ "${2:-}" == "venv" || "${2:-}" == "pip" ]] && return 0
+      ;;
+    python|python3)
+      [[ "${2:-}" == "-m" && "${3:-}" == "venv" ]] && return 0
+      ;;
+    git)
+      case "${2:-}" in
+        add|rm|mv|commit|merge|rebase|cherry-pick|am|apply|checkout|switch|reset|stash|push|tag)
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  return 1
 }
 
 as_bool() {
@@ -201,6 +297,7 @@ CONFIRM_CRITICAL="false"
 ESTIMATED_COST_USD="0"
 CONFIRM_BUDGET="false"
 INPUT_CONTRACT=""
+CONTEXT_CONTRACT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -258,6 +355,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --input-contract)
       INPUT_CONTRACT="$2"
+      shift 2
+      ;;
+    --context-contract)
+      CONTEXT_CONTRACT="$2"
       shift 2
       ;;
     --)
@@ -321,6 +422,18 @@ APPROVAL_JSON="null"
 INPUT_CONTRACT_VALID="false"
 INPUT_CONTRACT_REQUIRED="false"
 INPUT_CONTRACT_ERROR=""
+CONTEXT_CONTRACT_VALID="false"
+CONTEXT_CONTRACT_REQUIRED="false"
+CONTEXT_CONTRACT_ERROR=""
+
+ACTUAL_HOST="$(hostname -s 2>/dev/null || hostname)"
+ACTUAL_CWD="$(pwd -P)"
+ACTUAL_GIT_BRANCH=""
+ACTUAL_GIT_WORKTREE=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  ACTUAL_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  ACTUAL_GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   if [[ "${LACP_REQUIRE_INPUT_CONTRACT}" == "true" ]] && [[ "${RISK_TIER}" != "safe" ]] && [[ "${INTERNET}" == "true" || "${EXTERNAL_CODE}" == "true" || "${SENSITIVE_DATA}" == "true" ]]; then
@@ -337,6 +450,23 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
       INPUT_CONTRACT_ERROR="$(validate_input_contract "${INPUT_CONTRACT}" "${LACP_INPUT_CONTRACT_CONFIDENCE_MIN}" 2>&1 || true)"
       EXEC_RC=11
       ERROR_MSG="blocked by structured input gate: invalid --input-contract (${INPUT_CONTRACT_ERROR})"
+    fi
+  fi
+
+  if command_is_mutating "${CMD[@]}"; then
+    CONTEXT_CONTRACT_REQUIRED="true"
+  fi
+
+  if [[ "${LACP_REQUIRE_CONTEXT_CONTRACT}" == "true" ]] && [[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]]; then
+    if [[ -z "${CONTEXT_CONTRACT}" ]]; then
+      EXEC_RC=12
+      ERROR_MSG="blocked by context contract gate: pass --context-contract with expected_host/cwd/branch/worktree for mutating command"
+    elif validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" >/dev/null 2>&1; then
+      CONTEXT_CONTRACT_VALID="true"
+    else
+      CONTEXT_CONTRACT_ERROR="$(validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" 2>&1 || true)"
+      EXEC_RC=12
+      ERROR_MSG="blocked by context contract gate: invalid --context-contract (${CONTEXT_CONTRACT_ERROR})"
     fi
   fi
 
@@ -466,6 +596,11 @@ if [[ ${#CMD[@]} -gt 0 ]]; then
   CMD_JSON="$(json_escape_cmd "${CMD[@]}")"
 fi
 
+CONTEXT_CONTRACT_JSON="null"
+if [[ -n "${CONTEXT_CONTRACT}" ]] && jq -e . >/dev/null 2>&1 <<<"${CONTEXT_CONTRACT}"; then
+  CONTEXT_CONTRACT_JSON="$(jq -c . <<<"${CONTEXT_CONTRACT}")"
+fi
+
 jq -n \
   --arg schema_version "1.1.0" \
   --arg timestamp "${RUN_TAG}" \
@@ -481,6 +616,14 @@ jq -n \
   --argjson input_contract_required "$([[ "${INPUT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
   --argjson input_contract_valid "$([[ "${INPUT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
   --arg input_contract_error "${INPUT_CONTRACT_ERROR}" \
+  --argjson context_contract_required "$([[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+  --argjson context_contract_valid "$([[ "${CONTEXT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
+  --arg context_contract_error "${CONTEXT_CONTRACT_ERROR}" \
+  --argjson context_contract "${CONTEXT_CONTRACT_JSON}" \
+  --arg actual_host "${ACTUAL_HOST}" \
+  --arg actual_cwd "${ACTUAL_CWD}" \
+  --arg actual_git_branch "${ACTUAL_GIT_BRANCH}" \
+  --arg actual_git_worktree "${ACTUAL_GIT_WORKTREE}" \
   --argjson reasons "${REASONS_JSON}" \
   --arg remote_provider "${REMOTE_PROVIDER}" \
   --argjson route_decision "${ROUTE_JSON}" \
@@ -510,6 +653,18 @@ jq -n \
       valid: $input_contract_valid,
       error: (if $input_contract_error == "" then null else $input_contract_error end)
     },
+    context_contract: {
+      required: $context_contract_required,
+      valid: $context_contract_valid,
+      error: (if $context_contract_error == "" then null else $context_contract_error end),
+      expected: $context_contract,
+      actual: {
+        host: $actual_host,
+        cwd: $actual_cwd,
+        git_branch: (if $actual_git_branch == "" then null else $actual_git_branch end),
+        git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end)
+      }
+    },
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
     route_decision: $route_decision,
@@ -538,6 +693,14 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson input_contract_required "$([[ "${INPUT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
     --argjson input_contract_valid "$([[ "${INPUT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
     --arg input_contract_error "${INPUT_CONTRACT_ERROR}" \
+    --argjson context_contract_required "$([[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+    --argjson context_contract_valid "$([[ "${CONTEXT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
+    --arg context_contract_error "${CONTEXT_CONTRACT_ERROR}" \
+    --argjson context_contract "${CONTEXT_CONTRACT_JSON}" \
+    --arg actual_host "${ACTUAL_HOST}" \
+    --arg actual_cwd "${ACTUAL_CWD}" \
+    --arg actual_git_branch "${ACTUAL_GIT_BRANCH}" \
+    --arg actual_git_worktree "${ACTUAL_GIT_WORKTREE}" \
     --argjson exit_code "${EXEC_RC}" \
     --argjson executed "$([[ "${EXECUTED}" -eq 1 ]] && echo true || echo false)" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
@@ -561,6 +724,18 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
         required: $input_contract_required,
         valid: $input_contract_valid,
         error: (if $input_contract_error == "" then null else $input_contract_error end)
+      },
+      context_contract: {
+        required: $context_contract_required,
+        valid: $context_contract_valid,
+        error: (if $context_contract_error == "" then null else $context_contract_error end),
+        expected: $context_contract,
+        actual: {
+          host: $actual_host,
+          cwd: $actual_cwd,
+          git_branch: (if $actual_git_branch == "" then null else $actual_git_branch end),
+          git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end)
+        }
       },
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,

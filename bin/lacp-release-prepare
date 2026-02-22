@@ -20,6 +20,9 @@ Checks:
 Options:
   --quick                        Use quick release-gate mode
   --canary-days <n>              Canary lookback window (default: 7)
+  --since-clean-baseline         Evaluate canary since clean baseline cutoff
+  --baseline-file <path>         Canary baseline file path override
+  --no-require-managed-wrappers  Do not require LACP-managed local claude/codex wrappers
   --skip-cache-gate              Skip cache guard in release-gate stage
   --skip-skill-audit-gate        Skip skill audit in release-gate stage
   --auto-rollback-on-fail        Trigger lacp-auto-rollback on failed checks
@@ -33,12 +36,18 @@ CANARY_DAYS="${LACP_CANARY_DAYS}"
 SKIP_CACHE_GATE=0
 SKIP_SKILL_AUDIT_GATE=0
 AUTO_ROLLBACK=0
+SINCE_CLEAN_BASELINE=0
+BASELINE_FILE=""
+REQUIRE_MANAGED_WRAPPERS=1
 AS_JSON=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick) QUICK=1; shift ;;
     --canary-days) CANARY_DAYS="$2"; shift 2 ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
+    --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
     --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
     --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
     --auto-rollback-on-fail) AUTO_ROLLBACK=1; shift ;;
@@ -66,12 +75,14 @@ canary_json=""
 status_json=""
 report_json=""
 rollback_json="null"
+wrapper_gate_json="null"
 
 release_gate_rc=0
 canary_rc=0
 status_rc=0
 report_rc=0
 rollback_rc=0
+wrapper_gate_rc=0
 
 gate_args=("${ROOT}/bin/lacp-release-gate" --json)
 if [[ "${QUICK}" -eq 1 ]]; then
@@ -84,27 +95,72 @@ if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
   gate_args+=(--skip-skill-audit)
 fi
 run_capture release_gate_json "${gate_args[@]}" || release_gate_rc=$?
-run_capture canary_json "${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json || canary_rc=$?
+canary_args=("${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json)
+if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+  canary_args+=(--since-clean-baseline)
+fi
+if [[ -n "${BASELINE_FILE}" ]]; then
+  canary_args+=(--baseline-file "${BASELINE_FILE}")
+fi
+run_capture canary_json "${canary_args[@]}" || canary_rc=$?
 run_capture status_json "${ROOT}/bin/lacp-status-report" --json || status_rc=$?
 run_capture report_json "${ROOT}/bin/lacp-report" --json || report_rc=$?
 
+if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]]; then
+  wrapper_gate_json="$(python3 - <<'PY' "${report_json}" "${LACP_WRAPPER_BIN_DIR}"
+import json
+import sys
+
+report_raw = sys.argv[1]
+bin_dir = sys.argv[2]
+
+try:
+    report = json.loads(report_raw)
+except Exception:
+    print(json.dumps({
+        "ok": False,
+        "error": "invalid_report_json",
+        "bin_dir": bin_dir
+    }))
+    raise SystemExit(1)
+
+wrappers = (((report.get("observability") or {}).get("wrappers")) or {})
+claude = ((wrappers.get("claude") or {}).get("managed") is True)
+codex = ((wrappers.get("codex") or {}).get("managed") is True)
+ok = claude and codex
+
+payload = {
+    "ok": ok,
+    "bin_dir": wrappers.get("bin_dir", bin_dir),
+    "claude_managed": claude,
+    "codex_managed": codex,
+}
+print(json.dumps(payload))
+raise SystemExit(0 if ok else 1)
+PY
+)" || wrapper_gate_rc=$?
+fi
+
 overall_ok="true"
-if [[ "${release_gate_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 ]]; then
+if [[ "${release_gate_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 || "${wrapper_gate_rc}" -ne 0 ]]; then
   overall_ok="false"
 else
   if [[ "$(echo "${canary_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
   if [[ "$(echo "${status_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
   if [[ "$(echo "${report_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
+  if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]] && [[ "$(echo "${wrapper_gate_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
 fi
 
 release_gate_ok="false"
 canary_ok="false"
 status_ok="false"
 report_ok="false"
+wrappers_ok="false"
 if [[ "${release_gate_rc}" -eq 0 ]]; then release_gate_ok="true"; fi
 if echo "${canary_json}" | jq -e '.ok == true' >/dev/null 2>&1; then canary_ok="true"; fi
 if echo "${status_json}" | jq -e '.ok == true' >/dev/null 2>&1; then status_ok="true"; fi
 if echo "${report_json}" | jq -e '.ok == true' >/dev/null 2>&1; then report_ok="true"; fi
+if echo "${wrapper_gate_json}" | jq -e '.ok == true' >/dev/null 2>&1; then wrappers_ok="true"; fi
 
 if [[ "${overall_ok}" != "true" && "${AUTO_ROLLBACK}" -eq 1 ]]; then
   set +e
@@ -120,22 +176,28 @@ result_json="$(jq -n \
   --argjson quick "$([[ "${QUICK}" -eq 1 ]] && echo true || echo false)" \
   --argjson canary_days "${CANARY_DAYS}" \
   --argjson auto_rollback "$([[ "${AUTO_ROLLBACK}" -eq 1 ]] && echo true || echo false)" \
+  --argjson since_clean_baseline "$([[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]] && echo true || echo false)" \
+  --arg baseline_file "${BASELINE_FILE}" \
   --argjson skip_cache_gate "$([[ "${SKIP_CACHE_GATE}" -eq 1 ]] && echo true || echo false)" \
   --argjson skip_skill_audit_gate "$([[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson require_managed_wrappers "$([[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]] && echo true || echo false)" \
   --argjson release_gate_ok "$([[ "${release_gate_ok}" == "true" ]] && echo true || echo false)" \
   --argjson canary_ok "$([[ "${canary_ok}" == "true" ]] && echo true || echo false)" \
   --argjson status_ok "$([[ "${status_ok}" == "true" ]] && echo true || echo false)" \
   --argjson report_ok "$([[ "${report_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson wrappers_ok "$([[ "${wrappers_ok}" == "true" ]] && echo true || echo false)" \
   --argjson ok "$([[ "${overall_ok}" == "true" ]] && echo true || echo false)" \
   --argjson release_gate_rc "${release_gate_rc}" \
   --argjson canary_rc "${canary_rc}" \
   --argjson status_rc "${status_rc}" \
   --argjson report_rc "${report_rc}" \
+  --argjson wrapper_gate_rc "${wrapper_gate_rc}" \
   --argjson rollback_rc "${rollback_rc}" \
   --arg release_gate_raw "${release_gate_json}" \
   --arg canary_raw "${canary_json}" \
   --arg status_raw "${status_json}" \
   --arg report_raw "${report_json}" \
+  --arg wrapper_gate_raw "${wrapper_gate_json}" \
   --arg rollback_raw "${rollback_json}" \
   '{
     schema_version: $schema_version,
@@ -145,8 +207,11 @@ result_json="$(jq -n \
     options: {
       quick: $quick,
       canary_days: $canary_days,
+      since_clean_baseline: $since_clean_baseline,
+      baseline_file: (if $baseline_file == "" then null else $baseline_file end),
       skip_cache_gate: $skip_cache_gate,
       skip_skill_audit_gate: $skip_skill_audit_gate,
+      require_managed_wrappers: $require_managed_wrappers,
       auto_rollback_on_fail: $auto_rollback
     },
     stages: {
@@ -170,6 +235,11 @@ result_json="$(jq -n \
         ok: $report_ok,
         result: (try ($report_raw | fromjson) catch {ok:false, raw:$report_raw})
       },
+      wrappers: {
+        rc: $wrapper_gate_rc,
+        ok: (if $require_managed_wrappers then $wrappers_ok else true end),
+        result: (if $require_managed_wrappers then (try ($wrapper_gate_raw | fromjson) catch {ok:false, raw:$wrapper_gate_raw}) else null end)
+      },
       rollback: {
         rc: $rollback_rc,
         result: (if $rollback_raw == "null" then null else {raw: $rollback_raw} end)
@@ -183,7 +253,7 @@ else
   echo "${result_json}" | jq -r '
     "LACP Release Prepare",
     "  ok=\(.ok) quick=\(.options.quick) canary_days=\(.options.canary_days)",
-    "  rc.release_gate=\(.stages.release_gate.rc) rc.canary=\(.stages.canary.rc) rc.status=\(.stages.status.rc) rc.report=\(.stages.report.rc)",
+    "  rc.release_gate=\(.stages.release_gate.rc) rc.canary=\(.stages.canary.rc) rc.status=\(.stages.status.rc) rc.report=\(.stages.report.rc) rc.wrappers=\(.stages.wrappers.rc)",
     "  auto_rollback=\(.options.auto_rollback_on_fail) rc.rollback=\(.stages.rollback.rc)"
   '
 fi

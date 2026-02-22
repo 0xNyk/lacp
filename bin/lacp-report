@@ -43,7 +43,7 @@ require_cmd jq
 require_cmd python3
 
 RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
-LATEST_BENCH="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
+LATEST_BENCH="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
 LATEST_SNAPSHOT="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
 WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR}"
 
@@ -130,9 +130,12 @@ benchmark = {}
 if latest_bench:
     try:
         b = json.loads(pathlib.Path(latest_bench).read_text())
+        gate_ok = b.get("gate_ok")
+        if not isinstance(gate_ok, bool):
+            gate_ok = None
         benchmark = {
             "path": latest_bench,
-            "gate_ok": bool(b.get("gate_ok", False)),
+            "gate_ok": gate_ok,
             "summary": b.get("summary", {}),
         }
     except Exception:
