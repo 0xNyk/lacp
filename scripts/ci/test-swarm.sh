@@ -54,6 +54,39 @@ echo "${up_json}" | jq -e '.ok == true and .initialized == true and (.launch.art
 "${ROOT}/bin/lacp-swarm" tui --manifest "${manifest}" --dry-run --json | \
   jq -e '.ok == true and .session != null and (.command | test("attach --session"))' >/dev/null
 
+cat > "${TMP}/collision.json" <<'JSON'
+{
+  "version": "1",
+  "name": "collision-test",
+  "continue_on_error": false,
+  "defaults": {
+    "backend": "dmux",
+    "repo_trust": "trusted",
+    "dry_run": true
+  },
+  "jobs": [
+    {
+      "task": "stream a",
+      "session": "a",
+      "command": "codex --help",
+      "reservations": ["src/shared/"]
+    },
+    {
+      "task": "stream b",
+      "session": "b",
+      "command": "claude --help",
+      "reservations": ["src/shared/file.ts"]
+    }
+  ]
+}
+JSON
+
+collision_plan="$("${ROOT}/bin/lacp-swarm" plan --manifest "${TMP}/collision.json" --json)"
+echo "${collision_plan}" | jq -e '.ok == true' >/dev/null
+echo "${collision_plan}" | jq -e '.collaboration.reservations_total == 2' >/dev/null
+echo "${collision_plan}" | jq -e '.collaboration.collisions_total >= 1' >/dev/null
+echo "${collision_plan}" | jq -e '.warnings | length >= 1' >/dev/null
+
 cat > "${TMP}/bad.json" <<'JSON'
 {"version":"1","name":"bad","jobs":[]}
 JSON
