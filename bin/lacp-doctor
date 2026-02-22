@@ -434,7 +434,7 @@ else
   add_check "health:ollama" "WARN" "unreachable"
 fi
 
-latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
+latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
 if [[ -n "${latest_bench}" ]]; then
   gate_ok="$(jq -r '.gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
   if [[ "${gate_ok}" == "true" ]]; then
@@ -455,6 +455,19 @@ fi
 
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json" "artifact:latest_sandbox_run_age" 72
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
+
+claude_wrapper_state="$(lacp_wrapper_managed_state claude)"
+codex_wrapper_state="$(lacp_wrapper_managed_state codex)"
+case "${claude_wrapper_state}" in
+  managed) add_check "wrapper:claude_managed" "PASS" "${LACP_WRAPPER_BIN_DIR}/claude" ;;
+  missing) add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude missing (run bin/lacp-adopt-local)" ;;
+  *) add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude unmanaged (run bin/lacp-adopt-local --force)" ;;
+esac
+case "${codex_wrapper_state}" in
+  managed) add_check "wrapper:codex_managed" "PASS" "${LACP_WRAPPER_BIN_DIR}/codex" ;;
+  missing) add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex missing (run bin/lacp-adopt-local)" ;;
+  *) add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex unmanaged (run bin/lacp-adopt-local --force)" ;;
+esac
 
 fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
 warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"

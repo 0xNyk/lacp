@@ -32,7 +32,7 @@ for i in range(7):
     (root / f"benchmark-{ts.strftime('%Y%m%dT%H%M%SZ')}.json").write_text(json.dumps(payload))
 PY
 
-ok_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-gate --skip-skill-audit-gate --json)"
+ok_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-gate --skip-skill-audit-gate --no-require-managed-wrappers --json)"
 [[ "$(echo "${ok_json}" | jq -r '.ok')" == "true" ]] || { echo "[release-prepare-test] FAIL expected healthy release-prepare" >&2; exit 1; }
 
 python3 - <<'PY' "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
@@ -51,12 +51,34 @@ latest.write_text(json.dumps(payload))
 PY
 
 set +e
-"/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-gate --skip-skill-audit-gate --json >/dev/null
+"/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-gate --skip-skill-audit-gate --no-require-managed-wrappers --json >/dev/null
 rc=$?
 set -e
 if [[ "${rc}" -eq 0 ]]; then
   echo "[release-prepare-test] FAIL expected unhealthy release-prepare to fail" >&2
   exit 1
 fi
+
+baseline_file="${LACP_KNOWLEDGE_ROOT}/data/benchmarks/canary-baseline.json"
+"/bin/bash" "${ROOT}/bin/lacp-canary" --set-clean-baseline --baseline-file "${baseline_file}" >/dev/null
+python3 - <<'PY' "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
+import datetime as dt
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+ts = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)
+payload = {
+    "generated_at_utc": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "gate_ok": True,
+    "summary": {"hit_rate_at_k": 0.96, "mrr_at_k": 0.75},
+    "triage": {"issue_count": 0},
+}
+(root / f"benchmark-{ts.strftime('%Y%m%dT%H%M%SZ')}.json").write_text(json.dumps(payload))
+PY
+baseline_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --canary-days 1 --skip-cache-gate --skip-skill-audit-gate --no-require-managed-wrappers --since-clean-baseline --baseline-file "${baseline_file}" --json)"
+[[ "$(echo "${baseline_json}" | jq -r '.options.since_clean_baseline')" == "true" ]] || { echo "[release-prepare-test] FAIL expected since_clean_baseline=true" >&2; exit 1; }
+[[ "$(echo "${baseline_json}" | jq -r '.stages.canary.result.window.baseline_mode')" == "true" ]] || { echo "[release-prepare-test] FAIL expected canary baseline_mode=true" >&2; exit 1; }
 
 echo "[release-prepare-test] release prepare tests passed"

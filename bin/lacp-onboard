@@ -7,17 +7,26 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-onboard [--with-verify] [--hours N]
+Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt]
 
 Initial setup helper:
 - creates .env from config/lacp.env.example when missing
+- auto-detects and installs missing core dependencies on macOS/Homebrew by default
 - runs bootstrap checks
+- adopts local claude/codex wrappers when both binaries are present (default-on)
 - optionally runs a full verify cycle
 EOF
 }
 
 WITH_VERIFY=0
 HOURS="${LACP_VERIFY_HOURS}"
+AUTO_DEPS=1
+AUTO_DEPS_DRY_RUN=0
+AUTO_DEPS_FORCE=0
+case "${LACP_AUTO_ADOPT_LOCAL:-true}" in
+  false|0|no) AUTO_ADOPT=0 ;;
+  *) AUTO_ADOPT=1 ;;
+esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,6 +38,23 @@ while [[ $# -gt 0 ]]; do
       HOURS="$2"
       shift 2
       ;;
+    --no-auto-deps)
+      AUTO_DEPS=0
+      shift
+      ;;
+    --auto-deps-dry-run)
+      AUTO_DEPS=1
+      AUTO_DEPS_DRY_RUN=1
+      shift
+      ;;
+    --auto-deps-force)
+      AUTO_DEPS_FORCE=1
+      shift
+      ;;
+    --no-auto-adopt)
+      AUTO_ADOPT=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -38,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${AUTO_DEPS}" -eq 1 ]]; then
+  lacp_auto_install_deps "$([[ "${AUTO_DEPS_DRY_RUN}" -eq 1 ]] && echo true || echo false)" "$([[ "${AUTO_DEPS_FORCE}" -eq 1 ]] && echo true || echo false)"
+fi
 
 if [[ ! -f "${ROOT}/.env" ]]; then
   if [[ "${LACP_SKIP_DOTENV:-0}" == "1" ]]; then
@@ -52,6 +82,18 @@ fi
 
 log "Running bootstrap checks"
 "${ROOT}/bin/lacp-bootstrap"
+
+if [[ "${AUTO_ADOPT}" -eq 1 ]]; then
+  if command -v claude >/dev/null 2>&1 && command -v codex >/dev/null 2>&1; then
+    if "${ROOT}/bin/lacp-adopt-local" --json >/dev/null 2>&1; then
+      log "Auto-adopted local claude/codex wrappers"
+    else
+      log "Auto-adopt skipped: wrapper install failed (run bin/lacp-adopt-local manually)"
+    fi
+  else
+    log "Auto-adopt skipped: claude/codex binaries not both present"
+  fi
+fi
 
 if [[ "${WITH_VERIFY}" -eq 1 ]]; then
   log "Running verify cycle"

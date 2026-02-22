@@ -49,7 +49,7 @@ bash "${pipeline_script}" "${HOURS}" "7" "0.90" "${LACP_BENCH_TOP_K}"
 log "Step 2/3: snapshot capture"
 python3 "${snapshot_py}" --hours "${HOURS}" --timing-runs 3 >/dev/null
 
-latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/*.json" || true)"
+latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
 latest_snapshot="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
 
 log "Step 3/3: benchmark trend refresh"
