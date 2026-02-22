@@ -20,6 +20,8 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-release-prepare` one-command release discipline (`release-gate` + `canary` + `status` + `report`) with optional rollback trigger.
 - `bin/lacp-loop` one-task control loop (`intent -> execute -> observe -> adapt`) with optional verify/canary/auto-rollback stages.
 - `bin/lacp-trace-triage` deterministic clustering of failed sandbox traces (`context_drift`/`policy_block`/`env_missing`/`test_fail`) with ranked signatures and remediation recommendations.
+- `bin/lacp-context-profile` for reusable context-contract profile rendering (`local-dev`, `ssh-prod`, `high-risk-migration`).
+- `config/context-profiles.json` profile catalog with variable substitution and required-var guards.
 - `bin/lacp-sandbox-run --context-contract` with mutating-run context enforcement (`host/cwd/git branch/worktree`) and structured evidence in run artifacts.
 - `bin/lacp-sandbox-run` context-contract gate now covers remote-target commands (`ssh`/`scp`/`rsync`/`sftp`) with `expected_remote_host` validation.
 - CI coverage for new surfaces:
@@ -35,6 +37,7 @@ All notable changes to this project will be documented in this file.
   - `scripts/ci/test-policy-pack.sh`
   - `scripts/ci/test-release-prepare.sh`
   - `scripts/ci/test-loop.sh`
+  - `scripts/ci/test-context-profile.sh`
   - `scripts/ci/test-trace-triage.sh`
 
 ### Changed
@@ -49,6 +52,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp` top-level dispatcher expanded with `canary-optimize`.
 - `bin/lacp` top-level dispatcher expanded with `loop`.
 - `bin/lacp-loop --json` now emits deterministic failure analysis (`analysis.primary_cause`, `analysis.secondary_causes`, `analysis.signals`, `analysis.remediation_hints`, `analysis.confidence`) for faster post-run triage.
+- `bin/lacp-loop` now supports `--context-profile` + repeatable `--context-profile-var KEY=VALUE` to render context contracts without hand-written JSON.
 - `bin/lacp-workflow-run advance` now enforces explicit `plan->act` handoff: planner issues token, developer must present matching `--plan-token` (or explicit `--allow-unplanned true` bypass).
 - Homebrew formula command export list updated for new binaries.
 - Security controls CI now covers context-contract gate behavior (`missing`, `mismatch`, `pass`) for mutating commands.
