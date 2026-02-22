@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-release-publish --tag <vX.Y.Z|X.Y.Z> [options]
+
+Build and publish release assets from your local machine only (no GitHub Actions).
+
+Default behavior:
+  1) Run release-prepare gate
+  2) Build source tarball with git archive
+  3) Write SHA256SUMS
+  4) Create/update GitHub Release via gh CLI
+
+Options:
+  --tag <tag>                    Release tag (required, e.g. v0.2.1 or 0.2.1)
+  --repo <owner/repo>            GitHub repo override (default: inferred from origin)
+  --output-dir <path>            Output directory (default: dist/releases/<tag>)
+  --title <text>                 Release title (default: <tag>)
+  --notes-file <path>            Release notes markdown file
+  --draft                        Create as draft release
+  --prerelease                   Mark as prerelease
+  --skip-prepare                 Skip release-prepare gate
+  --quick                        Use quick release-prepare mode
+  --canary-days <n>              release-prepare canary days (default: 7)
+  --since-clean-baseline         release-prepare canary baseline mode
+  --baseline-file <path>         release-prepare baseline file override
+  --skip-cache-gate              Skip cache gate in release-prepare
+  --skip-skill-audit-gate        Skip skill-audit gate in release-prepare
+  --no-require-managed-wrappers  Do not require managed wrappers in release-prepare
+  --skip-gh                      Build assets only; do not call gh release APIs
+  --allow-dirty                  Allow uncommitted/staged changes
+  --json                         Emit JSON payload
+  -h, --help                     Show help
+EOF
+}
+
+TAG=""
+REPO=""
+OUTPUT_DIR=""
+TITLE=""
+NOTES_FILE=""
+DRAFT=0
+PRERELEASE=0
+SKIP_PREPARE=0
+QUICK=0
+CANARY_DAYS="${LACP_CANARY_DAYS}"
+SINCE_CLEAN_BASELINE=0
+BASELINE_FILE=""
+SKIP_CACHE_GATE=0
+SKIP_SKILL_AUDIT_GATE=0
+REQUIRE_MANAGED_WRAPPERS=1
+SKIP_GH=0
+ALLOW_DIRTY=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag) TAG="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --title) TITLE="$2"; shift 2 ;;
+    --notes-file) NOTES_FILE="$2"; shift 2 ;;
+    --draft) DRAFT=1; shift ;;
+    --prerelease) PRERELEASE=1; shift ;;
+    --skip-prepare) SKIP_PREPARE=1; shift ;;
+    --quick) QUICK=1; shift ;;
+    --canary-days) CANARY_DAYS="$2"; shift 2 ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
+    --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
+    --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
+    --skip-gh) SKIP_GH=1; shift ;;
+    --allow-dirty) ALLOW_DIRTY=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd git
+require_cmd jq
+
+[[ -n "${TAG}" ]] || die "--tag is required"
+
+if [[ "${TAG}" =~ ^v ]]; then
+  TAG_REF="${TAG}"
+  VERSION="${TAG#v}"
+else
+  TAG_REF="v${TAG}"
+  VERSION="${TAG}"
+fi
+
+if [[ -z "${TITLE}" ]]; then
+  TITLE="${TAG_REF}"
+fi
+
+if [[ -z "${OUTPUT_DIR}" ]]; then
+  OUTPUT_DIR="${ROOT}/dist/releases/${TAG_REF}"
+fi
+mkdir -p "${OUTPUT_DIR}"
+
+if [[ "${ALLOW_DIRTY}" -ne 1 ]]; then
+  if ! git -C "${ROOT}" diff --quiet --; then
+    die "working tree has unstaged changes (use --allow-dirty to override)"
+  fi
+  if ! git -C "${ROOT}" diff --cached --quiet --; then
+    die "working tree has staged but uncommitted changes (use --allow-dirty to override)"
+  fi
+fi
+
+git -C "${ROOT}" rev-parse --verify "${TAG_REF}^{object}" >/dev/null 2>&1 || die "tag not found: ${TAG_REF} (create it first)"
+
+prepare_json="null"
+prepare_ok=true
+if [[ "${SKIP_PREPARE}" -ne 1 ]]; then
+  prep_args=("${ROOT}/bin/lacp-release-prepare" "--json" "--canary-days" "${CANARY_DAYS}")
+  if [[ "${QUICK}" -eq 1 ]]; then
+    prep_args+=("--quick")
+  fi
+  if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+    prep_args+=("--since-clean-baseline")
+  fi
+  if [[ -n "${BASELINE_FILE}" ]]; then
+    prep_args+=("--baseline-file" "${BASELINE_FILE}")
+  fi
+  if [[ "${SKIP_CACHE_GATE}" -eq 1 ]]; then
+    prep_args+=("--skip-cache-gate")
+  fi
+  if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
+    prep_args+=("--skip-skill-audit-gate")
+  fi
+  if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 0 ]]; then
+    prep_args+=("--no-require-managed-wrappers")
+  fi
+
+  prepare_json="$("${prep_args[@]}")"
+  prepare_ok="$(echo "${prepare_json}" | jq -r '.ok == true')"
+  if [[ "${prepare_ok}" != "true" ]]; then
+    die "release-prepare failed; fix gates or use --skip-prepare"
+  fi
+fi
+
+archive_name="lacp-${VERSION}.tar.gz"
+archive_path="${OUTPUT_DIR}/${archive_name}"
+sha_path="${OUTPUT_DIR}/SHA256SUMS"
+
+git -C "${ROOT}" archive \
+  --format=tar.gz \
+  --prefix="lacp-${VERSION}/" \
+  --output="${archive_path}" \
+  "${TAG_REF}"
+
+(
+  cd "${OUTPUT_DIR}"
+  shasum -a 256 "${archive_name}" > "SHA256SUMS"
+)
+
+release_url=""
+release_action="skipped"
+gh_result='{"ok":true,"action":"skipped","reason":"--skip-gh"}'
+
+infer_repo() {
+  local remote_url
+  remote_url="$(git -C "${ROOT}" remote get-url origin 2>/dev/null || true)"
+  python3 - <<'PY' "${remote_url}"
+import re
+import sys
+u = sys.argv[1].strip()
+if not u:
+    raise SystemExit(0)
+m = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.]+)(?:\.git)?$", u)
+if m:
+    print(f"{m.group('owner')}/{m.group('repo')}")
+PY
+}
+
+if [[ "${SKIP_GH}" -ne 1 ]]; then
+  require_cmd gh
+  gh auth status >/dev/null 2>&1 || die "gh is not authenticated; run: gh auth login"
+
+  if [[ -z "${REPO}" ]]; then
+    REPO="$(infer_repo)"
+  fi
+  [[ -n "${REPO}" ]] || die "unable to infer GitHub repo from origin; pass --repo owner/repo"
+
+  gh_flags=(--repo "${REPO}" --title "${TITLE}")
+  if [[ -n "${NOTES_FILE}" ]]; then
+    [[ -f "${NOTES_FILE}" ]] || die "notes file not found: ${NOTES_FILE}"
+    gh_flags+=(--notes-file "${NOTES_FILE}")
+  else
+    gh_flags+=(--generate-notes)
+  fi
+  if [[ "${DRAFT}" -eq 1 ]]; then gh_flags+=(--draft); fi
+  if [[ "${PRERELEASE}" -eq 1 ]]; then gh_flags+=(--prerelease); fi
+
+  if gh release view "${TAG_REF}" --repo "${REPO}" >/dev/null 2>&1; then
+    gh release upload "${TAG_REF}" "${archive_path}" "${sha_path}" --repo "${REPO}" --clobber >/dev/null
+    release_action="upload"
+  else
+    gh release create "${TAG_REF}" "${archive_path}" "${sha_path}" "${gh_flags[@]}" >/dev/null
+    release_action="create"
+  fi
+
+  release_url="https://github.com/${REPO}/releases/tag/${TAG_REF}"
+  gh_result="$(jq -n \
+    --argjson ok true \
+    --arg action "${release_action}" \
+    --arg repo "${REPO}" \
+    --arg tag "${TAG_REF}" \
+    --arg url "${release_url}" \
+    '{ok:$ok,action:$action,repo:$repo,tag:$tag,url:$url}')"
+fi
+
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "release_publish" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg tag "${TAG_REF}" \
+  --arg version "${VERSION}" \
+  --arg title "${TITLE}" \
+  --arg output_dir "${OUTPUT_DIR}" \
+  --arg archive "${archive_path}" \
+  --arg checksums "${sha_path}" \
+  --arg release_url "${release_url}" \
+  --argjson skip_prepare "$([[ "${SKIP_PREPARE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson skip_gh "$([[ "${SKIP_GH}" -eq 1 ]] && echo true || echo false)" \
+  --argjson allow_dirty "$([[ "${ALLOW_DIRTY}" -eq 1 ]] && echo true || echo false)" \
+  --argjson prepare "${prepare_json}" \
+  --argjson gh "${gh_result}" \
+  '{
+    schema_version:$schema_version,
+    kind:$kind,
+    generated_at_utc:$generated_at_utc,
+    ok:true,
+    tag:$tag,
+    version:$version,
+    title:$title,
+    options:{
+      skip_prepare:$skip_prepare,
+      skip_gh:$skip_gh,
+      allow_dirty:$allow_dirty
+    },
+    artifacts:{
+      output_dir:$output_dir,
+      archive:$archive,
+      checksums:$checksums
+    },
+    prepare:$prepare,
+    github_release:$gh,
+    release_url:(if $release_url == "" then null else $release_url end)
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  jq -r '
+    "LACP Release Publish",
+    "  tag=\(.tag) version=\(.version)",
+    "  archive=\(.artifacts.archive)",
+    "  checksums=\(.artifacts.checksums)",
+    "  github_release.action=\(.github_release.action // "skipped")",
+    "  release_url=\(.release_url // "n/a")"
+  ' <<<"${result_json}"
+fi

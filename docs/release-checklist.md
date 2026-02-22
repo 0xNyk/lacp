@@ -40,11 +40,25 @@ git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-This triggers `.github/workflows/release.yml` to publish:
-- `lacp-X.Y.Z.tar.gz`
-- `SHA256SUMS`
+## 5) Publish assets from local machine (no Actions)
 
-## 5) Verify GitHub release
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp release-publish \
+  --tag vX.Y.Z \
+  --quick \
+  --skip-cache-gate \
+  --skip-skill-audit-gate \
+  --json | jq
+```
+
+This command:
+- runs `release-prepare` (unless `--skip-prepare` is set)
+- builds `lacp-X.Y.Z.tar.gz` from the tagged commit via `git archive`
+- writes `SHA256SUMS`
+- creates or updates GitHub Release assets via `gh` (unless `--skip-gh`)
+
+## 6) Verify GitHub release assets
 
 ```bash
 gh release view vX.Y.Z -R 0xNyk/lacp
@@ -53,7 +67,7 @@ cd /tmp/lacp-release-check
 shasum -a 256 -c SHA256SUMS
 ```
 
-## 6) Homebrew tap update
+## 7) Homebrew tap update
 
 ```bash
 # In lacp repo
@@ -76,7 +90,7 @@ git commit -m "chore(release): lacp vX.Y.Z"
 git push origin main
 ```
 
-## 7) Clean install smoke
+## 8) Clean install smoke
 
 ```bash
 brew uninstall lacp || true

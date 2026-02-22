@@ -96,6 +96,9 @@ done
 require_cmd bash
 require_cmd jq
 
+# Keep CI/self-tests side-effect free on local wrapper shims.
+export LACP_AUTO_ADOPT_LOCAL="${LACP_AUTO_ADOPT_LOCAL:-false}"
+
 if [[ "${QUICK}" -eq 1 ]]; then
   log "Running quick test suite"
   enable_isolated_roots
@@ -120,6 +123,7 @@ done
 
 "/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-shell-and-hooks-hardening.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-knowledge-doctor.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-ops-commands.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-security-controls.sh"
@@ -127,6 +131,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-cache-guard.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-auto-deps.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-canary.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-canary-optimize.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-canary-baseline.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-auto-rollback.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-audit.sh"
@@ -144,8 +149,12 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-workflow-run.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-schedule-health.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-policy-pack.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-vendor-watch.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-automations-tui.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-release-prepare.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-release-publish.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-bootstrap-system.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
 
 if command -v shellcheck >/dev/null 2>&1; then
