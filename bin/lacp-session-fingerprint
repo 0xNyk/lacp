@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-session-fingerprint [--remote-host <host>] [--json]
+
+Emit deterministic runtime session fingerprint from:
+  host + cwd + git_branch + git_worktree + remote_host
+EOF
+}
+
+REMOTE_HOST=""
+AS_JSON=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --remote-host)
+      REMOTE_HOST="$2"
+      shift 2
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+HOST_SHORT="$(hostname -s 2>/dev/null || hostname)"
+CWD_NOW="$(pwd -P)"
+GIT_BRANCH=""
+GIT_WORKTREE=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+
+payload="$(python3 - <<'PY' "${HOST_SHORT}" "${CWD_NOW}" "${GIT_BRANCH}" "${GIT_WORKTREE}" "${REMOTE_HOST}"
+import hashlib
+import json
+import pathlib
+import sys
+
+host = (sys.argv[1] or "").strip().lower()
+cwd = str(pathlib.Path(sys.argv[2]).expanduser().resolve()) if sys.argv[2] else ""
+branch = (sys.argv[3] or "").strip()
+worktree = str(pathlib.Path(sys.argv[4]).expanduser().resolve()) if sys.argv[4] else ""
+remote_host = (sys.argv[5] or "").strip().lower()
+material = "\n".join([host, cwd, branch, worktree, remote_host])
+fingerprint = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+print(
+    json.dumps(
+        {
+            "ok": True,
+            "schema_version": "1",
+            "kind": "session_fingerprint",
+            "context": {
+                "host": host,
+                "cwd": cwd,
+                "git_branch": branch if branch else None,
+                "git_worktree": worktree if worktree else None,
+                "remote_host": remote_host if remote_host else None,
+            },
+            "fingerprint": fingerprint,
+        }
+    )
+)
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  echo "${payload}" | jq .
+else
+  echo "${payload}" | jq -r '.fingerprint'
+fi
+

@@ -33,6 +33,10 @@ Execution options:
   --context-contract '<json>'
                  Structured execution-context contract required for mutating
                  runs when LACP_REQUIRE_CONTEXT_CONTRACT=true.
+  --session-fingerprint <value>
+                 Optional deterministic session fingerprint. When
+                 LACP_REQUIRE_SESSION_FINGERPRINT=true, required for mutating
+                 or remote-target commands and must match runtime context.
 
 Environment:
   LACP_LOCAL_SANDBOX_RUNNER   Optional executable for local_sandbox tier. Called as:
@@ -168,6 +172,27 @@ if expected_remote_host:
     if expected_remote_host.lower() != actual_remote_host.lower():
         print(f"remote host mismatch: expected={expected_remote_host} actual={actual_remote_host}")
         raise SystemExit(1)
+PY
+}
+
+build_session_fingerprint() {
+  local actual_host="$1"
+  local actual_cwd="$2"
+  local actual_git_branch="$3"
+  local actual_git_worktree="$4"
+  local actual_remote_host="$5"
+  python3 - <<'PY' "${actual_host}" "${actual_cwd}" "${actual_git_branch}" "${actual_git_worktree}" "${actual_remote_host}"
+import hashlib
+import pathlib
+import sys
+
+host = (sys.argv[1] or "").strip().lower()
+cwd = str(pathlib.Path(sys.argv[2]).expanduser().resolve()) if sys.argv[2] else ""
+branch = (sys.argv[3] or "").strip()
+worktree = str(pathlib.Path(sys.argv[4]).expanduser().resolve()) if sys.argv[4] else ""
+remote_host = (sys.argv[5] or "").strip().lower()
+material = "\n".join([host, cwd, branch, worktree, remote_host])
+print(hashlib.sha256(material.encode("utf-8")).hexdigest()[:24])
 PY
 }
 
@@ -413,6 +438,7 @@ ESTIMATED_COST_USD="0"
 CONFIRM_BUDGET="false"
 INPUT_CONTRACT=""
 CONTEXT_CONTRACT=""
+SESSION_FINGERPRINT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -474,6 +500,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --context-contract)
       CONTEXT_CONTRACT="$2"
+      shift 2
+      ;;
+    --session-fingerprint)
+      SESSION_FINGERPRINT="$2"
       shift 2
       ;;
     --)
@@ -540,6 +570,10 @@ INPUT_CONTRACT_ERROR=""
 CONTEXT_CONTRACT_VALID="false"
 CONTEXT_CONTRACT_REQUIRED="false"
 CONTEXT_CONTRACT_ERROR=""
+SESSION_FINGERPRINT_VALID="false"
+SESSION_FINGERPRINT_REQUIRED="false"
+SESSION_FINGERPRINT_ERROR=""
+ACTUAL_SESSION_FINGERPRINT=""
 
 ACTUAL_HOST="$(hostname -s 2>/dev/null || hostname)"
 ACTUAL_CWD="$(pwd -P)"
@@ -550,6 +584,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   ACTUAL_GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD[@]}")"
+ACTUAL_SESSION_FINGERPRINT="$(build_session_fingerprint "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}")"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   if [[ "${LACP_REQUIRE_INPUT_CONTRACT}" == "true" ]] && [[ "${RISK_TIER}" != "safe" ]] && [[ "${INTERNET}" == "true" || "${EXTERNAL_CODE}" == "true" || "${SENSITIVE_DATA}" == "true" ]]; then
@@ -583,6 +618,25 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
       CONTEXT_CONTRACT_ERROR="$(validate_context_contract "${CONTEXT_CONTRACT}" "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}" 2>&1 || true)"
       EXEC_RC=12
       ERROR_MSG="blocked by context contract gate: invalid --context-contract (${CONTEXT_CONTRACT_ERROR})"
+    fi
+  fi
+
+  if [[ "${EXEC_RC}" -eq 0 ]] && [[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]]; then
+    if [[ "${LACP_REQUIRE_SESSION_FINGERPRINT:-false}" == "true" ]]; then
+      SESSION_FINGERPRINT_REQUIRED="true"
+    fi
+    if [[ -n "${SESSION_FINGERPRINT}" ]]; then
+      if [[ "${SESSION_FINGERPRINT}" == "${ACTUAL_SESSION_FINGERPRINT}" ]]; then
+        SESSION_FINGERPRINT_VALID="true"
+      else
+        SESSION_FINGERPRINT_ERROR="session fingerprint mismatch"
+        EXEC_RC=13
+        ERROR_MSG="blocked by session fingerprint gate: expected runtime=${ACTUAL_SESSION_FINGERPRINT} got=${SESSION_FINGERPRINT}"
+      fi
+    elif [[ "${SESSION_FINGERPRINT_REQUIRED}" == "true" ]]; then
+      SESSION_FINGERPRINT_ERROR="missing session fingerprint"
+      EXEC_RC=13
+      ERROR_MSG="blocked by session fingerprint gate: pass --session-fingerprint (or set LACP_REQUIRE_SESSION_FINGERPRINT=false)"
     fi
   fi
 
@@ -735,6 +789,11 @@ jq -n \
   --argjson context_contract_required "$([[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
   --argjson context_contract_valid "$([[ "${CONTEXT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
   --arg context_contract_error "${CONTEXT_CONTRACT_ERROR}" \
+  --argjson session_fingerprint_required "$([[ "${SESSION_FINGERPRINT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+  --argjson session_fingerprint_valid "$([[ "${SESSION_FINGERPRINT_VALID}" == "true" ]] && echo true || echo false)" \
+  --arg session_fingerprint_error "${SESSION_FINGERPRINT_ERROR}" \
+  --arg session_fingerprint "${SESSION_FINGERPRINT}" \
+  --arg actual_session_fingerprint "${ACTUAL_SESSION_FINGERPRINT}" \
   --argjson context_contract "${CONTEXT_CONTRACT_JSON}" \
   --arg actual_host "${ACTUAL_HOST}" \
   --arg actual_cwd "${ACTUAL_CWD}" \
@@ -783,6 +842,13 @@ jq -n \
         remote_host: (if $actual_remote_host == "" then null else $actual_remote_host end)
       }
     },
+    session_fingerprint: {
+      required: $session_fingerprint_required,
+      valid: $session_fingerprint_valid,
+      error: (if $session_fingerprint_error == "" then null else $session_fingerprint_error end),
+      provided: (if $session_fingerprint == "" then null else $session_fingerprint end),
+      actual: (if $actual_session_fingerprint == "" then null else $actual_session_fingerprint end)
+    },
     remote_provider: (if $remote_provider == "" then null else $remote_provider end),
     reasons: $reasons,
     route_decision: $route_decision,
@@ -814,6 +880,11 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson context_contract_required "$([[ "${CONTEXT_CONTRACT_REQUIRED}" == "true" ]] && echo true || echo false)" \
     --argjson context_contract_valid "$([[ "${CONTEXT_CONTRACT_VALID}" == "true" ]] && echo true || echo false)" \
     --arg context_contract_error "${CONTEXT_CONTRACT_ERROR}" \
+    --argjson session_fingerprint_required "$([[ "${SESSION_FINGERPRINT_REQUIRED}" == "true" ]] && echo true || echo false)" \
+    --argjson session_fingerprint_valid "$([[ "${SESSION_FINGERPRINT_VALID}" == "true" ]] && echo true || echo false)" \
+    --arg session_fingerprint_error "${SESSION_FINGERPRINT_ERROR}" \
+    --arg session_fingerprint "${SESSION_FINGERPRINT}" \
+    --arg actual_session_fingerprint "${ACTUAL_SESSION_FINGERPRINT}" \
     --argjson context_contract "${CONTEXT_CONTRACT_JSON}" \
     --arg actual_host "${ACTUAL_HOST}" \
     --arg actual_cwd "${ACTUAL_CWD}" \
@@ -856,6 +927,13 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
           git_worktree: (if $actual_git_worktree == "" then null else $actual_git_worktree end),
           remote_host: (if $actual_remote_host == "" then null else $actual_remote_host end)
         }
+      },
+      session_fingerprint: {
+        required: $session_fingerprint_required,
+        valid: $session_fingerprint_valid,
+        error: (if $session_fingerprint_error == "" then null else $session_fingerprint_error end),
+        provided: (if $session_fingerprint == "" then null else $session_fingerprint end),
+        actual: (if $actual_session_fingerprint == "" then null else $actual_session_fingerprint end)
       },
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       reasons: $reasons,
