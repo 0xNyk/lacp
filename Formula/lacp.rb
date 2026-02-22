@@ -15,6 +15,7 @@ class Lacp < Formula
     %w[
       lacp
       lacp-install
+      lacp-bootstrap-system
       lacp-onboard
       lacp-bootstrap
       lacp-verify
@@ -28,10 +29,14 @@ class Lacp < Formula
       lacp-remote-smoke
       lacp-report
       lacp-canary
+      lacp-canary-optimize
       lacp-auto-rollback
       lacp-schedule-health
       lacp-policy-pack
       lacp-release-prepare
+      lacp-release-publish
+      lacp-vendor-watch
+      lacp-automations-tui
       lacp-cache-audit
       lacp-cache-guard
       lacp-skill-audit

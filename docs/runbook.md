@@ -4,7 +4,7 @@
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp install --profile starter --with-verify
+bin/lacp bootstrap-system --profile starter --with-verify
 ```
 
 Alternative bootstrap:
@@ -17,7 +17,8 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp install --profile starter --auto-deps-dry-run
+bin/lacp install --profile starter
+bin/lacp install --profile starter --no-auto-deps
 bin/lacp verify --hours 24
 bin/lacp test --quick
 bin/lacp test --isolated
@@ -41,14 +42,19 @@ bin/lacp report --hours 24
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp canary --json
+bin/lacp canary-optimize --iterations 3 --hours 24 --json
 bin/lacp canary --set-clean-baseline
 bin/lacp canary --since-clean-baseline --json
+bin/lacp vendor-watch --json
+bin/lacp automations-tui --offline
+bin/lacp automations-tui --json
 bin/lacp auto-rollback --json
 bin/lacp skill-audit --json
 bin/lacp policy-pack list --json
 bin/lacp policy-pack apply --pack starter --json
 bin/lacp release-gate --quick
-bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json
+bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json
+bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json
 bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
 bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json
 bin/lacp worktree doctor --repo-root . --json
@@ -105,7 +111,7 @@ Recommended chained discipline:
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp canary --json | jq
-bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 ```
 
 ## Optional Orchestrator Adapter (dmux/tmux/claude_worktree)

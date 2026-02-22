@@ -22,16 +22,21 @@ fi
 
 # Wrapper sanity checks.
 "${ROOT}/bin/lacp" --help >/dev/null
+"${ROOT}/bin/lacp" bootstrap-system --help >/dev/null
 "${ROOT}/bin/lacp" doctor --help >/dev/null
 "${ROOT}/bin/lacp" test --help >/dev/null
 "${ROOT}/bin/lacp" incident-drill --help >/dev/null
 "${ROOT}/bin/lacp" cache-audit --help >/dev/null
 "${ROOT}/bin/lacp" cache-guard --help >/dev/null
 "${ROOT}/bin/lacp" canary --help >/dev/null
+"${ROOT}/bin/lacp" canary-optimize --help >/dev/null
 "${ROOT}/bin/lacp" auto-rollback --help >/dev/null
 "${ROOT}/bin/lacp" schedule-health --help >/dev/null
 "${ROOT}/bin/lacp" policy-pack --help >/dev/null
 "${ROOT}/bin/lacp" release-prepare --help >/dev/null
+"${ROOT}/bin/lacp" release-publish --help >/dev/null
+"${ROOT}/bin/lacp" vendor-watch --help >/dev/null
+"${ROOT}/bin/lacp" automations-tui --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null
 "${ROOT}/bin/lacp" skill-factory --help >/dev/null
 "${ROOT}/bin/lacp" adopt-local --help >/dev/null

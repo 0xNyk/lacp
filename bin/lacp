@@ -10,6 +10,7 @@ Usage: lacp <command> [args...]
 Core:
   start         Run onboarding flow (alias: onboard)
   install       Run installer profile workflow
+  bootstrap-system Run full install/onboard/doctor bootstrap flow
   verify        Run verification cycle
   doctor        Run diagnostics
   status        Render status report
@@ -19,10 +20,14 @@ Core:
 Ops:
   report        Summarize recent run/artifact health
   canary        Evaluate 7-day promotion readiness gate
+  canary-optimize Run bounded verify/canary optimization loop
   auto-rollback Run canary and fail-safe rollback actions on failure
   schedule-health Manage scheduled local health checks (launchd)
   policy-pack   Apply named policy baseline packs (starter/strict/enterprise)
   release-prepare Run full pre-live go/no-go discipline checks
+  release-publish Build + publish release artifacts from local machine (no Actions)
+  vendor-watch  Track Claude/Codex versions + docs/changelog drift
+  automations-tui Unified dashboard for local automation health/status
   cache-audit   Analyze prompt cache effectiveness from local histories
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
@@ -73,6 +78,9 @@ case "${cmd}" in
   install)
     exec "${ROOT}/bin/lacp-install" "$@"
     ;;
+  bootstrap-system)
+    exec "${ROOT}/bin/lacp-bootstrap-system" "$@"
+    ;;
   verify)
     exec "${ROOT}/bin/lacp-verify" "$@"
     ;;
@@ -97,6 +105,9 @@ case "${cmd}" in
   canary)
     exec "${ROOT}/bin/lacp-canary" "$@"
     ;;
+  canary-optimize)
+    exec "${ROOT}/bin/lacp-canary-optimize" "$@"
+    ;;
   auto-rollback)
     exec "${ROOT}/bin/lacp-auto-rollback" "$@"
     ;;
@@ -108,6 +119,15 @@ case "${cmd}" in
     ;;
   release-prepare)
     exec "${ROOT}/bin/lacp-release-prepare" "$@"
+    ;;
+  release-publish)
+    exec "${ROOT}/bin/lacp-release-publish" "$@"
+    ;;
+  vendor-watch)
+    exec "${ROOT}/bin/lacp-vendor-watch" "$@"
+    ;;
+  automations-tui)
+    exec "${ROOT}/bin/lacp-automations-tui" "$@"
     ;;
   cache-audit)
     exec "${ROOT}/bin/lacp-cache-audit" "$@"

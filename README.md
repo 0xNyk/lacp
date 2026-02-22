@@ -1,6 +1,5 @@
 # LACP
 
-[![CI](https://github.com/0xNyk/lacp/actions/workflows/ci.yml/badge.svg)](https://github.com/0xNyk/lacp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ![LACP Banner](docs/assets/readme-banner.png)
@@ -109,7 +108,7 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 
 ```bash
 cd ~/control/frameworks/lacp
-bin/lacp-install --profile starter --with-verify
+bin/lacp bootstrap-system --profile starter --with-verify
 bin/lacp-mode show
 bin/lacp-mode remote-enabled --ttl-min 30
 bin/lacp-doctor
@@ -166,8 +165,9 @@ LACP is not for:
 
 ## What Install Does
 
-`bin/lacp-install --profile starter --with-verify`:
+`bin/lacp bootstrap-system --profile starter --with-verify`:
 - creates `.env` from template when missing
+- auto-detects and installs missing Homebrew dependencies on macOS (disable with `--no-auto-deps`)
 - ensures required root/data paths exist
 - scaffolds safe starter automation scripts when missing
 - runs onboarding preflight checks
@@ -227,17 +227,22 @@ Notes:
 ## Command Reference
 
 - `bin/lacp`: top-level CLI dispatcher (`lacp <command> ...`)
+- `bin/lacp-bootstrap-system`: one-command install + onboard + doctor flow
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
-- `bin/lacp-install --auto-deps`: macOS/Homebrew dependency bootstrap for fresh machines (`--auto-deps-dry-run` supported)
+- `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
+- `bin/lacp-canary-optimize`: bounded optimization loop (`verify -> canary`) with optional best `LACP_BENCH_TOP_K` persistence
 - `bin/lacp-auto-rollback`: fail-safe rollback action runner (`local-only` mode + wrapper unadopt) on unhealthy canary
 - `bin/lacp-schedule-health`: install/status/run-now/uninstall scheduled local health checks via launchd
 - `bin/lacp-policy-pack`: list/apply policy baseline packs (`starter`, `strict`, `enterprise`)
 - `bin/lacp-release-prepare`: one-command pre-live discipline (`release-gate` + `canary` + `status` + `report`)
+- `bin/lacp-release-publish`: local-only release artifact builder/publisher (`tar.gz` + `SHA256SUMS` + optional `gh release`)
+- `bin/lacp-vendor-watch`: monitor local Claude/Codex versions and upstream docs/changelog drift
+- `bin/lacp-automations-tui`: unified local automation dashboard (`schedule/orchestrate/worktree/swarm/wrappers/vendor-watch`)
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
 - `bin/lacp-cache-guard`: enforce cache health thresholds (hit-rate + usage events)
 - `bin/lacp-skill-audit`: detect risky skill patterns before install/use
@@ -304,7 +309,7 @@ bin/lacp pr-preflight \
 
 - No secrets in repo configuration files
 - Environment-driven configuration in `.env`
-- Zero-external-cost CI/workflow policy (official `actions/*` only; no paid provider secrets/endpoints in workflows)
+- Zero-external-cost workflow policy (local CLI gates; no required GitHub Actions or paid CI providers)
 - Policy-driven remote routing
 - External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Risk-tier gating (`safe/review/critical`) with TTL and per-run confirmation controls
@@ -350,9 +355,12 @@ bin/lacp-test --isolated
 # pre-live gate
 bin/lacp release-gate --quick
 bin/lacp canary --json | jq
+bin/lacp canary-optimize --iterations 3 --hours 24 --json | jq
 bin/lacp canary --set-clean-baseline
 bin/lacp canary --since-clean-baseline --json | jq
-bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+bin/lacp vendor-watch --json | jq
+bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
+bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
 
 # fail-safe rollback if canary is unhealthy
 bin/lacp auto-rollback --json | jq
@@ -366,8 +374,9 @@ bin/lacp schedule-health install --interval-min 60 --json | jq
 bin/lacp schedule-health status --json | jq
 bin/lacp schedule-health run-now --json | jq
 
-# fresh macOS dependency bootstrap
-bin/lacp install --profile starter --auto-deps
+# fresh macOS dependency bootstrap (enabled by default)
+bin/lacp install --profile starter
+bin/lacp install --profile starter --no-auto-deps
 bin/lacp doctor --fix-deps --auto-deps-dry-run --json | jq
 
 # optional orchestration (dry-run)

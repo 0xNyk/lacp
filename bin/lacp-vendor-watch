@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-vendor-watch [options]
+
+Track local Claude/Codex versions and monitor upstream docs/changelog drift.
+
+Options:
+  --offline                 Skip network fetches (local versions only)
+  --state-file <path>       Override state file path
+  --json                    Emit JSON payload
+  -h, --help                Show help
+EOF
+}
+
+AS_JSON=0
+OFFLINE=0
+STATE_FILE="${LACP_KNOWLEDGE_ROOT}/data/vendor-watch/state.json"
+USER_AGENT="lacp-vendor-watch/1.0 (+https://github.com/0xNyk/lacp)"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --offline) OFFLINE=1; shift ;;
+    --state-file) STATE_FILE="$2"; shift 2 ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd jq
+require_cmd python3
+
+mkdir -p "$(dirname "${STATE_FILE}")"
+tmp_current="$(mktemp)"
+trap 'rm -f "${tmp_current}"' EXIT
+
+run_version() {
+  local cmd="$1"
+  python3 - <<'PY' "${cmd}"
+import json
+import re
+import shutil
+import subprocess
+import sys
+
+cmd = sys.argv[1]
+path = shutil.which(cmd)
+if not path:
+    print(json.dumps({"installed": False, "version": None, "raw": None}))
+    raise SystemExit(0)
+
+env = dict(**__import__("os").environ)
+env["LACP_BYPASS"] = "1"
+line = ""
+try:
+    cp = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=3, env=env)
+    out = (cp.stdout or "") + ("\n" + cp.stderr if cp.stderr else "")
+    line = out.splitlines()[0].strip() if out else ""
+except Exception:
+    line = ""
+
+m = re.search(r"[0-9]+\.[0-9]+(\.[0-9]+)?([.-][A-Za-z0-9]+)?", line)
+version = m.group(0) if m else None
+print(json.dumps({"installed": True, "version": version, "raw": (line or None)}))
+PY
+}
+
+run_npm_latest() {
+  local pkg="$1"
+  if [[ "${OFFLINE}" -eq 1 ]]; then
+    jq -n --arg pkg "${pkg}" '{package:$pkg, latest:null, error:"offline"}'
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    jq -n --arg pkg "${pkg}" '{package:$pkg, latest:null, error:"npm_missing"}'
+    return 0
+  fi
+  local latest
+  latest="$(npm view "${pkg}" version 2>/dev/null || true)"
+  latest="$(printf '%s' "${latest}" | head -n 1 | tr -d '\r')"
+  jq -n --arg pkg "${pkg}" --arg latest "${latest}" '{
+    package:$pkg,
+    latest:(if $latest == "" then null else $latest end),
+    error:null
+  }'
+}
+
+fetch_source() {
+  local id="$1"
+  local url="$2"
+
+  if [[ "${OFFLINE}" -eq 1 ]]; then
+    jq -n --arg id "${id}" --arg url "${url}" '{
+      id:$id, url:$url, ok:false, changed:false, title:null, fetched_at_utc:null, sha256:null, error:"offline"
+    }'
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    jq -n --arg id "${id}" --arg url "${url}" '{
+      id:$id, url:$url, ok:false, changed:false, title:null, fetched_at_utc:null, sha256:null, error:"curl_missing"
+    }'
+    return 0
+  fi
+
+  local body
+  body="$(curl -fsSL \
+    --retry 2 \
+    --retry-delay 1 \
+    --retry-all-errors \
+    --connect-timeout 5 \
+    --max-time 30 \
+    -A "${USER_AGENT}" \
+    "${url}" 2>/dev/null || true)"
+  if [[ -z "${body}" ]]; then
+    jq -n --arg id "${id}" --arg url "${url}" '{
+      id:$id, url:$url, ok:false, changed:false, title:null, fetched_at_utc:null, sha256:null, error:"fetch_failed"
+    }'
+    return 0
+  fi
+
+  local sha title
+  sha="$(printf '%s' "${body}" | shasum -a 256 | awk '{print $1}')"
+  title="$(printf '%s' "${body}" | rg -io '<title[^>]*>.*</title>' | head -n 1 | sed -E 's#<[^>]+>##g' | tr -d '\r' | tr '\n' ' ' || true)"
+  title="$(printf '%s' "${title}" | sed -E 's/[[:space:]]+/ /g' | sed -E 's/^ //; s/ $//')"
+
+  jq -n \
+    --arg id "${id}" \
+    --arg url "${url}" \
+    --arg title "${title}" \
+    --arg sha "${sha}" \
+    --arg fetched_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{
+      id:$id,
+      url:$url,
+      ok:true,
+      changed:false,
+      title:(if $title == "" then null else $title end),
+      fetched_at_utc:$fetched_at_utc,
+      sha256:$sha,
+      error:null
+    }'
+}
+
+fetch_source_group() {
+  local id="$1"
+  shift
+  local -a urls=("$@")
+  local attempts='[]'
+  local index=0
+  local row
+
+  for url in "${urls[@]}"; do
+    row="$(fetch_source "${id}" "${url}")"
+    attempts="$(jq -n \
+      --argjson attempts "${attempts}" \
+      --argjson row "${row}" \
+      '$attempts + [{url: $row.url, ok: ($row.ok // false), error: ($row.error // null)}]')"
+
+    if [[ "$(echo "${row}" | jq -r '.ok // false')" == "true" ]]; then
+      jq -n \
+        --argjson row "${row}" \
+        --argjson attempts "${attempts}" \
+        --argjson selected_index "${index}" \
+        '($row + {
+          attempted_urls: $attempts,
+          fallback_used: ($selected_index > 0),
+          selected_index: $selected_index
+        })'
+      return 0
+    fi
+
+    index=$((index + 1))
+  done
+
+  jq -n \
+    --arg id "${id}" \
+    --argjson attempts "${attempts}" \
+    '{
+      id:$id,
+      url:null,
+      ok:false,
+      changed:false,
+      title:null,
+      fetched_at_utc:null,
+      sha256:null,
+      attempted_urls:$attempts,
+      fallback_used:false,
+      selected_index:null,
+      error:"all_candidates_failed"
+    }'
+}
+
+claude_local="$(run_version claude)"
+codex_local="$(run_version codex)"
+
+claude_latest="$(run_npm_latest @anthropic-ai/claude-code)"
+codex_latest="$(run_npm_latest @openai/codex)"
+
+source_rows="$(jq -n '[]')"
+append_row() {
+  local row="$1"
+  source_rows="$(jq -n --argjson arr "${source_rows}" --argjson row "${row}" '$arr + [$row]')"
+}
+
+append_row "$(fetch_source_group claude_code_docs \
+  https://docs.anthropic.com/en/docs/claude-code/overview \
+  https://github.com/anthropics/claude-code)"
+append_row "$(fetch_source_group claude_code_release_notes \
+  https://docs.anthropic.com/en/release-notes/claude-code \
+  https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md)"
+append_row "$(fetch_source_group codex_guides \
+  https://platform.openai.com/docs/guides/codex \
+  https://github.com/openai/codex \
+  https://www.npmjs.com/package/@openai/codex)"
+append_row "$(fetch_source_group openai_changelog \
+  https://platform.openai.com/docs/changelog \
+  https://help.openai.com/en/articles/9624314-model-release-notes)"
+
+current_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "vendor_watch" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson offline "$([[ "${OFFLINE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson claude_local "${claude_local}" \
+  --argjson codex_local "${codex_local}" \
+  --argjson claude_latest "${claude_latest}" \
+  --argjson codex_latest "${codex_latest}" \
+  --argjson sources "${source_rows}" \
+  '{
+    schema_version:$schema_version,
+    kind:$kind,
+    generated_at_utc:$generated_at_utc,
+    offline:$offline,
+    local_versions:{
+      claude:$claude_local,
+      codex:$codex_local
+    },
+    latest_versions:{
+      claude_code_npm:$claude_latest,
+      codex_npm:$codex_latest
+    },
+    sources:$sources
+  }')"
+
+if [[ -f "${STATE_FILE}" ]]; then
+  prev_json="$(cat "${STATE_FILE}" 2>/dev/null || echo '{}')"
+else
+  prev_json='{}'
+fi
+
+current_json="$(python3 - <<'PY' "${current_json}" "${prev_json}"
+import json
+import sys
+
+curr = json.loads(sys.argv[1])
+prev = json.loads(sys.argv[2]) if sys.argv[2].strip() else {}
+prev_map = {}
+for row in prev.get("sources", []) if isinstance(prev, dict) else []:
+    if isinstance(row, dict) and row.get("id"):
+        prev_map[row["id"]] = row.get("sha256")
+
+changed = 0
+rows = []
+for row in curr.get("sources", []):
+    if not isinstance(row, dict):
+        continue
+    rid = row.get("id")
+    sha = row.get("sha256")
+    old = prev_map.get(rid)
+    row["changed"] = bool(sha and old and sha != old)
+    if row["changed"]:
+        changed += 1
+    rows.append(row)
+
+curr["sources"] = rows
+group_map = {}
+for r in rows:
+    rid = r.get("id")
+    if rid:
+        group_map[rid] = bool(r.get("ok") is True)
+
+required_groups = [
+    "claude_code_docs",
+    "claude_code_release_notes",
+    "codex_guides",
+    "openai_changelog",
+]
+groups_ok = sum(1 for g in required_groups if group_map.get(g))
+claude_sources_ok = bool(group_map.get("claude_code_docs")) and bool(group_map.get("claude_code_release_notes"))
+codex_sources_ok = bool(group_map.get("codex_guides")) or bool(group_map.get("openai_changelog"))
+
+curr["summary"] = {
+    "sources_total": len(rows),
+    "sources_changed": changed,
+    "sources_ok": sum(1 for r in rows if r.get("ok") is True),
+    "source_groups_total": len(required_groups),
+    "source_groups_ok": groups_ok,
+    "claude_sources_ok": claude_sources_ok,
+    "codex_sources_ok": codex_sources_ok,
+    "claude_installed": bool(curr.get("local_versions", {}).get("claude", {}).get("installed")),
+    "codex_installed": bool(curr.get("local_versions", {}).get("codex", {}).get("installed")),
+}
+curr["ok"] = bool(claude_sources_ok and codex_sources_ok)
+print(json.dumps(curr))
+PY
+)"
+
+printf '%s\n' "${current_json}" > "${tmp_current}"
+cp "${tmp_current}" "${STATE_FILE}"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  cat "${tmp_current}"
+else
+  jq -r '
+    "LACP Vendor Watch",
+    "  ok=\(.ok) offline=\(.offline)",
+    "  local.claude=\(.local_versions.claude.version // "missing") local.codex=\(.local_versions.codex.version // "missing")",
+    "  latest.claude_npm=\(.latest_versions.claude_code_npm.latest // "n/a") latest.codex_npm=\(.latest_versions.codex_npm.latest // "n/a")",
+    "  sources.total=\(.summary.sources_total) changed=\(.summary.sources_changed) ok=\(.summary.sources_ok)",
+    "  source_groups.ok=\(.summary.source_groups_ok // 0)/\(.summary.source_groups_total // 0) claude_sources_ok=\(.summary.claude_sources_ok // false) codex_sources_ok=\(.summary.codex_sources_ok // false)"
+  ' "${tmp_current}"
+fi
