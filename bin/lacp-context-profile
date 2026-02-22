@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-context-profile list [--json]
+  lacp-context-profile render --profile <name> [--var KEY=VALUE ...] [--json]
+
+Profile source:
+  config/context-profiles.json
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" ]]; then
+  usage
+  exit 1
+fi
+shift || true
+
+PROFILES_FILE="${ROOT}/config/context-profiles.json"
+require_file "${PROFILES_FILE}"
+require_cmd jq
+require_cmd python3
+
+list_cmd() {
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  if [[ "${as_json}" -eq 1 ]]; then
+    jq '{
+      ok: true,
+      schema_version: (.version // "1"),
+      profiles: ((.profiles // {}) | to_entries | map({name:.key, description:(.value.description // "")}))
+    }' "${PROFILES_FILE}"
+  else
+    jq -r '.profiles | to_entries[] | "- \(.key): \(.value.description // "")"' "${PROFILES_FILE}"
+  fi
+}
+
+render_cmd() {
+  local profile=""
+  local as_json=0
+  local -a vars=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      --var) vars+=("$2"); shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${profile}" ]] || die "--profile is required"
+
+  local host_short cwd git_branch git_worktree
+  host_short="$(hostname -s 2>/dev/null || hostname)"
+  cwd="$(pwd)"
+  git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  git_worktree="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+  local rendered
+  rendered="$(python3 - <<'PY' "${PROFILES_FILE}" "${profile}" "${host_short}" "${cwd}" "${git_branch}" "${git_worktree}" "${as_json}" "${vars[@]}"
+import json
+import re
+import sys
+from pathlib import Path
+
+cfg_path = Path(sys.argv[1])
+profile_name = sys.argv[2]
+host_short = sys.argv[3]
+cwd = sys.argv[4]
+git_branch = sys.argv[5]
+git_worktree = sys.argv[6]
+as_json = sys.argv[7] == "1"
+var_inputs = sys.argv[8:]
+
+cfg = json.loads(cfg_path.read_text())
+profiles = cfg.get("profiles") or {}
+if profile_name not in profiles:
+    print(json.dumps({"ok": False, "error": f"unknown profile: {profile_name}"}))
+    raise SystemExit(2)
+
+profile = profiles[profile_name]
+contract = profile.get("contract") or {}
+requires = profile.get("requires") or []
+if not isinstance(contract, dict):
+    print(json.dumps({"ok": False, "error": f"profile contract must be object: {profile_name}"}))
+    raise SystemExit(2)
+
+vars_map = {
+    "HOST_SHORT": host_short,
+    "PWD": cwd,
+    "GIT_BRANCH": git_branch,
+    "GIT_WORKTREE": git_worktree,
+    "REMOTE_HOST": "",
+}
+
+for item in var_inputs:
+    if "=" not in item:
+        print(json.dumps({"ok": False, "error": f"invalid --var (expected KEY=VALUE): {item}"}))
+        raise SystemExit(2)
+    key, value = item.split("=", 1)
+    key = key.strip()
+    if not key:
+        print(json.dumps({"ok": False, "error": f"invalid --var key: {item}"}))
+        raise SystemExit(2)
+    vars_map[key] = value
+
+missing = [name for name in requires if not str(vars_map.get(name, "")).strip()]
+if missing:
+    print(json.dumps({"ok": False, "error": f"missing required vars for profile {profile_name}: {', '.join(missing)}"}))
+    raise SystemExit(2)
+
+def substitute(value):
+    if not isinstance(value, str):
+        return value
+    out = value
+    for match in re.findall(r"\$([A-Z0-9_]+)", value):
+        out = out.replace(f"${match}", str(vars_map.get(match, "")))
+    return out
+
+resolved = {k: substitute(v) for k, v in contract.items()}
+resolved = {k: v for k, v in resolved.items() if str(v).strip() != ""}
+
+payload = {
+    "ok": True,
+    "schema_version": str(cfg.get("version", "1")),
+    "profile": profile_name,
+    "description": profile.get("description", ""),
+    "requires": requires,
+    "variables": vars_map,
+    "context_contract": resolved,
+}
+
+print(json.dumps(payload, indent=2 if as_json else None))
+PY
+)"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    printf '%s\n' "${rendered}"
+  else
+    local ok
+    ok="$(jq -r '.ok // false' <<<"${rendered}")"
+    if [[ "${ok}" != "true" ]]; then
+      local err
+      err="$(jq -r '.error // "unknown error"' <<<"${rendered}")"
+      die "${err}"
+    fi
+    jq -c '.context_contract' <<<"${rendered}"
+  fi
+}
+
+case "${sub}" in
+  list) list_cmd "$@" ;;
+  render) render_cmd "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

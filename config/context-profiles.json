@@ -1,0 +1,32 @@
+{
+  "version": "1",
+  "profiles": {
+    "local-dev": {
+      "description": "Local development guardrail: pin host and working directory prefix.",
+      "contract": {
+        "expected_host": "$HOST_SHORT",
+        "expected_cwd_prefix": "$PWD"
+      }
+    },
+    "ssh-prod": {
+      "description": "Remote execution guardrail for production SSH tasks.",
+      "requires": [
+        "REMOTE_HOST"
+      ],
+      "contract": {
+        "expected_host": "$HOST_SHORT",
+        "expected_remote_host": "$REMOTE_HOST"
+      }
+    },
+    "high-risk-migration": {
+      "description": "High-risk migration guardrail: pin host, cwd, branch, and worktree.",
+      "contract": {
+        "expected_host": "$HOST_SHORT",
+        "expected_cwd_prefix": "$PWD",
+        "expected_git_branch": "$GIT_BRANCH",
+        "expected_git_worktree": "$GIT_WORKTREE"
+      }
+    }
+  }
+}
+
