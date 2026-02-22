@@ -10,14 +10,14 @@ usage() {
 Usage:
   lacp-workflow-run init --task "<text>" [--project <name>] [--json]
   lacp-workflow-run status --run-id <id> [--json]
-  lacp-workflow-run advance --run-id <id> --stage <name> --actor <role> [--decision approve|reject] [--note <text>] [--json]
+  lacp-workflow-run advance --run-id <id> --stage <name> --actor <role> [--decision approve|reject] [--note <text>] [--plan-token <token>] [--allow-unplanned true|false] [--json]
 
 Deterministic workflow stages:
   planner -> developer -> verifier -> tester -> reviewer
 
 Role constraints:
   planner stage actor must be planner
-  developer stage actor must be developer
+  developer stage actor must be developer and must present planner-issued --plan-token
   verifier stage actor must be verifier (approval gate)
   tester stage actor must be tester (approval gate)
   reviewer stage actor must be reviewer (final approval gate)
@@ -33,6 +33,13 @@ shift || true
 
 WORKFLOW_ROOT="${LACP_KNOWLEDGE_ROOT}/data/workflows"
 mkdir -p "${WORKFLOW_ROOT}"
+
+as_bool() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
 
 init_cmd() {
   local task=""
@@ -98,6 +105,17 @@ payload = {
             "detail": "workflow initialized",
         }
     ],
+    "contracts": {
+        "plan_act": {
+            "required": True,
+            "issued_by_stage": "planner",
+            "required_for_stage": "developer",
+            "token": None,
+            "issued_at_utc": None,
+            "issued_by_actor": None,
+            "evidence_note": None,
+        }
+    },
 }
 out.write_text(json.dumps(payload, indent=2) + "\n")
 PY
@@ -138,6 +156,8 @@ advance_cmd() {
   local actor=""
   local decision="approve"
   local note=""
+  local plan_token=""
+  local allow_unplanned="false"
   local as_json=0
 
   while [[ $# -gt 0 ]]; do
@@ -147,6 +167,8 @@ advance_cmd() {
       --actor) actor="$2"; shift 2 ;;
       --decision) decision="$2"; shift 2 ;;
       --note) note="$2"; shift 2 ;;
+      --plan-token) plan_token="$2"; shift 2 ;;
+      --allow-unplanned) allow_unplanned="$(as_bool "$2")"; shift 2 ;;
       --json) as_json=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown argument: $1" ;;
@@ -160,8 +182,9 @@ advance_cmd() {
   local state_file="${WORKFLOW_ROOT}/${run_id}/state.json"
   [[ -f "${state_file}" ]] || die "state not found: ${state_file}"
 
-  python3 - <<'PY' "${state_file}" "${stage}" "${actor}" "${decision}" "${note}"
+  python3 - <<'PY' "${state_file}" "${stage}" "${actor}" "${decision}" "${note}" "${plan_token}" "${allow_unplanned}"
 import datetime as dt
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -171,6 +194,8 @@ stage_name = sys.argv[2]
 actor = sys.argv[3]
 decision = sys.argv[4]
 note = sys.argv[5]
+provided_plan_token = sys.argv[6]
+allow_unplanned = sys.argv[7].strip().lower() == "true"
 
 state = json.loads(state_path.read_text())
 
@@ -191,10 +216,47 @@ if stage["requires_approval"] and decision not in ("approve", "reject"):
     raise SystemExit("approval stages require decision approve|reject")
 
 now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+contracts = state.setdefault("contracts", {})
+plan_act = contracts.setdefault(
+    "plan_act",
+    {
+        "required": True,
+        "issued_by_stage": "planner",
+        "required_for_stage": "developer",
+        "token": None,
+        "issued_at_utc": None,
+        "issued_by_actor": None,
+        "evidence_note": None,
+    },
+)
+
 if decision == "reject":
     stage["status"] = "rejected"
     state["status"] = "blocked"
 else:
+    if stage_name == "planner":
+        seed = f"{state.get('run_id','')}\n{state.get('task','')}\n{now}\n{note}"
+        token = f"plan-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:10]}"
+        plan_act["token"] = token
+        plan_act["issued_at_utc"] = now
+        plan_act["issued_by_actor"] = actor
+        plan_act["evidence_note"] = note or None
+        stage["plan_token_issued"] = token
+
+    if stage_name == "developer":
+        required = bool(plan_act.get("required", True))
+        expected_token = str(plan_act.get("token") or "").strip()
+        if required and not allow_unplanned:
+            if not expected_token:
+                raise SystemExit("plan->act contract violation: planner has not issued a plan token")
+            if not provided_plan_token:
+                raise SystemExit("plan->act contract violation: missing --plan-token for developer stage")
+            if provided_plan_token.strip() != expected_token:
+                raise SystemExit("plan->act contract violation: invalid --plan-token for developer stage")
+        stage["plan_token_used"] = provided_plan_token.strip() or None
+        stage["allow_unplanned"] = allow_unplanned
+
     stage["status"] = "completed"
     if stage_idx + 1 < len(stages):
         state["current_stage"] = stages[stage_idx + 1]["name"]
@@ -210,11 +272,22 @@ state["history"].append(
         "actor": actor,
         "decision": decision,
         "note": note,
+        "plan_token": (provided_plan_token.strip() or None),
+        "allow_unplanned": allow_unplanned,
     }
 )
 
 state_path.write_text(json.dumps(state, indent=2) + "\n")
-print(json.dumps({"ok": decision == "approve", "run_status": state["status"], "current_stage": state["current_stage"]}))
+print(
+    json.dumps(
+        {
+            "ok": decision == "approve",
+            "run_status": state["status"],
+            "current_stage": state["current_stage"],
+            "plan_token_issued": plan_act.get("token"),
+        }
+    )
+)
 if decision == "reject":
     raise SystemExit(2)
 PY

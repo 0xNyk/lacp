@@ -141,6 +141,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-harness-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-harness-run.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-loop.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-trace-triage.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-browser-evidence-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-pr-preflight.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-worktree.sh"
