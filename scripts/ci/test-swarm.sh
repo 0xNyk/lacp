@@ -87,6 +87,13 @@ echo "${collision_plan}" | jq -e '.collaboration.reservations_total == 2' >/dev/
 echo "${collision_plan}" | jq -e '.collaboration.collisions_total >= 1' >/dev/null
 echo "${collision_plan}" | jq -e '.warnings | length >= 1' >/dev/null
 
+collision_launch="$("${ROOT}/bin/lacp-swarm" launch --manifest "${TMP}/collision.json" --json)"
+collision_artifact="$(echo "${collision_launch}" | jq -r '.artifact')"
+[[ -f "${collision_artifact}" ]] || { echo "[swarm-test] FAIL missing collision artifact file" >&2; exit 1; }
+collision_status="$("${ROOT}/bin/lacp-swarm" status --file "${collision_artifact}" --json)"
+echo "${collision_status}" | jq -e '.collaboration_summary.collisions_total >= 1' >/dev/null
+echo "${collision_status}" | jq -e '.collaboration_summary.top_conflicts | length >= 1' >/dev/null
+
 cat > "${TMP}/bad.json" <<'JSON'
 {"version":"1","name":"bad","jobs":[]}
 JSON
