@@ -70,6 +70,24 @@ quote_for_shell() {
   printf "%q" "${value}"
 }
 
+resolve_symlink_target() {
+  local link_path="$1"
+  python3 - <<'PY' "${link_path}"
+import pathlib
+import sys
+
+link = pathlib.Path(sys.argv[1])
+try:
+    target = pathlib.Path(link.readlink())
+except Exception:
+    raise SystemExit(0)
+
+if not target.is_absolute():
+    target = (link.parent / target)
+print(str(target.resolve()))
+PY
+}
+
 declare -a EVENTS=()
 
 log_event() {
@@ -115,10 +133,19 @@ adopt_one() {
   local explicit_native="$2"
   local wrapper_path="${BIN_DIR}/${cmd_name}"
   local native_backup="${BIN_DIR}/${cmd_name}.native"
-  local detected_native native_target
+  local detected_native native_target detached_symlink symlink_target
 
   detected_native="$(detect_cmd "${cmd_name}")"
   native_target="${explicit_native}"
+  detached_symlink=0
+
+  if [[ -z "${native_target}" && -L "${wrapper_path}" ]]; then
+    symlink_target="$(resolve_symlink_target "${wrapper_path}")"
+    if [[ -n "${symlink_target}" && -x "${symlink_target}" ]]; then
+      native_target="${symlink_target}"
+      log_event "symlink_native_detected:${wrapper_path} -> ${native_target}"
+    fi
+  fi
 
   if [[ -z "${native_target}" ]]; then
     if [[ -x "${native_backup}" ]]; then
@@ -136,13 +163,32 @@ adopt_one() {
   [[ -x "${native_target}" ]] || die "Native ${cmd_name} is not executable: ${native_target}"
 
   if [[ -e "${wrapper_path}" ]]; then
+    if [[ -L "${wrapper_path}" ]]; then
+      if [[ ! -e "${native_backup}" ]]; then
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+          log_event "backup_symlink:${wrapper_path} -> ${native_backup}"
+        else
+          mv "${wrapper_path}" "${native_backup}"
+          log_event "symlink_backup_created:${native_backup}"
+        fi
+      else
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+          log_event "detach_symlink:${wrapper_path}"
+        else
+          rm -f "${wrapper_path}"
+          log_event "symlink_detached:${wrapper_path}"
+        fi
+      fi
+      detached_symlink=1
+    fi
+
     if is_managed_wrapper "${wrapper_path}"; then
       log_event "wrapper_exists:${wrapper_path}"
     else
-      if [[ "${FORCE}" -ne 1 && ! -e "${native_backup}" ]]; then
+      if [[ "${detached_symlink}" -eq 0 && "${FORCE}" -ne 1 && ! -e "${native_backup}" ]]; then
         die "Refusing to overwrite non-LACP ${cmd_name} wrapper at ${wrapper_path}. Use --force."
       fi
-      if [[ ! -e "${native_backup}" ]]; then
+      if [[ "${detached_symlink}" -eq 0 && ! -e "${native_backup}" ]]; then
         if [[ "${DRY_RUN}" -eq 1 ]]; then
           log_event "backup_create:${wrapper_path} -> ${native_backup}"
         else

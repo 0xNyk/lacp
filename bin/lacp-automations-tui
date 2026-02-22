@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-automations-tui [options]
+
+Unified automation dashboard for local LACP operations.
+
+Options:
+  --watch <sec>   Refresh continuously every N seconds
+  --offline       Run vendor watch in offline mode
+  --json          Emit JSON payload
+  -h, --help      Show help
+EOF
+}
+
+WATCH_SEC=""
+AS_JSON=0
+OFFLINE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --watch) WATCH_SEC="$2"; shift 2 ;;
+    --offline) OFFLINE=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if [[ -n "${WATCH_SEC}" ]]; then
+  [[ "${WATCH_SEC}" =~ ^[0-9]+$ ]] || die "--watch must be a non-negative integer"
+fi
+
+require_cmd jq
+
+run_json_cmd() {
+  local out rc
+  set +e
+  out="$("$@" 2>&1)"
+  rc=$?
+  set -e
+
+  if [[ "${rc}" -ne 0 ]]; then
+    jq -n \
+      --argjson ok false \
+      --arg error "command_failed" \
+      --arg command "$*" \
+      --arg output "${out}" \
+      --argjson exit_code "${rc}" \
+      '{
+        ok:$ok,
+        error:$error,
+        command:$command,
+        exit_code:$exit_code,
+        output:$output
+      }'
+    return 0
+  fi
+
+  if jq -e . >/dev/null 2>&1 <<<"${out}"; then
+    printf '%s\n' "${out}"
+  else
+    jq -n \
+      --argjson ok false \
+      --arg error "invalid_json" \
+      --arg command "$*" \
+      --arg output "${out}" \
+      '{
+        ok:$ok,
+        error:$error,
+        command:$command,
+        output:$output
+      }'
+  fi
+}
+
+build_payload() {
+  local schedule_json orchestrate_json worktree_json status_json report_json swarm_json vendor_json
+  local -a vendor_cmd=("${ROOT}/bin/lacp-vendor-watch" "--json")
+
+  if [[ "${OFFLINE}" -eq 1 ]]; then
+    vendor_cmd+=("--offline")
+  fi
+
+  schedule_json="$(run_json_cmd "${ROOT}/bin/lacp-schedule-health" status --json)"
+  orchestrate_json="$(run_json_cmd "${ROOT}/bin/lacp-orchestrate" doctor --json)"
+  worktree_json="$(run_json_cmd "${ROOT}/bin/lacp-worktree" doctor --json)"
+  status_json="$(run_json_cmd "${ROOT}/bin/lacp-status-report" --json)"
+  report_json="$(run_json_cmd "${ROOT}/bin/lacp-report" --json)"
+  swarm_json="$(run_json_cmd "${ROOT}/bin/lacp-swarm" status --latest --json)"
+  vendor_json="$(run_json_cmd "${vendor_cmd[@]}")"
+
+  jq -n \
+    --arg schema_version "1" \
+    --arg kind "automations_tui" \
+    --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson schedule "${schedule_json}" \
+    --argjson orchestrate "${orchestrate_json}" \
+    --argjson worktree "${worktree_json}" \
+    --argjson status "${status_json}" \
+    --argjson report "${report_json}" \
+    --argjson swarm "${swarm_json}" \
+    --argjson vendor "${vendor_json}" \
+    '{
+      schema_version:$schema_version,
+      kind:$kind,
+      generated_at_utc:$generated_at_utc,
+      ok: (
+        ($status.ok == true) and
+        ($report.ok == true) and
+        ($orchestrate.ok == true) and
+        ($worktree.ok == true) and
+        ($vendor.ok == true)
+      ),
+      summary: {
+        schedule_installed: ($schedule.installed // false),
+        schedule_loaded: ($schedule.loaded // false),
+        wrappers_managed: (
+          (($report.observability.wrappers.claude.managed // false) == true) and
+          (($report.observability.wrappers.codex.managed // false) == true)
+        ),
+        wrapper_routed_runs_total: ($report.observability.wrapper_routed_runs.total // 0),
+        worktree_count: ($worktree.worktree_count // 0),
+        swarm_latest: ($swarm.swarm_id // null),
+        vendor_sources_changed: ($vendor.summary.sources_changed // 0),
+        vendor_source_groups_ok: ($vendor.summary.source_groups_ok // 0),
+        vendor_source_groups_total: ($vendor.summary.source_groups_total // 0),
+        vendor_claude_sources_ok: ($vendor.summary.claude_sources_ok // false),
+        vendor_codex_sources_ok: ($vendor.summary.codex_sources_ok // false),
+        vendor_degraded: (
+          (($vendor.summary.claude_sources_ok // false) != true) or
+          (($vendor.summary.codex_sources_ok // false) != true)
+        ),
+        doctor_fail: ($status.doctor.fail // 0),
+        report_runs_total: ($report.runs.total // 0)
+      },
+      automations: {
+        schedule_health: $schedule,
+        orchestrate: $orchestrate,
+        worktree: $worktree,
+        swarm: $swarm,
+        wrappers_and_runs: {
+          wrappers: ($report.observability.wrappers // {}),
+          wrapper_routed_runs: ($report.observability.wrapper_routed_runs // {}),
+          wrapper_task_runs: ($report.observability.wrapper_task_runs // {})
+        },
+        vendor_watch: $vendor
+      },
+      system: {
+        status: $status,
+        report: $report
+      }
+    }'
+}
+
+render_text() {
+  local payload="$1"
+  jq -r '
+    (if .summary.vendor_degraded then
+      "ALERT: vendor sources degraded (claude_sources_ok=\(.summary.vendor_claude_sources_ok), codex_sources_ok=\(.summary.vendor_codex_sources_ok), groups_ok=\(.summary.vendor_source_groups_ok)/\(.summary.vendor_source_groups_total))"
+    else empty end),
+    "LACP Automations TUI",
+    "  generated_at_utc=\(.generated_at_utc)",
+    "  ok=\(.ok)",
+    "",
+    "Automation Inventory",
+    "  schedule: installed=\(.automations.schedule_health.installed // false) loaded=\(.automations.schedule_health.loaded // false) launchctl=\(.automations.schedule_health.launchctl_available // false)",
+    "  orchestrate backends: tmux=\(.automations.orchestrate.backends.tmux.available // false) dmux=\(.automations.orchestrate.backends.dmux.available // false) claude_worktree=\(.automations.orchestrate.backends.claude_worktree.available // false)",
+    "  worktrees: count=\(.automations.worktree.worktree_count // 0) root=\(.automations.worktree.worktree_root // "n/a")",
+    "  swarm latest: \(.summary.swarm_latest // "none")",
+    "  wrappers managed: claude=\(.automations.wrappers_and_runs.wrappers.claude.managed // false) codex=\(.automations.wrappers_and_runs.wrappers.codex.managed // false)",
+    "  wrapper runs total: \(.summary.wrapper_routed_runs_total)",
+    "  vendor: claude=\(.automations.vendor_watch.local_versions.claude.version // "missing") codex=\(.automations.vendor_watch.local_versions.codex.version // "missing") changed_sources=\(.summary.vendor_sources_changed)",
+    "  vendor health: status=\(if .summary.vendor_degraded then "DEGRADED" else "OK" end) groups_ok=\(.summary.vendor_source_groups_ok)/\(.summary.vendor_source_groups_total) claude_sources_ok=\(.summary.vendor_claude_sources_ok) codex_sources_ok=\(.summary.vendor_codex_sources_ok)",
+    "",
+    "System Health",
+    "  mode=\(.system.status.mode // "unknown") doctor_fail=\(.summary.doctor_fail) report_runs_total=\(.summary.report_runs_total)",
+    "  benchmark_gate=\(.system.status.summary.benchmark_gate_ok // null) report_ok=\(.system.report.ok // false)"
+  ' <<<"${payload}"
+}
+
+run_once() {
+  local payload
+  payload="$(build_payload)"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${payload}"
+  else
+    render_text "${payload}"
+  fi
+}
+
+if [[ -n "${WATCH_SEC}" ]]; then
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    die "--watch and --json cannot be combined"
+  fi
+  while true; do
+    clear
+    run_once
+    sleep "${WATCH_SEC}"
+  done
+else
+  run_once
+fi

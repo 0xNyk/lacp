@@ -61,4 +61,27 @@ grep -q 'legacy-claude-shim' "${BIN_DIR}/claude" || { echo "[adopt-local-test] F
 [[ ! -e "${BIN_DIR}/claude.native" ]] || { echo "[adopt-local-test] FAIL claude backup should be consumed" >&2; exit 1; }
 [[ ! -e "${BIN_DIR}/codex" ]] || { echo "[adopt-local-test] FAIL codex wrapper should be removed" >&2; exit 1; }
 
+# Symlink safety regression guard:
+# adopt-local must never overwrite symlink targets.
+cat > "${NATIVE_DIR}/claude-real" <<'SH'
+#!/usr/bin/env bash
+echo "native-claude-real"
+SH
+chmod +x "${NATIVE_DIR}/claude-real"
+ln -sfn "${NATIVE_DIR}/claude-real" "${BIN_DIR}/claude"
+
+"${ROOT}/bin/lacp-adopt-local" \
+  --bin-dir "${BIN_DIR}" \
+  --codex-native "${NATIVE_DIR}/codex" \
+  --json | jq -e '.ok == true' >/dev/null
+
+# Wrapper installed at symlink path, target binary preserved.
+rg -q 'LACP_MANAGED_WRAPPER=1' "${BIN_DIR}/claude"
+out_claude_safe="$(LACP_BYPASS=1 "${BIN_DIR}/claude")"
+[[ "${out_claude_safe}" == "native-claude-real" ]] || { echo "[adopt-local-test] FAIL symlink target was clobbered" >&2; exit 1; }
+
+"${ROOT}/bin/lacp-unadopt-local" --bin-dir "${BIN_DIR}" --json | jq -e '.ok == true' >/dev/null
+out_claude_restored="$( "${BIN_DIR}/claude")"
+[[ "${out_claude_restored}" == "native-claude-real" ]] || { echo "[adopt-local-test] FAIL symlink restore mismatch" >&2; exit 1; }
+
 echo "[adopt-local-test] adopt/unadopt tests passed"
