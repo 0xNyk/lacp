@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: lacp-loop --task "<summary>" [routing options] [loop options] -- <command> [args...]
+
+Run one deterministic control loop:
+  1) intent: capture task + command + routing contract
+  2) execute: run through lacp-sandbox-run
+  3) observe: collect status/report (+ optional verify/canary)
+  4) adapt: optionally run auto-rollback on failed loop
+
+Routing options:
+  --repo-trust trusted|unknown|untrusted   (default: unknown)
+  --internet true|false                    (default: false)
+  --external-code true|false               (default: false)
+  --sensitive-data true|false              (default: false)
+  --cpu-heavy true|false                   (default: false)
+  --long-run true|false                    (default: false)
+  --remote-provider auto|daytona|e2b       (default: auto)
+  --estimated-cost-usd <number>
+  --confirm-critical true|false
+  --confirm-budget true|false
+  --input-contract '<json>'
+  --context-contract '<json>'
+
+Loop options:
+  --dry-run                 Do not execute command
+  --with-verify             Include lacp-verify stage
+  --verify-hours <n>        Verify hours (default: LACP_VERIFY_HOURS)
+  --with-canary             Include lacp-canary stage
+  --canary-days <n>         Canary lookback days (default: LACP_CANARY_DAYS)
+  --since-clean-baseline    Canary baseline-aware mode
+  --baseline-file <path>    Canary baseline file override
+  --report-hours <n>        Report hours (default: verify-hours)
+  --auto-rollback-on-fail   Run lacp-auto-rollback if loop fails
+  --json                    Emit JSON summary
+  -h, --help                Show help
+USAGE
+}
+
+as_bool() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+run_capture() {
+  local out_var="$1"
+  shift
+  local captured_out
+  set +e
+  captured_out="$("$@" 2>&1)"
+  local rc=$?
+  set -e
+  captured_out="$(printf '%s' "${captured_out}" | tr -d '\000-\010\013\014\016-\037')"
+  printf -v "${out_var}" '%s' "${captured_out}"
+  return "${rc}"
+}
+
+TASK=""
+REPO_TRUST="unknown"
+INTERNET="false"
+EXTERNAL_CODE="false"
+SENSITIVE_DATA="false"
+CPU_HEAVY="false"
+LONG_RUN="false"
+REMOTE_PROVIDER_OVERRIDE="auto"
+ESTIMATED_COST_USD="0"
+CONFIRM_CRITICAL="false"
+CONFIRM_BUDGET="false"
+INPUT_CONTRACT=""
+CONTEXT_CONTRACT=""
+
+DRY_RUN=0
+WITH_VERIFY=0
+WITH_CANARY=0
+VERIFY_HOURS="${LACP_VERIFY_HOURS}"
+CANARY_DAYS="${LACP_CANARY_DAYS}"
+REPORT_HOURS="${LACP_VERIFY_HOURS}"
+SINCE_CLEAN_BASELINE=0
+BASELINE_FILE=""
+AUTO_ROLLBACK=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task) TASK="$2"; shift 2 ;;
+    --repo-trust) REPO_TRUST="$2"; shift 2 ;;
+    --internet) INTERNET="$(as_bool "$2")"; shift 2 ;;
+    --external-code) EXTERNAL_CODE="$(as_bool "$2")"; shift 2 ;;
+    --sensitive-data) SENSITIVE_DATA="$(as_bool "$2")"; shift 2 ;;
+    --cpu-heavy) CPU_HEAVY="$(as_bool "$2")"; shift 2 ;;
+    --long-run) LONG_RUN="$(as_bool "$2")"; shift 2 ;;
+    --remote-provider) REMOTE_PROVIDER_OVERRIDE="$2"; shift 2 ;;
+    --estimated-cost-usd) ESTIMATED_COST_USD="$2"; shift 2 ;;
+    --confirm-critical) CONFIRM_CRITICAL="$(as_bool "$2")"; shift 2 ;;
+    --confirm-budget) CONFIRM_BUDGET="$(as_bool "$2")"; shift 2 ;;
+    --input-contract) INPUT_CONTRACT="$2"; shift 2 ;;
+    --context-contract) CONTEXT_CONTRACT="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --with-verify) WITH_VERIFY=1; shift ;;
+    --verify-hours) VERIFY_HOURS="$2"; REPORT_HOURS="$2"; shift 2 ;;
+    --with-canary) WITH_CANARY=1; shift ;;
+    --canary-days) CANARY_DAYS="$2"; shift 2 ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
+    --report-hours) REPORT_HOURS="$2"; shift 2 ;;
+    --auto-rollback-on-fail) AUTO_ROLLBACK=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "${TASK}" ]] || die "--task is required"
+[[ $# -gt 0 ]] || die "Missing command after --"
+
+execute_cmd=(
+  "${ROOT}/bin/lacp-sandbox-run"
+  --task "${TASK}"
+  --repo-trust "${REPO_TRUST}"
+  --internet "${INTERNET}"
+  --external-code "${EXTERNAL_CODE}"
+  --sensitive-data "${SENSITIVE_DATA}"
+  --cpu-heavy "${CPU_HEAVY}"
+  --long-run "${LONG_RUN}"
+  --remote-provider "${REMOTE_PROVIDER_OVERRIDE}"
+  --estimated-cost-usd "${ESTIMATED_COST_USD}"
+  --confirm-critical "${CONFIRM_CRITICAL}"
+  --confirm-budget "${CONFIRM_BUDGET}"
+)
+
+if [[ -n "${INPUT_CONTRACT}" ]]; then
+  execute_cmd+=(--input-contract "${INPUT_CONTRACT}")
+fi
+if [[ -n "${CONTEXT_CONTRACT}" ]]; then
+  execute_cmd+=(--context-contract "${CONTEXT_CONTRACT}")
+fi
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  execute_cmd+=(--dry-run)
+fi
+execute_cmd+=(--json -- "$@")
+
+execute_json="{}"
+verify_json="null"
+canary_json="null"
+status_json="{}"
+report_json="{}"
+rollback_json="null"
+
+execute_rc=0
+verify_rc=0
+canary_rc=0
+status_rc=0
+report_rc=0
+rollback_rc=0
+
+run_capture execute_json "${execute_cmd[@]}" || execute_rc=$?
+
+if [[ "${WITH_VERIFY}" -eq 1 ]]; then
+  run_capture verify_json "${ROOT}/bin/lacp-verify" --hours "${VERIFY_HOURS}" --json || verify_rc=$?
+fi
+
+canary_args=("${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json)
+if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+  canary_args+=(--since-clean-baseline)
+fi
+if [[ -n "${BASELINE_FILE}" ]]; then
+  canary_args+=(--baseline-file "${BASELINE_FILE}")
+fi
+if [[ "${WITH_CANARY}" -eq 1 ]]; then
+  run_capture canary_json "${canary_args[@]}" || canary_rc=$?
+fi
+
+run_capture status_json "${ROOT}/bin/lacp-status-report" --json || status_rc=$?
+run_capture report_json "${ROOT}/bin/lacp-report" --hours "${REPORT_HOURS}" --json || report_rc=$?
+
+loop_ok="true"
+if [[ "${execute_rc}" -ne 0 || "${verify_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 ]]; then
+  loop_ok="false"
+fi
+if [[ "${status_rc}" -eq 0 ]] && [[ "$(echo "${status_json}" | jq -r '.ok // false')" != "true" ]]; then
+  loop_ok="false"
+fi
+if [[ "${report_rc}" -eq 0 ]] && [[ "$(echo "${report_json}" | jq -r '.ok // false')" != "true" ]]; then
+  loop_ok="false"
+fi
+if [[ "${WITH_CANARY}" -eq 1 ]] && [[ "${canary_rc}" -eq 0 ]] && [[ "$(echo "${canary_json}" | jq -r '.ok // false')" != "true" ]]; then
+  loop_ok="false"
+fi
+
+if [[ "${loop_ok}" != "true" && "${AUTO_ROLLBACK}" -eq 1 ]]; then
+  run_capture rollback_json "${ROOT}/bin/lacp-auto-rollback" --days "${CANARY_DAYS}" --json || rollback_rc=$?
+fi
+
+cmd_json="$(printf '%s\0' "$@" | xargs -0 -n1 printf '%s\n' | jq -R . | jq -s .)"
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "control_loop" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson ok "$([[ "${loop_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson with_verify "$([[ "${WITH_VERIFY}" -eq 1 ]] && echo true || echo false)" \
+  --argjson with_canary "$([[ "${WITH_CANARY}" -eq 1 ]] && echo true || echo false)" \
+  --argjson auto_rollback "$([[ "${AUTO_ROLLBACK}" -eq 1 ]] && echo true || echo false)" \
+  --arg task "${TASK}" \
+  --arg repo_trust "${REPO_TRUST}" \
+  --arg internet "${INTERNET}" \
+  --arg external_code "${EXTERNAL_CODE}" \
+  --arg sensitive_data "${SENSITIVE_DATA}" \
+  --arg cpu_heavy "${CPU_HEAVY}" \
+  --arg long_run "${LONG_RUN}" \
+  --arg remote_provider "${REMOTE_PROVIDER_OVERRIDE}" \
+  --arg estimated_cost_usd "${ESTIMATED_COST_USD}" \
+  --argjson command "${cmd_json}" \
+  --argjson execute_rc "${execute_rc}" \
+  --argjson verify_rc "${verify_rc}" \
+  --argjson canary_rc "${canary_rc}" \
+  --argjson status_rc "${status_rc}" \
+  --argjson report_rc "${report_rc}" \
+  --argjson rollback_rc "${rollback_rc}" \
+  --arg execute_raw "${execute_json}" \
+  --arg verify_raw "${verify_json}" \
+  --arg canary_raw "${canary_json}" \
+  --arg status_raw "${status_json}" \
+  --arg report_raw "${report_json}" \
+  --arg rollback_raw "${rollback_json}" \
+  '{
+    schema_version: $schema_version,
+    kind: $kind,
+    generated_at_utc: $generated_at_utc,
+    ok: $ok,
+    intent: {
+      task: $task,
+      routing: {
+        repo_trust: $repo_trust,
+        internet: ($internet == "true"),
+        external_code: ($external_code == "true"),
+        sensitive_data: ($sensitive_data == "true"),
+        cpu_heavy: ($cpu_heavy == "true"),
+        long_run: ($long_run == "true"),
+        remote_provider: $remote_provider,
+        estimated_cost_usd: (try ($estimated_cost_usd | tonumber) catch null)
+      },
+      command: $command
+    },
+    options: {
+      dry_run: $dry_run,
+      with_verify: $with_verify,
+      with_canary: $with_canary,
+      auto_rollback_on_fail: $auto_rollback
+    },
+    stages: {
+      execute: {
+        rc: $execute_rc,
+        result: (try ($execute_raw | fromjson) catch {ok:false, raw:$execute_raw})
+      },
+      verify: {
+        rc: $verify_rc,
+        result: (if $with_verify then (try ($verify_raw | fromjson) catch {ok:false, raw:$verify_raw}) else null end)
+      },
+      canary: {
+        rc: $canary_rc,
+        result: (if $with_canary then (try ($canary_raw | fromjson) catch {ok:false, raw:$canary_raw}) else null end)
+      },
+      status: {
+        rc: $status_rc,
+        result: (try ($status_raw | fromjson) catch {ok:false, raw:$status_raw})
+      },
+      report: {
+        rc: $report_rc,
+        result: (try ($report_raw | fromjson) catch {ok:false, raw:$report_raw})
+      },
+      adapt: {
+        rollback_rc: $rollback_rc,
+        result: (if $rollback_raw == "null" then null else {raw: $rollback_raw} end)
+      }
+    }
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Loop",
+    "  ok=\(.ok) dry_run=\(.options.dry_run)",
+    "  task=\(.intent.task)",
+    "  execute.rc=\(.stages.execute.rc) verify.rc=\(.stages.verify.rc) canary.rc=\(.stages.canary.rc)",
+    "  status.ok=\(.stages.status.result.ok // false) report.ok=\(.stages.report.result.ok // false)",
+    "  auto_rollback=\(.options.auto_rollback_on_fail) rollback_rc=\(.stages.adapt.rollback_rc)"
+  '
+fi
+
+if [[ "${loop_ok}" != "true" ]]; then
+  exit 1
+fi
