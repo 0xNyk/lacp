@@ -51,6 +51,9 @@ export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
 echo "[ops-test] PASS doctor.fix"
 doctor_limits_json="$("/bin/bash" "${ROOT}/bin/lacp-doctor" --check-limits --json)"
 assert_eq "$(echo "${doctor_limits_json}" | jq -r '.checks[] | select(.name=="runtime:pressure") | .status | length > 0')" "true" "doctor.check_limits.runtime_pressure"
+doctor_hints_json="$(LACP_RUNTIME_PRESSURE_OVERRIDE=high "/bin/bash" "${ROOT}/bin/lacp-doctor" --check-limits --fix-hints --json)"
+assert_eq "$(echo "${doctor_hints_json}" | jq -r '.remediation_hints | type')" "array" "doctor.fix_hints.array"
+assert_eq "$(echo "${doctor_hints_json}" | jq -r '.remediation_hints | length > 0')" "true" "doctor.fix_hints.nonempty"
 
 # report should return structured output with run metrics.
 report_json="$("/bin/bash" "${ROOT}/bin/lacp-report" --hours 24 --json)"
@@ -70,5 +73,19 @@ assert_eq "$(echo "${migrate_preview}" | jq -r '.apply')" "false" "migrate.previ
 
 migrate_apply="$("/bin/bash" "${ROOT}/bin/lacp-migrate" --automation-root "${AUTOMATION_ROOT}" --knowledge-root "${KNOWLEDGE_ROOT}" --drafts-root "${DRAFTS_ROOT}" --apply --json)"
 assert_eq "$(echo "${migrate_apply}" | jq -r '.apply')" "true" "migrate.apply.apply"
+
+# mcp-profile should expose list/status/apply surfaces with structured output.
+mcp_profiles_json="$("/bin/bash" "${ROOT}/bin/lacp-mcp-profile" list --json)"
+assert_eq "$(echo "${mcp_profiles_json}" | jq -r '.ok')" "true" "mcp_profile.list.ok"
+assert_eq "$(echo "${mcp_profiles_json}" | jq -r '.profiles | length >= 3')" "true" "mcp_profile.list.count"
+
+mcp_status_json="$("/bin/bash" "${ROOT}/bin/lacp-mcp-profile" status --json)"
+assert_eq "$(echo "${mcp_status_json}" | jq -r '.ok')" "true" "mcp_profile.status.ok"
+assert_eq "$(echo "${mcp_status_json}" | jq -r '.profile.mode | length > 0')" "true" "mcp_profile.status.mode"
+
+mcp_apply_json="$("/bin/bash" "${ROOT}/bin/lacp-mcp-profile" apply --profile cli-first --dry-run --json)"
+assert_eq "$(echo "${mcp_apply_json}" | jq -r '.ok')" "true" "mcp_profile.apply.ok"
+assert_eq "$(echo "${mcp_apply_json}" | jq -r '.profile')" "cli-first" "mcp_profile.apply.profile"
+assert_eq "$(echo "${mcp_apply_json}" | jq -r '.dry_run')" "true" "mcp_profile.apply.dry_run"
 
 echo "[ops-test] ops commands tests passed"

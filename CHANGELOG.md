@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.
 - `bin/lacp-vendor-watch` to track local Claude/Codex versions and upstream docs/changelog drift snapshots.
 - `bin/lacp-automations-tui` unified local automation dashboard for schedule/orchestrate/worktree/swarm/wrapper/vendor state.
+- `bin/lacp-mcp-profile` for bounded MCP operating profile management (`cli-first`, `mcp-selective`, `mcp-heavy`).
 - `lacp-canary` clean baseline controls: `--set-clean-baseline`, `--since-clean-baseline`.
 - `bin/lacp-auto-rollback` fail-safe rollback command (forces `local-only` + unadopts local wrappers) on unhealthy canary.
 - `bin/lacp-schedule-health` launchd automation for periodic local health artifacts (`doctor/status/report`).
@@ -73,6 +74,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp` top-level dispatcher expanded with `release-verify`.
 - `bin/lacp` top-level dispatcher expanded with `canary-optimize`.
 - `bin/lacp` top-level dispatcher expanded with `loop`.
+- `bin/lacp` top-level dispatcher expanded with `mcp-profile`.
 - `bin/lacp-loop --json` now emits deterministic failure analysis (`analysis.primary_cause`, `analysis.secondary_causes`, `analysis.signals`, `analysis.remediation_hints`, `analysis.confidence`) for faster post-run triage.
 - `bin/lacp-loop` now supports `--context-profile` + repeatable `--context-profile-var KEY=VALUE` to render context contracts without hand-written JSON.
 - `bin/lacp-loop` now supports `--session-fingerprint auto|<value>` pass-through to sandbox-run for anti-drift guardrails.

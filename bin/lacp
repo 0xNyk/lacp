@@ -33,6 +33,7 @@ Ops:
   release-verify Verify release artifacts + checksums + tap install dry-run
   vendor-watch  Track Claude/Codex versions + docs/changelog drift
   automations-tui Unified dashboard for local automation health/status
+  mcp-profile  Apply/list MCP operating profiles (cli-first/selective/heavy)
   cache-audit   Analyze prompt cache effectiveness from local histories
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
@@ -151,6 +152,9 @@ case "${cmd}" in
     ;;
   automations-tui)
     exec "${ROOT}/bin/lacp-automations-tui" "$@"
+    ;;
+  mcp-profile)
+    exec "${ROOT}/bin/lacp-mcp-profile" "$@"
     ;;
   cache-audit)
     exec "${ROOT}/bin/lacp-cache-audit" "$@"
