@@ -336,6 +336,9 @@ Notes:
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
+- `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
+- `bin/lacp-lessons`: add/lint compact self-improvement rules without duplication
+- `bin/lacp-optimize-loop`: bounded weekly optimization loop over verify/canary/context/lessons
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
 - `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
@@ -486,6 +489,7 @@ See:
 - `docs/runbook.md`
 - `docs/release-checklist.md`
 - `docs/local-dev-loop.md`
+- `docs/implementation-path-2026.md`
 - `docs/troubleshooting.md`
 - `docs/incident-response.md`
 - `CONTRIBUTING.md`
@@ -539,6 +543,18 @@ bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json
 
 # run loop with profile-derived context contract (no raw JSON needed)
 bin/lacp loop --task "safe migration prep" --repo-trust trusted --context-profile high-risk-migration --json -- /bin/mkdir -p /tmp/lacp-migration
+
+# minimal context + lessons discipline
+bin/lacp context init-template --repo-root . --json | jq
+bin/lacp context audit --repo-root . --json | jq
+bin/lacp context minimize --repo-root . --json | jq
+bin/lacp lessons lint --json | jq
+
+# compare no-context vs minimal-context benchmark outcomes
+bin/lacp context regression --none ./none.json --minimal ./minimal.json --json | jq
+
+# bounded weekly optimization loop
+bin/lacp optimize-loop --repo-root . --iterations 2 --hours 24 --days 7 --json | jq
 
 # derive and apply session fingerprint
 FP="$(bin/lacp session-fingerprint)"
