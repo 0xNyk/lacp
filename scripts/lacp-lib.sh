@@ -165,7 +165,8 @@ lacp_wrapper_managed_state() {
 
 lacp_env_truthy() {
   local value="${1:-}"
-  case "${value,,}" in
+  value="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac

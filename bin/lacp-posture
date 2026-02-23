@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-posture [--strict] [--json]
+
+Evaluate local-first operating posture for this repository.
+
+Checks:
+  - LACP_LOCAL_FIRST=true
+  - LACP_NO_EXTERNAL_CI=true
+  - no active .github/workflows/*.yml|*.yaml files when no-external-ci is enabled
+  - LACP_ALLOW_EXTERNAL_REMOTE=false (safe default)
+
+Options:
+  --strict   Exit non-zero when any check fails
+  --json     Emit JSON payload
+  -h, --help Show help
+EOF
+}
+
+STRICT=0
+AS_JSON=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --strict)
+      STRICT=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+local_first_ok=false
+no_external_ci_ok=false
+remote_default_ok=false
+workflows_ok=true
+
+if lacp_env_truthy "${LACP_LOCAL_FIRST}"; then
+  local_first_ok=true
+fi
+if lacp_env_truthy "${LACP_NO_EXTERNAL_CI}"; then
+  no_external_ci_ok=true
+fi
+if [[ "${LACP_ALLOW_EXTERNAL_REMOTE}" == "false" ]]; then
+  remote_default_ok=true
+fi
+
+workflow_count="$(find "${ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${workflow_count}" =~ ^[0-9]+$ ]]; then
+  if [[ "${no_external_ci_ok}" == "true" && "${workflow_count}" -gt 0 ]]; then
+    workflows_ok=false
+  fi
+else
+  workflow_count="0"
+fi
+
+overall_ok=false
+if [[ "${local_first_ok}" == "true" && "${no_external_ci_ok}" == "true" && "${workflows_ok}" == "true" && "${remote_default_ok}" == "true" ]]; then
+  overall_ok=true
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg schema_version "1" \
+    --arg kind "posture" \
+    --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson ok "${overall_ok}" \
+    --arg local_first "${LACP_LOCAL_FIRST}" \
+    --arg no_external_ci "${LACP_NO_EXTERNAL_CI}" \
+    --arg allow_external_remote "${LACP_ALLOW_EXTERNAL_REMOTE}" \
+    --argjson workflow_count "${workflow_count}" \
+    --argjson local_first_ok "${local_first_ok}" \
+    --argjson no_external_ci_ok "${no_external_ci_ok}" \
+    --argjson workflows_ok "${workflows_ok}" \
+    --argjson remote_default_ok "${remote_default_ok}" \
+    '{
+      schema_version:$schema_version,
+      kind:$kind,
+      generated_at_utc:$generated_at_utc,
+      ok:$ok,
+      checks:{
+        local_first:{ok:$local_first_ok,value:$local_first,expected:"true"},
+        no_external_ci:{ok:$no_external_ci_ok,value:$no_external_ci,expected:"true"},
+        workflows:{ok:$workflows_ok,active_count:$workflow_count,expected_active_count:0},
+        remote_default:{ok:$remote_default_ok,value:$allow_external_remote,expected:"false"}
+      },
+      hints:[
+        "Run `bin/lacp-policy-pack apply --pack starter` to reset safe defaults.",
+        "Keep CI local by storing workflow templates under .github/workflows-disabled/.",
+        "Use `bin/lacp-release-prepare --allow-external-ci` only for intentional exceptions."
+      ]
+    }'
+else
+  echo "LACP Posture"
+  echo "  ok=${overall_ok}"
+  echo "  local_first=${LACP_LOCAL_FIRST} (expected true)"
+  echo "  no_external_ci=${LACP_NO_EXTERNAL_CI} (expected true)"
+  echo "  active_workflows=${workflow_count} (expected 0 when no_external_ci=true)"
+  echo "  allow_external_remote=${LACP_ALLOW_EXTERNAL_REMOTE} (expected false)"
+fi
+
+if [[ "${STRICT}" -eq 1 && "${overall_ok}" != "true" ]]; then
+  exit 1
+fi
