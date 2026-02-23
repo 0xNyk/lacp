@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+
+CLAUDE_DIR="${TMP}/.claude"
+mkdir -p "${CLAUDE_DIR}/plugins/cache/thedotmack/claude-mem"
+mkdir -p "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/.claude-plugin"
+mkdir -p "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/hooks"
+mkdir -p "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/scripts"
+
+cat > "${CLAUDE_DIR}/settings.json" <<'EOF'
+{
+  "enabledPlugins": {
+    "claude-mem@thedotmack": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "test"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+cat > "${CLAUDE_DIR}/plugins/installed_plugins.json" <<'EOF'
+{
+  "version": 2,
+  "plugins": {
+    "claude-mem@thedotmack": [
+      {
+        "scope": "user",
+        "installPath": "/tmp/does-not-exist/claude-mem/9.0.0",
+        "version": "9.0.0"
+      }
+    ]
+  }
+}
+EOF
+
+cat > "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/.claude-plugin/plugin.json" <<'EOF'
+{
+  "name": "claude-mem",
+  "version": "9.0.5"
+}
+EOF
+
+cat > "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/hooks/hooks.json" <<'EOF'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/worker-service.cjs\" start"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+cat > "${CLAUDE_DIR}/plugins/marketplaces/thedotmack/plugin/scripts/worker-service.cjs" <<'EOF'
+#!/usr/bin/env node
+console.log("ok");
+EOF
+
+audit_before="$("${ROOT}/bin/lacp-claude-hooks" audit --claude-dir "${CLAUDE_DIR}" --json)"
+[[ "$(echo "${audit_before}" | jq -r '.summary.missing_plugin_paths')" == "1" ]] || {
+  echo "[claude-hooks-test] FAIL expected 1 missing plugin path before repair" >&2
+  exit 1
+}
+
+repair_json="$("${ROOT}/bin/lacp-claude-hooks" repair --claude-dir "${CLAUDE_DIR}" --json)"
+[[ "$(echo "${repair_json}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL repair not ok" >&2
+  exit 1
+}
+
+expected_install="${CLAUDE_DIR}/plugins/cache/thedotmack/claude-mem/9.0.5"
+[[ -d "${expected_install}" ]] || {
+  echo "[claude-hooks-test] FAIL expected repaired cache path ${expected_install}" >&2
+  exit 1
+}
+
+installed_path="$(echo "${repair_json}" | jq -r '.actions[] | select(.action=="update_installed_plugins_entry") | .to_path')"
+expected_install_real="$(python3 - <<'PY' "${expected_install}"
+import pathlib,sys
+print(pathlib.Path(sys.argv[1]).resolve())
+PY
+)"
+installed_path_real="$(python3 - <<'PY' "${installed_path}"
+import pathlib,sys
+print(pathlib.Path(sys.argv[1]).resolve())
+PY
+)"
+[[ "${installed_path_real}" == "${expected_install_real}" ]] || {
+  echo "[claude-hooks-test] FAIL expected installed path ${expected_install}, got ${installed_path}" >&2
+  exit 1
+}
+
+audit_after="$("${ROOT}/bin/lacp-claude-hooks" audit --claude-dir "${CLAUDE_DIR}" --json)"
+[[ "$(echo "${audit_after}" | jq -r '.summary.missing_plugin_paths')" == "0" ]] || {
+  echo "[claude-hooks-test] FAIL expected no missing plugin paths after repair" >&2
+  exit 1
+}
+
+echo "[claude-hooks-test] claude hooks tests passed"

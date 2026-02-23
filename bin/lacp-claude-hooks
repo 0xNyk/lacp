@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
+  lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
+
+Audit and repair local Claude hook/plugin state.
+
+Focus areas:
+  - stop-hook fanout visibility (local + plugin hooks)
+  - missing command paths in hooks
+  - enabled-plugin install path drift
+  - marketplace/cache version mismatch (e.g. claude-mem)
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+cmd_audit() {
+  local claude_dir="${HOME}/.claude"
+  local as_json="false"
+  local strict="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --claude-dir) claude_dir="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      --strict) strict="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  local result
+  result="$(python3 - <<'PY' "${claude_dir}"
+import json
+import pathlib
+import re
+import shlex
+import sys
+
+claude_dir = pathlib.Path(sys.argv[1]).expanduser().resolve()
+settings_path = claude_dir / "settings.json"
+installed_path = claude_dir / "plugins" / "installed_plugins.json"
+marketplace_root = claude_dir / "plugins" / "marketplaces"
+
+def load_json(path: pathlib.Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+settings = load_json(settings_path) or {}
+installed = load_json(installed_path) or {}
+plugins_map = installed.get("plugins", {}) if isinstance(installed, dict) else {}
+
+local_hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
+enabled_plugins = settings.get("enabledPlugins", {}) if isinstance(settings, dict) else {}
+
+def count_hooks(blocks):
+    if not isinstance(blocks, list):
+        return 0
+    total = 0
+    for block in blocks:
+        if isinstance(block, dict):
+            hooks = block.get("hooks", [])
+            if isinstance(hooks, list):
+                total += len(hooks)
+    return total
+
+events = sorted(set(list(local_hooks.keys()) + ["Stop", "SubagentStop"]))
+local_counts = {ev: count_hooks(local_hooks.get(ev, [])) for ev in events}
+
+plugin_rows = []
+missing_plugin_paths = []
+missing_commands = []
+stop_rows = []
+
+def command_abs_paths(cmd: str):
+    tokens = []
+    try:
+        tokens = shlex.split(cmd)
+    except Exception:
+        tokens = cmd.split()
+    out = []
+    for tok in tokens:
+        tok = tok.strip().strip('"').strip("'")
+        if not tok:
+            continue
+        if "${" in tok:
+            continue
+        if tok.startswith("/"):
+            tok = re.split(r'[\s|;&<>]', tok, maxsplit=1)[0]
+            if tok:
+                out.append(tok)
+    return out
+
+for pid, enabled in (enabled_plugins or {}).items():
+    if enabled is not True:
+        continue
+    installs = plugins_map.get(pid)
+    if not isinstance(installs, list) or not installs:
+        missing_plugin_paths.append({"plugin": pid, "reason": "missing installed_plugins entry"})
+        continue
+    entry = installs[0] if isinstance(installs[0], dict) else {}
+    install_path = pathlib.Path(str(entry.get("installPath", "")))
+    version = str(entry.get("version", ""))
+    exists = install_path.exists()
+    if not exists:
+        missing_plugin_paths.append({"plugin": pid, "reason": "installPath missing", "install_path": str(install_path)})
+        continue
+    hooks_file = install_path / "hooks" / "hooks.json"
+    hooks = load_json(hooks_file) or {}
+    hook_counts = {ev: count_hooks(hooks.get("hooks", {}).get(ev, [])) for ev in events}
+    plugin_rows.append({
+        "plugin": pid,
+        "version": version,
+        "install_path": str(install_path),
+        "hooks_file": str(hooks_file),
+        "hook_counts": hook_counts,
+    })
+    stop_total = hook_counts.get("Stop", 0) + hook_counts.get("SubagentStop", 0)
+    if stop_total:
+        stop_rows.append({"plugin": pid, "stop_hooks": stop_total})
+
+    for ev in events:
+        blocks = (hooks.get("hooks", {}) or {}).get(ev, [])
+        if not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            for hk in block.get("hooks", []) if isinstance(block.get("hooks", []), list) else []:
+                if not isinstance(hk, dict):
+                    continue
+                if hk.get("type") != "command":
+                    continue
+                cmd = str(hk.get("command", ""))
+                for m in command_abs_paths(cmd):
+                    p = pathlib.Path(m)
+                    if p.is_absolute() and not p.exists():
+                        missing_commands.append({
+                            "plugin": pid,
+                            "event": ev,
+                            "command": cmd,
+                            "missing_path": m,
+                        })
+
+# local command hooks
+for ev in events:
+    blocks = local_hooks.get(ev, [])
+    if not isinstance(blocks, list):
+        continue
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for hk in block.get("hooks", []) if isinstance(block.get("hooks", []), list) else []:
+            if not isinstance(hk, dict):
+                continue
+            if hk.get("type") != "command":
+                continue
+            cmd = str(hk.get("command", ""))
+            for m in command_abs_paths(cmd):
+                p = pathlib.Path(m)
+                if p.is_absolute() and not p.exists():
+                    missing_commands.append({
+                        "plugin": "settings.json",
+                        "event": ev,
+                        "command": cmd,
+                        "missing_path": m,
+                    })
+
+# marketplace drift (claude-mem)
+drift = []
+cm_pid = "claude-mem@thedotmack"
+if enabled_plugins.get(cm_pid) is True:
+    market_plugin_json = marketplace_root / "thedotmack" / "plugin" / ".claude-plugin" / "plugin.json"
+    market_plugin = load_json(market_plugin_json) or {}
+    market_ver = str(market_plugin.get("version", ""))
+    installs = plugins_map.get(cm_pid, [])
+    install_ver = ""
+    install_path = ""
+    if isinstance(installs, list) and installs and isinstance(installs[0], dict):
+        install_ver = str(installs[0].get("version", ""))
+        install_path = str(installs[0].get("installPath", ""))
+    if market_ver and install_ver and market_ver != install_ver:
+        drift.append({
+            "plugin": cm_pid,
+            "marketplace_version": market_ver,
+            "installed_version": install_ver,
+            "install_path": install_path,
+            "reason": "version mismatch",
+        })
+
+total_stop_hooks = local_counts.get("Stop", 0) + local_counts.get("SubagentStop", 0) + sum(item["stop_hooks"] for item in stop_rows)
+
+hints = []
+if missing_plugin_paths:
+    hints.append("Run: lacp claude-hooks repair --json to fix install-path drift for supported plugins.")
+if missing_commands:
+    hints.append("Prune/disable hooks referencing missing absolute paths or reinstall affected plugins.")
+if total_stop_hooks > 4:
+    hints.append("High Stop hook fanout detected; consider disabling non-essential Stop-hook plugins to reduce noise.")
+if not hints:
+    hints.append("Hook posture looks healthy.")
+
+payload = {
+    "ok": len(missing_plugin_paths) == 0 and len(missing_commands) == 0,
+    "kind": "claude_hooks_audit",
+    "claude_dir": str(claude_dir),
+    "summary": {
+        "total_stop_hooks": total_stop_hooks,
+        "local_stop_hooks": local_counts.get("Stop", 0) + local_counts.get("SubagentStop", 0),
+        "plugin_stop_hooks": sum(item["stop_hooks"] for item in stop_rows),
+        "enabled_plugins": sum(1 for _, v in (enabled_plugins or {}).items() if v is True),
+        "missing_plugin_paths": len(missing_plugin_paths),
+        "missing_command_paths": len(missing_commands),
+        "version_drift": len(drift),
+    },
+    "local_hook_counts": local_counts,
+    "plugin_stop_contributors": sorted(stop_rows, key=lambda x: x["stop_hooks"], reverse=True),
+    "missing_plugin_paths": missing_plugin_paths,
+    "missing_command_paths": missing_commands,
+    "version_drift": drift,
+    "hints": hints,
+}
+print(json.dumps(payload))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"ok=\(.ok) total_stop_hooks=\(.summary.total_stop_hooks) missing_plugin_paths=\(.summary.missing_plugin_paths) missing_command_paths=\(.summary.missing_command_paths) drift=\(.summary.version_drift)"'
+    echo "${result}" | jq -r '.plugin_stop_contributors[]? | "STOP\t\(.plugin)\t\(.stop_hooks)"'
+    echo "${result}" | jq -r '.hints[] | "HINT\t\(.)"'
+  fi
+  if [[ "${strict}" == "true" ]]; then
+    [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+  fi
+}
+
+cmd_repair() {
+  local claude_dir="${HOME}/.claude"
+  local dry_run="false"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --claude-dir) claude_dir="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  local result
+  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}"
+import json
+import pathlib
+import shutil
+import sys
+from datetime import datetime, timezone
+
+claude_dir = pathlib.Path(sys.argv[1]).expanduser().resolve()
+dry_run = sys.argv[2] == "true"
+
+settings_path = claude_dir / "settings.json"
+installed_path = claude_dir / "plugins" / "installed_plugins.json"
+marketplace_root = claude_dir / "plugins" / "marketplaces"
+cache_root = claude_dir / "plugins" / "cache"
+
+def load_json(path: pathlib.Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+def backup(path: pathlib.Path):
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    bak = path.with_suffix(path.suffix + f".bak.{ts}")
+    shutil.copy2(path, bak)
+    return str(bak)
+
+actions = []
+backups = []
+ok = True
+
+settings = load_json(settings_path) or {}
+installed = load_json(installed_path) or {}
+plugins_map = installed.get("plugins", {}) if isinstance(installed, dict) else {}
+enabled = settings.get("enabledPlugins", {}) if isinstance(settings, dict) else {}
+
+pid = "claude-mem@thedotmack"
+if enabled.get(pid) is True:
+    market_plugin_dir = marketplace_root / "thedotmack" / "plugin"
+    market_meta = load_json(market_plugin_dir / ".claude-plugin" / "plugin.json") or {}
+    market_ver = str(market_meta.get("version", ""))
+    if not market_ver:
+        ok = False
+        actions.append({"status": "error", "action": "resolve_market_version", "plugin": pid, "reason": "missing marketplace version"})
+    else:
+        target_path = cache_root / "thedotmack" / "claude-mem" / market_ver
+        install_entries = plugins_map.get(pid)
+        if not isinstance(install_entries, list) or not install_entries:
+            install_entries = [{"scope": "user"}]
+            plugins_map[pid] = install_entries
+            actions.append({"status": "changed", "action": "created_installed_plugins_entry", "plugin": pid})
+        entry = install_entries[0]
+        current_path = pathlib.Path(str(entry.get("installPath", ""))) if entry.get("installPath") else None
+        current_ver = str(entry.get("version", ""))
+
+        if not target_path.exists():
+            actions.append({"status": "changed", "action": "cache_copy", "from": str(market_plugin_dir), "to": str(target_path)})
+            if not dry_run:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(market_plugin_dir, target_path, dirs_exist_ok=True)
+
+        needs_update = (current_ver != market_ver) or (not current_path or not current_path.exists()) or (str(current_path) != str(target_path))
+        if needs_update:
+            entry["installPath"] = str(target_path)
+            entry["version"] = market_ver
+            actions.append({
+                "status": "changed",
+                "action": "update_installed_plugins_entry",
+                "plugin": pid,
+                "from_version": current_ver,
+                "to_version": market_ver,
+                "from_path": str(current_path) if current_path else None,
+                "to_path": str(target_path),
+            })
+            if not dry_run:
+                backups.append(backup(installed_path))
+                installed["plugins"] = plugins_map
+                installed_path.write_text(json.dumps(installed, indent=2) + "\n")
+
+else:
+    actions.append({"status": "noop", "action": "claude_mem_not_enabled"})
+
+payload = {
+    "ok": ok,
+    "kind": "claude_hooks_repair",
+    "claude_dir": str(claude_dir),
+    "dry_run": dry_run,
+    "actions": actions,
+    "backups": backups,
+}
+print(json.dumps(payload))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"ok=\(.ok) dry_run=\(.dry_run) actions=\(.actions|length) backups=\(.backups|length)"'
+    echo "${result}" | jq -r '.actions[]? | "\(.status)\t\(.action)\t\(.plugin // .to // "")"'
+  fi
+  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+}
+
+case "${sub}" in
+  audit) cmd_audit "$@" ;;
+  repair) cmd_repair "$@" ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
