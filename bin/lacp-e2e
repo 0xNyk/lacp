@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def now_utc() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_json(path: Path):
+    return json.loads(path.read_text())
+
+
+def run_shell(command: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/usr/bin/env", "bash", "-lc", command],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+    )
+
+
+def normalize_flow(flow: dict, manifest_dir: Path) -> tuple[dict, list[str]]:
+    errors: list[str] = []
+    out = dict(flow)
+    fid = out.get("id")
+    kind = out.get("entrypoint_kind")
+    entrypoint = out.get("entrypoint")
+    expected = out.get("expected_identity", {})
+    artifacts = out.get("artifacts", {})
+    assertions = out.get("assertions", [])
+
+    if not isinstance(fid, str) or not fid.strip():
+        errors.append("flow.id must be non-empty string")
+    if not isinstance(kind, str) or not kind.strip():
+        errors.append(f"{fid or 'flow'}.entrypoint_kind must be non-empty string")
+    if not isinstance(entrypoint, str) or not entrypoint.strip():
+        errors.append(f"{fid or 'flow'}.entrypoint must be non-empty string")
+
+    if not isinstance(expected, dict):
+        errors.append(f"{fid or 'flow'}.expected_identity must be object")
+        expected = {}
+    mode = expected.get("mode")
+    value = expected.get("value")
+    if mode not in {"guest", "user", "admin", "service"}:
+        errors.append(f"{fid or 'flow'}.expected_identity.mode invalid")
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{fid or 'flow'}.expected_identity.value must be non-empty string")
+
+    if not isinstance(artifacts, dict):
+        errors.append(f"{fid or 'flow'}.artifacts must be object")
+        artifacts = {}
+
+    for key in ("trace", "screenshot"):
+        p = artifacts.get(key)
+        if not isinstance(p, str) or not p.strip():
+            errors.append(f"{fid or 'flow'}.artifacts.{key} must be non-empty string")
+            continue
+        path = Path(p)
+        if not path.is_absolute():
+            path = (manifest_dir / path).resolve()
+        if not path.exists():
+            errors.append(f"{fid or 'flow'}.artifacts.{key} not found: {path}")
+        artifacts[key] = str(path)
+
+    if not isinstance(assertions, list) or len(assertions) == 0:
+        errors.append(f"{fid or 'flow'}.assertions must be non-empty array")
+        assertions = []
+    normalized_assertions: list[dict] = []
+    for idx, assertion in enumerate(assertions):
+        if not isinstance(assertion, dict):
+            errors.append(f"{fid or 'flow'}.assertions[{idx}] must be object")
+            continue
+        name = assertion.get("name")
+        ok = assertion.get("ok")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{fid or 'flow'}.assertions[{idx}].name must be non-empty string")
+        if not isinstance(ok, bool):
+            errors.append(f"{fid or 'flow'}.assertions[{idx}].ok must be boolean")
+        normalized_assertions.append({"name": name, "ok": ok})
+
+    out["expected_identity"] = {"mode": mode, "value": value}
+    out["artifacts"] = artifacts
+    out["assertions"] = normalized_assertions
+    return out, errors
+
+
+def execute_run(*, command: str, workdir: Path, manifest: Path, flows_file: Path, captured_at_utc: str, skip_command: bool) -> tuple[int, dict]:
+    errors: list[str] = []
+    command_result = {
+        "executed": not skip_command,
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+    }
+
+    if not flows_file.is_file():
+        errors.append(f"missing flows file: {flows_file}")
+    else:
+        flows_payload = read_json(flows_file)
+        if not isinstance(flows_payload, list) or len(flows_payload) == 0:
+            errors.append("flows-file must contain a non-empty JSON array")
+
+    if not skip_command and len(errors) == 0:
+        cp = run_shell(command, workdir)
+        command_result = {
+            "executed": True,
+            "exit_code": cp.returncode,
+            "stdout": cp.stdout[-4000:],
+            "stderr": cp.stderr[-4000:],
+        }
+        if cp.returncode != 0:
+            errors.append(f"e2e command failed with exit_code={cp.returncode}")
+
+    flows: list[dict] = []
+    if len(errors) == 0:
+        raw_flows = read_json(flows_file)
+        for flow in raw_flows:
+            if not isinstance(flow, dict):
+                errors.append("each flow must be an object")
+                continue
+            normalized, flow_errors = normalize_flow(flow, manifest.parent)
+            flows.append(normalized)
+            errors.extend(flow_errors)
+
+    payload = {
+        "version": "1",
+        "captured_at_utc": captured_at_utc.strip() or now_utc(),
+        "flows": flows,
+    }
+    ok = len(errors) == 0
+    if ok:
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps(payload, indent=2) + "\n")
+
+    output = {
+        "ok": ok,
+        "manifest": str(manifest),
+        "command": command_result,
+        "errors": errors,
+    }
+    return (0 if ok else 1), output
+
+
+def execute_auth_check(*, manifest: Path, required_entrypoint_kinds: list[str], required_identity_modes: list[str], required_assertion_substrings: list[str]) -> tuple[int, dict]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not manifest.is_file():
+        errors.append(f"missing manifest: {manifest}")
+        return 1, {"ok": False, "errors": errors, "warnings": warnings}
+
+    data = read_json(manifest)
+    flows = data.get("flows")
+    if not isinstance(flows, list):
+        errors.append("manifest.flows must be array")
+        flows = []
+
+    kinds = set()
+    modes = set()
+    assertion_names: list[str] = []
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        kind = flow.get("entrypoint_kind")
+        if isinstance(kind, str):
+            kinds.add(kind)
+        expected = flow.get("expected_identity")
+        if isinstance(expected, dict):
+            mode = expected.get("mode")
+            if isinstance(mode, str):
+                modes.add(mode)
+        assertions = flow.get("assertions")
+        if isinstance(assertions, list):
+            for assertion in assertions:
+                if isinstance(assertion, dict):
+                    name = assertion.get("name")
+                    if isinstance(name, str):
+                        assertion_names.append(name.lower())
+
+    for kind in required_entrypoint_kinds:
+        if kind not in kinds:
+            errors.append(f"missing required entrypoint kind: {kind}")
+    for mode in required_identity_modes:
+        if mode not in modes:
+            errors.append(f"missing required identity mode: {mode}")
+    for token in required_assertion_substrings:
+        token_l = token.lower()
+        if not any(token_l in name for name in assertion_names):
+            errors.append(f"missing assertion containing substring: {token}")
+
+    ok = len(errors) == 0
+    payload = {
+        "ok": ok,
+        "manifest": str(manifest),
+        "summary": {
+            "flow_count": len(flows),
+            "entrypoint_kinds": sorted(kinds),
+            "identity_modes": sorted(modes),
+            "assertion_count": len(assertion_names),
+        },
+        "errors": errors,
+        "warnings": warnings,
+    }
+    return (0 if ok else 1), payload
+
+
+def cmd_run(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="lacp e2e run",
+        description="Run local e2e command and generate browser evidence manifest.",
+    )
+    parser.add_argument("--command", required=True, help="Command to execute (example: npx playwright test)")
+    parser.add_argument("--workdir", default=".", help="Working directory for the e2e command")
+    parser.add_argument("--manifest", required=True, help="Output browser evidence manifest JSON")
+    parser.add_argument("--flows-file", required=True, help="JSON file containing array of flow objects")
+    parser.add_argument("--captured-at-utc", default="", help="Override captured_at_utc timestamp")
+    parser.add_argument("--skip-command", action="store_true", help="Skip command execution and only materialize manifest")
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    args = parser.parse_args(argv)
+
+    rc, output = execute_run(
+        command=args.command,
+        workdir=Path(args.workdir).resolve(),
+        manifest=Path(args.manifest).resolve(),
+        flows_file=Path(args.flows_file).resolve(),
+        captured_at_utc=args.captured_at_utc,
+        skip_command=args.skip_command,
+    )
+    if args.json:
+        print(json.dumps(output, indent=2))
+    else:
+        if rc == 0:
+            print(f"[lacp] e2e run completed, manifest={output['manifest']}")
+        else:
+            print("[lacp] e2e run failed", file=sys.stderr)
+            for err in output.get("errors", []):
+                print(f" - {err}", file=sys.stderr)
+    return rc
+
+
+def cmd_auth_check(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="lacp e2e auth-check",
+        description="Validate auth coverage patterns from browser evidence manifest.",
+    )
+    parser.add_argument("--manifest", required=True, help="Browser evidence manifest JSON path")
+    parser.add_argument("--require-entrypoint-kind", action="append", default=["auth-flow"], help="Required flow kind")
+    parser.add_argument("--require-identity-mode", action="append", default=["guest", "user"], help="Required identity mode")
+    parser.add_argument("--require-assertion-substring", action="append", default=["auth"], help="Required assertion substring")
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    args = parser.parse_args(argv)
+
+    rc, payload = execute_auth_check(
+        manifest=Path(args.manifest).resolve(),
+        required_entrypoint_kinds=args.require_entrypoint_kind,
+        required_identity_modes=args.require_identity_mode,
+        required_assertion_substrings=args.require_assertion_substring,
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        if rc == 0:
+            print("[lacp] auth-check passed")
+        else:
+            print("[lacp] auth-check failed", file=sys.stderr)
+            for err in payload.get("errors", []):
+                print(f" - {err}", file=sys.stderr)
+    return rc
+
+
+def cmd_smoke(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="lacp e2e smoke",
+        description="One-command local smoke e2e path using default harness locations.",
+    )
+    parser.add_argument("--workdir", default=".", help="Project root for command execution")
+    parser.add_argument("--command", default="", help="Smoke command (default: npx playwright test --grep @smoke)")
+    parser.add_argument("--flows-file", default="config/harness/e2e-flows.json", help="Flow metadata json (default under repo)")
+    parser.add_argument("--example-flows", default="", help="Template flows file (default: config/harness/e2e-flows.example.json)")
+    parser.add_argument("--manifest", default=".lacp/browser-evidence.smoke.json", help="Output evidence manifest path")
+    parser.add_argument("--captured-at-utc", default="", help="Override captured_at_utc timestamp")
+    parser.add_argument("--init-template", action="store_true", help="Initialize flows-file from example when missing")
+    parser.add_argument("--skip-command", action="store_true", help="Skip command execution and only materialize manifest")
+    parser.add_argument("--auth-check", action=argparse.BooleanOptionalAction, default=True, help="Run auth-check after run (default true)")
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    args = parser.parse_args(argv)
+
+    workdir = Path(args.workdir).resolve()
+    flows_file = Path(args.flows_file)
+    if not flows_file.is_absolute():
+        flows_file = (workdir / flows_file).resolve()
+    manifest = Path(args.manifest)
+    if not manifest.is_absolute():
+        manifest = (workdir / manifest).resolve()
+
+    example = args.example_flows.strip()
+    root_env = Path(os.environ.get("LACP_SCRIPT_ROOT", ".")).resolve()
+    if example:
+        example_path = Path(example)
+        if not example_path.is_absolute():
+            example_path = (workdir / example_path).resolve()
+    else:
+        example_path = (root_env / "config/harness/e2e-flows.example.json").resolve()
+
+    init_applied = False
+    init_error = ""
+    if args.init_template and not flows_file.exists():
+        if example_path.is_file():
+            flows_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(example_path, flows_file)
+            init_applied = True
+        else:
+            init_error = f"missing example flows template: {example_path}"
+
+    smoke_command = args.command.strip() or "npx playwright test --grep @smoke"
+
+    rc, run_output = execute_run(
+        command=smoke_command,
+        workdir=workdir,
+        manifest=manifest,
+        flows_file=flows_file,
+        captured_at_utc=args.captured_at_utc,
+        skip_command=args.skip_command,
+    )
+
+    auth_output: dict = {}
+    if rc == 0 and args.auth_check:
+        auth_rc, auth_output = execute_auth_check(
+            manifest=manifest,
+            required_entrypoint_kinds=["auth-flow", "ui-flow"],
+            required_identity_modes=["guest", "user"],
+            required_assertion_substrings=["auth"],
+        )
+        if auth_rc != 0:
+            rc = auth_rc
+
+    if init_error:
+        rc = 1
+
+    payload = {
+        "ok": rc == 0,
+        "mode": "smoke",
+        "workdir": str(workdir),
+        "flows_file": str(flows_file),
+        "manifest": str(manifest),
+        "init_template": {
+            "requested": bool(args.init_template),
+            "applied": init_applied,
+            "example": str(example_path),
+            "error": init_error,
+        },
+        "run": run_output,
+        "auth_check": auth_output,
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        if rc == 0:
+            print(f"[lacp] e2e smoke passed, manifest={manifest}")
+        else:
+            print("[lacp] e2e smoke failed", file=sys.stderr)
+            if init_error:
+                print(f" - {init_error}", file=sys.stderr)
+            for err in run_output.get("errors", []):
+                print(f" - {err}", file=sys.stderr)
+            for err in auth_output.get("errors", []):
+                print(f" - {err}", file=sys.stderr)
+
+    return rc
+
+
+def usage() -> None:
+    print(
+        """Usage: lacp e2e <command> [args...]
+
+Commands:
+  run         Execute local e2e command and generate browser evidence manifest
+  auth-check  Validate auth-pattern coverage from evidence manifest
+  smoke       One-command smoke run (optional template init + auth-check)
+"""
+    )
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) == 0 or argv[0] in {"-h", "--help", "help"}:
+        usage()
+        return 0
+    cmd = argv[0]
+    rest = argv[1:]
+    if cmd == "run":
+        return cmd_run(rest)
+    if cmd == "auth-check":
+        return cmd_auth_check(rest)
+    if cmd == "smoke":
+        return cmd_smoke(rest)
+    print(f"[lacp] ERROR: unknown e2e command: {cmd}", file=sys.stderr)
+    usage()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+PY

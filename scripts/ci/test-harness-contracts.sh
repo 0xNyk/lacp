@@ -20,7 +20,7 @@ risk_contract_schema_file="${ROOT}/config/risk-policy-contract.schema.json"
 
 jq -e '.["$schema"] and .properties.tasks and .properties.tasks.items.properties.sandbox_profile and .properties.tasks.items.properties.verification_policy' "${schema_file}" >/dev/null
 jq -e '.["$schema"] and .properties.flows and .properties.captured_at_utc' "${browser_schema_file}" >/dev/null
-jq -e '.version and .riskTierRules and .mergePolicy and .docsDriftRules and .reviewAgent and .browserEvidence' "${risk_contract_file}" >/dev/null
+jq -e '.version and .riskTierRules and .mergePolicy and .docsDriftRules and .reviewAgent and .browserEvidence and .apiEvidence and .contractEvidence' "${risk_contract_file}" >/dev/null
 jq -e '.["$schema"] and .properties.riskTierRules and .properties.mergePolicy and .properties.docsDriftRules' "${risk_contract_schema_file}" >/dev/null
 
 ruby -e '

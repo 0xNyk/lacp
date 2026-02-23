@@ -76,6 +76,95 @@ def canonical_sha(value: str) -> str:
     return value.strip().lower()
 
 
+def evidence_required(cfg: dict, risk_tier: str, changed_files: list[str]) -> bool:
+    tiers = set(cfg.get("requiredTiers") or [])
+    if risk_tier not in tiers:
+        return False
+    globs = [x for x in (cfg.get("requiredMatchGlobs") or []) if isinstance(x, str) and x]
+    if not globs:
+        return True
+    return any(any(fnmatch.fnmatch(f, g) for g in globs) for f in changed_files)
+
+
+def validate_manifest(
+    *,
+    root_env: Path,
+    cfg: dict,
+    manifest_path: Path,
+) -> tuple[bool, dict]:
+    schema_rel = str(cfg.get("manifestSchema", "config/harness/browser-evidence.schema.json"))
+    schema_path = Path(schema_rel)
+    if not schema_path.is_absolute():
+        schema_path = (root_env / schema_path).resolve()
+
+    cmd = [
+        str(root_env / "bin/lacp-browser-evidence-validate"),
+        "--manifest",
+        str(manifest_path),
+        "--schema",
+        str(schema_path),
+        "--max-age-hours",
+        str(int(cfg.get("maxArtifactAgeHours", 24))),
+        "--json",
+    ]
+    for kind in cfg.get("requiredEntrypointKinds", []):
+        cmd.extend(["--required-entrypoint-kind", str(kind)])
+    cp = run_cmd(cmd)
+    try:
+        details = json.loads(cp.stdout) if cp.stdout.strip() else {}
+    except Exception:
+        details = {"raw_output": cp.stdout, "stderr": cp.stderr}
+
+    ok = cp.returncode == 0
+
+    # Additional semantic gates beyond schema validator.
+    try:
+        payload = load_json(manifest_path)
+    except Exception as exc:
+        ok = False
+        details.setdefault("extra_errors", []).append(f"failed to parse manifest for extra checks: {exc}")
+        return ok, details
+
+    flows = payload.get("flows") if isinstance(payload, dict) else []
+    if not isinstance(flows, list):
+        flows = []
+
+    prefixes = [x for x in (cfg.get("requiredEntrypointPrefixes") or []) if isinstance(x, str) and x]
+    if prefixes:
+        has_prefix = False
+        for flow in flows:
+            if not isinstance(flow, dict):
+                continue
+            entry = flow.get("entrypoint")
+            if isinstance(entry, str) and any(entry.startswith(p) for p in prefixes):
+                has_prefix = True
+                break
+        if not has_prefix:
+            ok = False
+            details.setdefault("extra_errors", []).append(
+                f"missing required entrypoint prefix; expected one of: {prefixes}"
+            )
+
+    substrings_any = [x.lower() for x in (cfg.get("requiredAssertionSubstringsAny") or []) if isinstance(x, str) and x]
+    if substrings_any:
+        names: list[str] = []
+        for flow in flows:
+            if not isinstance(flow, dict):
+                continue
+            assertions = flow.get("assertions")
+            if isinstance(assertions, list):
+                for a in assertions:
+                    if isinstance(a, dict) and isinstance(a.get("name"), str):
+                        names.append(a["name"].lower())
+        if not any(any(token in name for token in substrings_any) for name in names):
+            ok = False
+            details.setdefault("extra_errors", []).append(
+                f"missing assertion containing any of: {substrings_any}"
+            )
+
+    return ok, details
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="LACP PR preflight gate planner/validator")
     parser.add_argument("--contract", default="config/risk-policy-contract.json", help="Risk policy contract path")
@@ -87,6 +176,20 @@ def main() -> int:
     parser.add_argument("--checks-json", default="", help="Optional checks payload JSON")
     parser.add_argument("--review-json", default="", help="Optional review-agent state JSON")
     parser.add_argument("--browser-evidence", default="", help="Optional browser evidence manifest JSON")
+    parser.add_argument("--api-evidence", default="", help="Optional API evidence manifest JSON")
+    parser.add_argument("--contract-evidence", default="", help="Optional contract evidence manifest JSON")
+    parser.add_argument("--auto-e2e-run", action="store_true", help="Auto-run local e2e to generate browser evidence when missing")
+    parser.add_argument("--auto-e2e-command", default="", help="Command used by lacp e2e run (example: npx playwright test)")
+    parser.add_argument("--auto-e2e-flows-file", default="", help="Flow metadata JSON used by lacp e2e run")
+    parser.add_argument("--auto-e2e-manifest", default=".lacp/browser-evidence.auto.json", help="Output manifest path for auto e2e")
+    parser.add_argument("--auto-e2e-skip-command", action="store_true", help="Skip execution and only materialize manifest")
+    parser.add_argument("--auto-e2e-auth-check", action="store_true", help="Run lacp e2e auth-check after auto e2e run")
+    parser.add_argument(
+        "--auto-e2e-auth-require-assertion-substring",
+        action="append",
+        default=[],
+        help="Auth-check required assertion substring (repeatable)",
+    )
     parser.add_argument("--repo-root", default=".", help="Repo root path")
     parser.add_argument("--json", action="store_true", help="Emit JSON")
     args = parser.parse_args()
@@ -113,7 +216,7 @@ def main() -> int:
     if not errors:
         try:
             contract = load_json(contract_path)
-            _ = load_json(schema_path)  # syntax sanity
+            _ = load_json(schema_path)
         except Exception as exc:
             errors.append(f"invalid contract/schema json: {exc}")
 
@@ -161,9 +264,19 @@ def main() -> int:
     stale_checks: list[str] = []
     review_required = False
     review_ok = True
+
     browser_required = False
     browser_ok = True
     browser_details: dict = {}
+    auto_e2e_details: dict = {}
+
+    api_required = False
+    api_ok = True
+    api_details: dict = {}
+
+    contract_required = False
+    contract_ok = True
+    contract_details: dict = {}
 
     if isinstance(contract, dict):
         tier_rules = contract.get("riskTierRules") or {}
@@ -171,6 +284,8 @@ def main() -> int:
         docs_rules = contract.get("docsDriftRules") or []
         review_cfg = contract.get("reviewAgent") or {}
         browser_cfg = contract.get("browserEvidence") or {}
+        api_cfg = contract.get("apiEvidence") or {}
+        contract_cfg = contract.get("contractEvidence") or {}
 
         if not isinstance(tier_rules, dict):
             errors.append("contract.riskTierRules must be object")
@@ -214,19 +329,18 @@ def main() -> int:
                 docs_drift_ok = False
 
         review_required = risk_tier in set(review_cfg.get("requiredTiers") or [])
-        browser_required = risk_tier in set(browser_cfg.get("requiredTiers") or [])
+        browser_required = evidence_required(browser_cfg if isinstance(browser_cfg, dict) else {}, risk_tier, changed_files)
+        api_required = evidence_required(api_cfg if isinstance(api_cfg, dict) else {}, risk_tier, changed_files)
+        contract_required = evidence_required(contract_cfg if isinstance(contract_cfg, dict) else {}, risk_tier, changed_files)
 
         if args.checks_json:
             checks_path = Path(args.checks_json).resolve()
             if not checks_path.is_file():
                 errors.append(f"missing checks json: {checks_path}")
             else:
-                try:
-                    checks_payload = load_json(checks_path)
-                except Exception:
-                    checks_payload = json.loads(checks_path.read_text())
+                checks_payload = load_json(checks_path)
                 check_runs = parse_check_runs(checks_payload)
-                check_by_name = {}
+                check_by_name: dict[str, list[dict]] = {}
                 for run in check_runs:
                     name = str(run.get("name", "")).strip()
                     if not name:
@@ -240,8 +354,8 @@ def main() -> int:
                         missing_checks.append(req)
                         continue
 
-                    fresh = []
-                    stale = []
+                    fresh: list[dict] = []
+                    stale: list[dict] = []
                     for c in candidates:
                         run_sha = canonical_sha(str(c.get("head_sha", "") or c.get("sha", "")))
                         if head_sha and run_sha and run_sha != head_sha:
@@ -285,39 +399,106 @@ def main() -> int:
                         review_ok = False
                         errors.append(f"review actionable findings: {actionable}")
 
+        # Browser evidence with optional auto-run
         if browser_required:
-            if not args.browser_evidence:
+            evidence_input = args.browser_evidence.strip()
+            if not evidence_input and args.auto_e2e_run:
+                auto_cmd = args.auto_e2e_command.strip() or "npx playwright test"
+                if not args.auto_e2e_flows_file.strip():
+                    browser_ok = False
+                    errors.append("auto e2e enabled but --auto-e2e-flows-file not provided")
+                else:
+                    flows_path = Path(args.auto_e2e_flows_file).resolve()
+                    manifest_path = Path(args.auto_e2e_manifest)
+                    if not manifest_path.is_absolute():
+                        manifest_path = (repo_root / manifest_path).resolve()
+                    auto_cmd_args = [
+                        str(root_env / "bin/lacp-e2e"),
+                        "run",
+                        "--command",
+                        auto_cmd,
+                        "--workdir",
+                        str(repo_root),
+                        "--flows-file",
+                        str(flows_path),
+                        "--manifest",
+                        str(manifest_path),
+                        "--json",
+                    ]
+                    if args.auto_e2e_skip_command:
+                        auto_cmd_args.append("--skip-command")
+                    cp = run_cmd(auto_cmd_args)
+                    try:
+                        auto_e2e_details = json.loads(cp.stdout) if cp.stdout.strip() else {}
+                    except Exception:
+                        auto_e2e_details = {"raw_output": cp.stdout, "stderr": cp.stderr}
+                    if cp.returncode != 0:
+                        browser_ok = False
+                        errors.append("auto e2e run failed")
+                    else:
+                        evidence_input = str(manifest_path)
+
+                    if cp.returncode == 0 and args.auto_e2e_auth_check:
+                        auth_cmd = [
+                            str(root_env / "bin/lacp-e2e"),
+                            "auth-check",
+                            "--manifest",
+                            str(manifest_path),
+                            "--json",
+                        ]
+                        for token in args.auto_e2e_auth_require_assertion_substring:
+                            auth_cmd.extend(["--require-assertion-substring", token])
+                        auth_cp = run_cmd(auth_cmd)
+                        try:
+                            auto_e2e_details["auth_check"] = json.loads(auth_cp.stdout) if auth_cp.stdout.strip() else {}
+                        except Exception:
+                            auto_e2e_details["auth_check"] = {"raw_output": auth_cp.stdout, "stderr": auth_cp.stderr}
+                        if auth_cp.returncode != 0:
+                            browser_ok = False
+                            errors.append("auto e2e auth-check failed")
+
+            if not evidence_input:
                 browser_ok = False
-                errors.append("browser evidence required for this tier but --browser-evidence not provided")
+                errors.append("browser evidence required for this scope but --browser-evidence not provided")
             else:
-                evidence_path = Path(args.browser_evidence).resolve()
+                evidence_path = Path(evidence_input).resolve()
                 if not evidence_path.is_file():
                     browser_ok = False
                     errors.append(f"missing browser evidence manifest: {evidence_path}")
                 else:
-                    schema_rel = str(browser_cfg.get("manifestSchema", "config/harness/browser-evidence.schema.json"))
-                    schema_path2 = Path(schema_rel)
-                    if not schema_path2.is_absolute():
-                        schema_path2 = (root_env / schema_path2).resolve()
-                    cmd = [
-                        str(root_env / "bin/lacp-browser-evidence-validate"),
-                        "--manifest",
-                        str(evidence_path),
-                        "--schema",
-                        str(schema_path2),
-                        "--max-age-hours",
-                        str(int(browser_cfg.get("maxArtifactAgeHours", 24))),
-                        "--json",
-                    ]
-                    for kind in browser_cfg.get("requiredEntrypointKinds", []):
-                        cmd.extend(["--required-entrypoint-kind", str(kind)])
-                    cp = run_cmd(cmd)
-                    if cp.returncode != 0:
-                        browser_ok = False
-                    try:
-                        browser_details = json.loads(cp.stdout) if cp.stdout.strip() else {}
-                    except Exception:
-                        browser_details = {"raw_output": cp.stdout, "stderr": cp.stderr}
+                    browser_ok, browser_details = validate_manifest(root_env=root_env, cfg=browser_cfg, manifest_path=evidence_path)
+                    if not browser_ok:
+                        errors.append("browser evidence validation failed")
+
+        if api_required:
+            api_input = args.api_evidence.strip()
+            if not api_input:
+                api_ok = False
+                errors.append("api evidence required for this scope but --api-evidence not provided")
+            else:
+                p = Path(api_input).resolve()
+                if not p.is_file():
+                    api_ok = False
+                    errors.append(f"missing api evidence manifest: {p}")
+                else:
+                    api_ok, api_details = validate_manifest(root_env=root_env, cfg=api_cfg, manifest_path=p)
+                    if not api_ok:
+                        errors.append("api evidence validation failed")
+
+        if contract_required:
+            contract_input = args.contract_evidence.strip()
+            if not contract_input:
+                contract_ok = False
+                errors.append("contract evidence required for this scope but --contract-evidence not provided")
+            else:
+                p = Path(contract_input).resolve()
+                if not p.is_file():
+                    contract_ok = False
+                    errors.append(f"missing contract evidence manifest: {p}")
+                else:
+                    contract_ok, contract_details = validate_manifest(root_env=root_env, cfg=contract_cfg, manifest_path=p)
+                    if not contract_ok:
+                        errors.append("contract evidence validation failed")
 
     gate_ok = (
         len(errors) == 0
@@ -325,6 +506,8 @@ def main() -> int:
         and checks_ok
         and review_ok
         and browser_ok
+        and api_ok
+        and contract_ok
     )
 
     payload = {
@@ -351,6 +534,17 @@ def main() -> int:
             "required": browser_required,
             "ok": browser_ok,
             "details": browser_details,
+            "auto_e2e": auto_e2e_details,
+        },
+        "api_evidence": {
+            "required": api_required,
+            "ok": api_ok,
+            "details": api_details,
+        },
+        "contract_evidence": {
+            "required": contract_required,
+            "ok": contract_ok,
+            "details": contract_details,
         },
         "errors": errors,
         "warnings": warnings,

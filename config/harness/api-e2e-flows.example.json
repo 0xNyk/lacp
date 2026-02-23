@@ -1,0 +1,40 @@
+[
+  {
+    "id": "api-authz-guest-denied",
+    "entrypoint_kind": "api-flow",
+    "entrypoint": "/api/private/orders",
+    "expected_identity": {
+      "mode": "guest",
+      "value": "anon"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/api-authz-guest-denied.trace.txt",
+      "screenshot": "e2e-artifacts/api-authz-guest-denied.report.txt"
+    },
+    "assertions": [
+      {
+        "name": "http status 401 for guest access",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "id": "api-user-orders-ok",
+    "entrypoint_kind": "api-flow",
+    "entrypoint": "/api/orders",
+    "expected_identity": {
+      "mode": "user",
+      "value": "qa-user"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/api-user-orders-ok.trace.txt",
+      "screenshot": "e2e-artifacts/api-user-orders-ok.report.txt"
+    },
+    "assertions": [
+      {
+        "name": "http status 200 for authenticated user",
+        "ok": true
+      }
+    ]
+  }
+]
