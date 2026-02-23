@@ -37,6 +37,17 @@ ok_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-g
 [[ "$(echo "${ok_json}" | jq -r '.options.auto_optimize_on_fail')" == "false" ]] || { echo "[release-prepare-test] FAIL expected auto_optimize_on_fail=false by default" >&2; exit 1; }
 [[ "$(echo "${ok_json}" | jq -r '.stages.optimize.rc')" == "0" ]] || { echo "[release-prepare-test] FAIL expected optimize rc=0 by default" >&2; exit 1; }
 
+profile_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --profile local-iterative --no-require-managed-wrappers --json)"
+[[ "$(echo "${profile_json}" | jq -r '.ok')" == "true" ]] || { echo "[release-prepare-test] FAIL expected profile-driven release-prepare healthy" >&2; exit 1; }
+[[ "$(echo "${profile_json}" | jq -r '.options.profile')" == "local-iterative" ]] || { echo "[release-prepare-test] FAIL expected options.profile=local-iterative" >&2; exit 1; }
+[[ "$(echo "${profile_json}" | jq -r '.options.quick')" == "true" ]] || { echo "[release-prepare-test] FAIL expected profile quick=true" >&2; exit 1; }
+[[ "$(echo "${profile_json}" | jq -r '.options.canary_days')" == "3" ]] || { echo "[release-prepare-test] FAIL expected profile canary_days=3" >&2; exit 1; }
+[[ "$(echo "${profile_json}" | jq -r '.options.skip_cache_gate')" == "true" ]] || { echo "[release-prepare-test] FAIL expected profile skip_cache_gate=true" >&2; exit 1; }
+[[ "$(echo "${profile_json}" | jq -r '.options.skip_skill_audit_gate')" == "true" ]] || { echo "[release-prepare-test] FAIL expected profile skip_skill_audit_gate=true" >&2; exit 1; }
+
+override_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --profile local-iterative --canary-days 1 --no-require-managed-wrappers --json)"
+[[ "$(echo "${override_json}" | jq -r '.options.canary_days')" == "1" ]] || { echo "[release-prepare-test] FAIL expected explicit canary-days override to win" >&2; exit 1; }
+
 python3 - <<'PY' "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 import json
 import pathlib
