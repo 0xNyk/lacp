@@ -26,6 +26,7 @@ Options:
   --no-require-managed-wrappers  Do not require LACP-managed local claude/codex wrappers
   --skip-cache-gate              Skip cache guard in release-gate stage
   --skip-skill-audit-gate        Skip skill audit in release-gate stage
+  --allow-external-ci            Allow active .github/workflows when LACP_NO_EXTERNAL_CI=true
   --auto-optimize-on-fail        Run canary optimize loop when canary stage fails
   --optimize-iterations <n>      Max optimize iterations (default: 3)
   --optimize-hours <n>           Verify hours per optimize iteration (default: LACP_VERIFY_HOURS)
@@ -48,6 +49,7 @@ OPTIMIZE_APPLY_ENV=1
 SINCE_CLEAN_BASELINE=0
 BASELINE_FILE=""
 REQUIRE_MANAGED_WRAPPERS=1
+ALLOW_EXTERNAL_CI=0
 AS_JSON=0
 PROFILE=""
 
@@ -98,6 +100,7 @@ while [[ $# -gt 0 ]]; do
     --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
     --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
     --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --allow-external-ci) ALLOW_EXTERNAL_CI=1; shift ;;
     --auto-optimize-on-fail) AUTO_OPTIMIZE=1; shift ;;
     --optimize-iterations) OPTIMIZE_ITERATIONS="$2"; shift 2 ;;
     --optimize-hours) OPTIMIZE_HOURS="$2"; shift 2 ;;
@@ -147,6 +150,9 @@ if [[ "${SKIP_CACHE_GATE}" -eq 1 ]]; then
 fi
 if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
   gate_args+=(--skip-skill-audit)
+fi
+if [[ "${ALLOW_EXTERNAL_CI}" -eq 1 ]]; then
+  gate_args+=(--allow-external-ci)
 fi
 run_capture release_gate_json "${gate_args[@]}" || release_gate_rc=$?
 canary_args=("${ROOT}/bin/lacp-canary" --days "${CANARY_DAYS}" --json)
@@ -314,6 +320,7 @@ result_json="$(jq -n \
   --argjson optimize_hours "${OPTIMIZE_HOURS}" \
   --argjson optimize_apply_env "$([[ "${OPTIMIZE_APPLY_ENV}" -eq 1 ]] && echo true || echo false)" \
   --argjson require_managed_wrappers "$([[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]] && echo true || echo false)" \
+  --argjson allow_external_ci "$([[ "${ALLOW_EXTERNAL_CI}" -eq 1 ]] && echo true || echo false)" \
   --argjson release_gate_ok "$([[ "${release_gate_ok}" == "true" ]] && echo true || echo false)" \
   --argjson canary_ok "$([[ "${canary_ok}" == "true" ]] && echo true || echo false)" \
   --argjson status_ok "$([[ "${status_ok}" == "true" ]] && echo true || echo false)" \
@@ -352,6 +359,7 @@ result_json="$(jq -n \
       optimize_hours: $optimize_hours,
       optimize_apply_env: $optimize_apply_env,
       require_managed_wrappers: $require_managed_wrappers,
+      allow_external_ci: $allow_external_ci,
       auto_rollback_on_fail: $auto_rollback
     },
     stages: {

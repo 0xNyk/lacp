@@ -32,6 +32,7 @@ Options:
   --baseline-file <path>         release-prepare baseline file override
   --skip-cache-gate              Skip cache gate in release-prepare
   --skip-skill-audit-gate        Skip skill-audit gate in release-prepare
+  --allow-external-ci            Allow active .github/workflows in release-prepare
   --no-require-managed-wrappers  Do not require managed wrappers in release-prepare
   --skip-gh                      Build assets only; do not call gh release APIs
   --allow-dirty                  Allow uncommitted/staged changes
@@ -55,6 +56,7 @@ BASELINE_FILE=""
 SKIP_CACHE_GATE=0
 SKIP_SKILL_AUDIT_GATE=0
 REQUIRE_MANAGED_WRAPPERS=1
+ALLOW_EXTERNAL_CI=0
 SKIP_GH=0
 ALLOW_DIRTY=0
 AS_JSON=0
@@ -75,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
     --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
     --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --allow-external-ci) ALLOW_EXTERNAL_CI=1; shift ;;
     --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
     --skip-gh) SKIP_GH=1; shift ;;
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
@@ -135,6 +138,9 @@ if [[ "${SKIP_PREPARE}" -ne 1 ]]; then
   fi
   if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
     prep_args+=("--skip-skill-audit-gate")
+  fi
+  if [[ "${ALLOW_EXTERNAL_CI}" -eq 1 ]]; then
+    prep_args+=("--allow-external-ci")
   fi
   if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 0 ]]; then
     prep_args+=("--no-require-managed-wrappers")
