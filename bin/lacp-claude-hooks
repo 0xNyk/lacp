@@ -10,6 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -18,6 +20,10 @@ Focus areas:
   - missing command paths in hooks
   - enabled-plugin install path drift
   - marketplace/cache version mismatch (e.g. claude-mem)
+
+Profiles:
+  minimal-stop  Disable known noisy Stop-hook plugins by default.
+  balanced      Keep current enabled plugins unchanged.
 EOF
 }
 
@@ -373,8 +379,168 @@ PY
   [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
 }
 
+cmd_apply_profile() {
+  local claude_dir="${HOME}/.claude"
+  local dry_run="false"
+  local as_json="false"
+  local profile="minimal-stop"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --claude-dir) claude_dir="$2"; shift 2 ;;
+      --profile) profile="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  case "${profile}" in
+    minimal-stop|balanced) ;;
+    *) die "--profile must be minimal-stop|balanced" ;;
+  esac
+
+  local result
+  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}" "${profile}"
+import json
+import pathlib
+import shutil
+import sys
+from datetime import datetime, timezone
+
+claude_dir = pathlib.Path(sys.argv[1]).expanduser().resolve()
+dry_run = sys.argv[2] == "true"
+profile = sys.argv[3]
+settings_path = claude_dir / "settings.json"
+
+def load_json(path: pathlib.Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+def backup(path: pathlib.Path):
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    bak = path.with_suffix(path.suffix + f".bak.{ts}")
+    shutil.copy2(path, bak)
+    return str(bak)
+
+settings = load_json(settings_path)
+if settings is None:
+    settings = {}
+
+enabled = settings.get("enabledPlugins")
+if not isinstance(enabled, dict):
+    enabled = {}
+    settings["enabledPlugins"] = enabled
+
+actions = []
+backups = []
+
+profile_disable_map = {
+    "minimal-stop": [
+        "claude-mem@thedotmack",
+        "flow-next@gmickel-claude-marketplace",
+    ],
+    "balanced": [],
+}
+
+for plugin_id in profile_disable_map.get(profile, []):
+    current = enabled.get(plugin_id)
+    if current is not False:
+        actions.append({
+            "status": "changed",
+            "action": "disable_plugin",
+            "plugin": plugin_id,
+            "from": current,
+            "to": False,
+        })
+        enabled[plugin_id] = False
+    else:
+        actions.append({
+            "status": "noop",
+            "action": "disable_plugin",
+            "plugin": plugin_id,
+            "from": current,
+            "to": False,
+        })
+
+if actions and not dry_run:
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings_path.exists():
+        backups.append(backup(settings_path))
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+payload = {
+    "ok": True,
+    "kind": "claude_hooks_apply_profile",
+    "claude_dir": str(claude_dir),
+    "profile": profile,
+    "dry_run": dry_run,
+    "actions": actions,
+    "backups": backups,
+}
+print(json.dumps(payload))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"ok=\(.ok) profile=\(.profile) dry_run=\(.dry_run) actions=\(.actions|length) backups=\(.backups|length)"'
+    echo "${result}" | jq -r '.actions[]? | "\(.status)\t\(.action)\t\(.plugin)"'
+  fi
+  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+}
+
+cmd_optimize() {
+  local claude_dir="${HOME}/.claude"
+  local dry_run="false"
+  local as_json="false"
+  local profile="minimal-stop"
+  local extra_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --claude-dir) claude_dir="$2"; shift 2 ;;
+      --profile) profile="$2"; shift 2 ;;
+      --dry-run) dry_run="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ "${dry_run}" == "true" ]]; then
+    extra_args+=(--dry-run)
+  fi
+
+  local repair_json profile_json audit_json
+  repair_json="$("${ROOT}/bin/lacp-claude-hooks" repair --claude-dir "${claude_dir}" "${extra_args[@]}" --json)"
+  profile_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${claude_dir}" --profile "${profile}" "${extra_args[@]}" --json)"
+  audit_json="$("${ROOT}/bin/lacp-claude-hooks" audit --claude-dir "${claude_dir}" --json)"
+
+  local payload
+  payload="$(jq -n \
+    --argjson repair "${repair_json}" \
+    --argjson profile "${profile_json}" \
+    --argjson audit "${audit_json}" \
+    '{ok: ($repair.ok and $profile.ok and $audit.ok), kind:"claude_hooks_optimize", repair:$repair, profile:$profile, audit:$audit}')"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${payload}" | jq .
+  else
+    echo "${payload}" | jq -r '"ok=\(.ok) total_stop_hooks=\(.audit.summary.total_stop_hooks) missing_plugin_paths=\(.audit.summary.missing_plugin_paths) missing_command_paths=\(.audit.summary.missing_command_paths) drift=\(.audit.summary.version_drift)"'
+    echo "${payload}" | jq -r '.audit.hints[] | "HINT\t\(.)"'
+  fi
+  [[ "$(echo "${payload}" | jq -r '.ok')" == "true" ]]
+}
+
 case "${sub}" in
   audit) cmd_audit "$@" ;;
   repair) cmd_repair "$@" ;;
+  apply-profile) cmd_apply_profile "$@" ;;
+  optimize) cmd_optimize "$@" ;;
   *) die "Unknown subcommand: ${sub}" ;;
 esac

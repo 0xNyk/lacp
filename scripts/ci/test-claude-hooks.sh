@@ -115,4 +115,34 @@ audit_after="$("${ROOT}/bin/lacp-claude-hooks" audit --claude-dir "${CLAUDE_DIR}
   exit 1
 }
 
+profile_dry="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile minimal-stop --dry-run --json)"
+[[ "$(echo "${profile_dry}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL dry-run apply-profile not ok" >&2
+  exit 1
+}
+[[ "$(echo "${profile_dry}" | jq -r '.actions[] | select(.plugin=="claude-mem@thedotmack") | .action' | head -n1)" == "disable_plugin" ]] || {
+  echo "[claude-hooks-test] FAIL expected disable_plugin action for claude-mem" >&2
+  exit 1
+}
+
+profile_apply="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile minimal-stop --json)"
+[[ "$(echo "${profile_apply}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL apply-profile not ok" >&2
+  exit 1
+}
+[[ "$(jq -r '.enabledPlugins["claude-mem@thedotmack"]' "${CLAUDE_DIR}/settings.json")" == "false" ]] || {
+  echo "[claude-hooks-test] FAIL expected claude-mem disabled in settings" >&2
+  exit 1
+}
+
+optimize_json="$("${ROOT}/bin/lacp-claude-hooks" optimize --claude-dir "${CLAUDE_DIR}" --profile minimal-stop --json)"
+[[ "$(echo "${optimize_json}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL optimize not ok" >&2
+  exit 1
+}
+[[ "$(echo "${optimize_json}" | jq -r '.audit.summary.plugin_stop_hooks')" == "0" ]] || {
+  echo "[claude-hooks-test] FAIL expected plugin stop hooks to be 0 after optimize" >&2
+  exit 1
+}
+
 echo "[claude-hooks-test] claude hooks tests passed"

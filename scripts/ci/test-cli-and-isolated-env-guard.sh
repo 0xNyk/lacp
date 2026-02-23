@@ -28,6 +28,7 @@ fi
 "${ROOT}/bin/lacp" incident-drill --help >/dev/null
 "${ROOT}/bin/lacp" posture --help >/dev/null
 "${ROOT}/bin/lacp" claude-hooks --help >/dev/null
+"${ROOT}/bin/lacp-claude-hooks" optimize --help >/dev/null
 "${ROOT}/bin/lacp" cache-audit --help >/dev/null
 "${ROOT}/bin/lacp" cache-guard --help >/dev/null
 "${ROOT}/bin/lacp" canary --help >/dev/null
