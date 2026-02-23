@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-up [options]
+
+Start dmux-style multi-instance agent sessions from one command.
+Run again with the same --session to add more instances.
+
+Options:
+  --session <name>                Session name (default: lacp-dev)
+  --instances <n>                 Number of instances to launch (default: 2)
+  --command <cmd>                 Agent command for each instance (default: claude)
+  --backend dmux|tmux|claude_worktree
+                                  Default: ${LACP_ORCHESTRATOR_BACKEND:-dmux}
+  --repo-trust trusted|unknown    Default: trusted
+  --internet true|false           Default: false
+  --external-code true|false      Default: false
+  --cpu-heavy true|false          Default: false
+  --long-run true|false           Default: false
+  --attach true|false             Open dmux after launch when backend=dmux (default: true)
+  --dry-run                       Plan-only execution
+  --json                          Output structured JSON
+
+Examples:
+  lacp up --session dev --instances 3 --command "claude"
+  lacp up --session dev --instances 1 --command "codex --profile fast"
+  lacp up --backend tmux --session batch --instances 2 --command "claude --help"
+EOF
+}
+
+bool_arg() {
+  case "$1" in
+    true|false) printf '%s' "$1" ;;
+    *) die "Expected true|false, got: $1" ;;
+  esac
+}
+
+SESSION="lacp-dev"
+INSTANCES="2"
+COMMAND_TEXT="claude"
+BACKEND="${LACP_ORCHESTRATOR_BACKEND:-dmux}"
+REPO_TRUST="trusted"
+INTERNET="false"
+EXTERNAL_CODE="false"
+CPU_HEAVY="false"
+LONG_RUN="false"
+ATTACH="true"
+DRY_RUN="false"
+AS_JSON="false"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --session) SESSION="$2"; shift 2 ;;
+    --instances) INSTANCES="$2"; shift 2 ;;
+    --command) COMMAND_TEXT="$2"; shift 2 ;;
+    --backend) BACKEND="$2"; shift 2 ;;
+    --repo-trust) REPO_TRUST="$2"; shift 2 ;;
+    --internet) INTERNET="$(bool_arg "$2")"; shift 2 ;;
+    --external-code) EXTERNAL_CODE="$(bool_arg "$2")"; shift 2 ;;
+    --cpu-heavy) CPU_HEAVY="$(bool_arg "$2")"; shift 2 ;;
+    --long-run) LONG_RUN="$(bool_arg "$2")"; shift 2 ;;
+    --attach) ATTACH="$(bool_arg "$2")"; shift 2 ;;
+    --dry-run) DRY_RUN="true"; shift ;;
+    --json) AS_JSON="true"; shift ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "${SESSION}" ]] || die "--session cannot be empty"
+[[ -n "${COMMAND_TEXT}" ]] || die "--command cannot be empty"
+[[ "${REPO_TRUST}" == "trusted" || "${REPO_TRUST}" == "unknown" ]] || die "--repo-trust must be trusted|unknown"
+[[ "${BACKEND}" == "dmux" || "${BACKEND}" == "tmux" || "${BACKEND}" == "claude_worktree" ]] || die "--backend must be dmux|tmux|claude_worktree"
+
+if ! [[ "${INSTANCES}" =~ ^[0-9]+$ ]] || [[ "${INSTANCES}" -lt 1 ]]; then
+  die "--instances must be a positive integer"
+fi
+
+# Make dmux usable out-of-the-box for this workflow without requiring manual template setup.
+if [[ "${BACKEND}" == "dmux" && -z "${LACP_DMUX_RUN_TEMPLATE:-}" ]]; then
+  export LACP_DMUX_RUN_TEMPLATE='dmux run --session "{session}" --command "{command}"'
+fi
+if [[ "${BACKEND}" == "dmux" && -z "${LACP_DMUX_TUI_TEMPLATE:-}" ]]; then
+  export LACP_DMUX_TUI_TEMPLATE='dmux attach --session "{session}"'
+fi
+
+results='[]'
+succeeded=0
+failed=0
+
+for i in $(seq 1 "${INSTANCES}"); do
+  launch_session="${SESSION}"
+  if [[ "${BACKEND}" != "dmux" ]]; then
+    launch_session="${SESSION}-${i}"
+  fi
+
+  launch_task="up:${SESSION} instance ${i}/${INSTANCES}"
+  if [[ "${BACKEND}" == "dmux" ]]; then
+    launch_task="up:${SESSION} pane ${i}/${INSTANCES}"
+  fi
+
+  args=(
+    run
+    --task "${launch_task}"
+    --backend "${BACKEND}"
+    --session "${launch_session}"
+    --command "${COMMAND_TEXT}"
+    --repo-trust "${REPO_TRUST}"
+    --internet "${INTERNET}"
+    --external-code "${EXTERNAL_CODE}"
+    --cpu-heavy "${CPU_HEAVY}"
+    --long-run "${LONG_RUN}"
+    --json
+  )
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    args+=(--dry-run)
+  fi
+
+  set +e
+  output="$("${ROOT}/bin/lacp-orchestrate" "${args[@]}" 2>&1)"
+  rc=$?
+  set -e
+
+  item="$(jq -n \
+    --argjson index "${i}" \
+    --arg backend "${BACKEND}" \
+    --arg session "${launch_session}" \
+    --arg command "${COMMAND_TEXT}" \
+    --argjson ok "$( [[ "${rc}" -eq 0 ]] && echo true || echo false )" \
+    --argjson exit_code "${rc}" \
+    --arg output "${output}" \
+    '{index:$index,backend:$backend,session:$session,command:$command,ok:$ok,exit_code:$exit_code,output:$output}')"
+  results="$(jq -c --argjson item "${item}" '. + [$item]' <<<"${results}")"
+
+  if [[ "${rc}" -eq 0 ]]; then
+    succeeded=$((succeeded + 1))
+  else
+    failed=$((failed + 1))
+  fi
+done
+
+attached=false
+attach_output=""
+if [[ "${ATTACH}" == "true" && "${BACKEND}" == "dmux" && "${DRY_RUN}" != "true" && "${failed}" -eq 0 ]]; then
+  set +e
+  attach_output="$("${ROOT}/bin/lacp-swarm" tui --session "${SESSION}" --json 2>&1)"
+  attach_rc=$?
+  set -e
+  if [[ "${attach_rc}" -eq 0 ]]; then
+    attached=true
+  fi
+fi
+
+ok=true
+if [[ "${failed}" -gt 0 ]]; then
+  ok=false
+fi
+
+if [[ "${AS_JSON}" == "true" ]]; then
+  jq -n \
+    --argjson ok "${ok}" \
+    --arg backend "${BACKEND}" \
+    --arg session "${SESSION}" \
+    --argjson instances "${INSTANCES}" \
+    --argjson succeeded "${succeeded}" \
+    --argjson failed "${failed}" \
+    --argjson attach "${attached}" \
+    --arg attach_output "${attach_output}" \
+    --argjson dry_run "$( [[ "${DRY_RUN}" == "true" ]] && echo true || echo false )" \
+    --argjson results "${results}" \
+    '{
+      ok:$ok,
+      backend:$backend,
+      session:$session,
+      summary:{
+        instances:($instances|tonumber),
+        succeeded:$succeeded,
+        failed:$failed,
+        dry_run:$dry_run,
+        attached:$attach
+      },
+      attach_output:(if $attach_output == "" then null else $attach_output end),
+      launches:$results
+    }'
+else
+  log "up session=${SESSION} backend=${BACKEND} instances=${INSTANCES} succeeded=${succeeded} failed=${failed} dry_run=${DRY_RUN}"
+  if [[ "${ATTACH}" == "true" && "${BACKEND}" == "dmux" ]]; then
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      log "dry-run: skip dmux attach"
+    elif [[ "${attached}" == "true" ]]; then
+      log "attached to dmux session=${SESSION}"
+    elif [[ -n "${attach_output}" ]]; then
+      log "dmux attach output: ${attach_output}"
+    fi
+  fi
+fi
+
+[[ "${ok}" == "true" ]]
