@@ -187,10 +187,12 @@ LACP is not for:
 `bin/lacp bootstrap-system --profile starter --with-verify`:
 - creates `.env` from template when missing
 - auto-detects and installs missing Homebrew dependencies on macOS (disable with `--no-auto-deps`)
+- applies the `starter` policy pack defaults (starter profile)
 - ensures required root/data paths exist
 - scaffolds safe starter automation scripts when missing
 - runs onboarding preflight checks
 - runs verification and produces baseline artifacts
+- runs fresh-machine confidence checks (`lacp-test --quick --isolated` + core command probes)
 
 ## 5 Minute Smoke Test
 
@@ -264,6 +266,7 @@ Notes:
 - `bin/lacp-policy-pack`: list/apply policy baseline packs (`starter`, `strict`, `enterprise`)
 - `bin/lacp-release-prepare`: one-command pre-live discipline (`release-gate` + `canary` + `status` + `report`)
 - `bin/lacp-release-publish`: local-only release artifact builder/publisher (`tar.gz` + `SHA256SUMS` + optional `gh release`)
+- `bin/lacp-release-verify`: one-command release verification (`release-publish --skip-gh` + checksum + archive + brew dry-run)
 - `bin/lacp-vendor-watch`: monitor local Claude/Codex versions and upstream docs/changelog drift
 - `bin/lacp-automations-tui`: unified local automation dashboard (`schedule/orchestrate/worktree/swarm/wrappers/vendor-watch`)
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
@@ -276,6 +279,7 @@ Notes:
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
 - `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
 - `bin/lacp-orchestrate`: optional dmux/tmux/claude_worktree orchestration adapter (still routed through LACP gates)
+  - default backend is `dmux` when available; falls back to `tmux`
 - `bin/lacp-worktree`: manage git worktree lifecycle (`list/create/remove/prune/gc/doctor`)
 - `bin/lacp-swarm`: dmux-first swarm workflow (`init/plan/launch/up/tui/status`) with policy-gated batch execution
   - supports advisory `reservations` per job and reports collisions in plan/artifacts (no hard locks)
@@ -347,6 +351,8 @@ See:
 - `docs/framework-scope.md`
 - `docs/runbook.md`
 - `docs/release-checklist.md`
+- `docs/local-dev-loop.md`
+- `docs/troubleshooting.md`
 - `docs/incident-response.md`
 - `CONTRIBUTING.md`
 - `SECURITY.md`
@@ -386,6 +392,7 @@ bin/lacp canary --since-clean-baseline --json | jq
 bin/lacp vendor-watch --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
+bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
 
 # one-task control loop (includes failure classification + remediation hints in .analysis)
 bin/lacp loop --task "trusted smoke" --repo-trust trusted --dry-run --json -- /bin/echo hello

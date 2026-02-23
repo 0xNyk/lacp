@@ -30,6 +30,7 @@ Ops:
   policy-pack   Apply named policy baseline packs (starter/strict/enterprise)
   release-prepare Run full pre-live go/no-go discipline checks
   release-publish Build + publish release artifacts from local machine (no Actions)
+  release-verify Verify release artifacts + checksums + tap install dry-run
   vendor-watch  Track Claude/Codex versions + docs/changelog drift
   automations-tui Unified dashboard for local automation health/status
   cache-audit   Analyze prompt cache effectiveness from local histories
@@ -138,6 +139,9 @@ case "${cmd}" in
     ;;
   release-publish)
     exec "${ROOT}/bin/lacp-release-publish" "$@"
+    ;;
+  release-verify)
+    exec "${ROOT}/bin/lacp-release-verify" "$@"
     ;;
   vendor-watch)
     exec "${ROOT}/bin/lacp-vendor-watch" "$@"

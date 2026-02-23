@@ -8,11 +8,13 @@ Use this checklist before tagging any release.
 cd ~/control/frameworks/lacp
 bin/lacp-test --isolated
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
 ```
 
 Pass criteria:
 - `lacp-test --isolated` exits `0`
 - `release-prepare.ok == true`
+- `release-verify.ok == true`
 
 ## 2) Verify docs + changelog
 
@@ -58,7 +60,7 @@ This command:
 - writes `SHA256SUMS`
 - creates or updates GitHub Release assets via `gh` (unless `--skip-gh`)
 
-## 6) Verify GitHub release assets
+## 6) Verify GitHub release assets (optional)
 
 ```bash
 gh release view vX.Y.Z -R 0xNyk/lacp
