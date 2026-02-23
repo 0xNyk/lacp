@@ -25,6 +25,10 @@ Options:
   --no-require-managed-wrappers  Do not require LACP-managed local claude/codex wrappers
   --skip-cache-gate              Skip cache guard in release-gate stage
   --skip-skill-audit-gate        Skip skill audit in release-gate stage
+  --auto-optimize-on-fail        Run canary optimize loop when canary stage fails
+  --optimize-iterations <n>      Max optimize iterations (default: 3)
+  --optimize-hours <n>           Verify hours per optimize iteration (default: LACP_VERIFY_HOURS)
+  --no-optimize-apply-env        Do not persist canary-optimize tuning into .env
   --auto-rollback-on-fail        Trigger lacp-auto-rollback on failed checks
   --json                         Emit JSON payload
   -h, --help                     Show help
@@ -36,6 +40,10 @@ CANARY_DAYS="${LACP_CANARY_DAYS}"
 SKIP_CACHE_GATE=0
 SKIP_SKILL_AUDIT_GATE=0
 AUTO_ROLLBACK=0
+AUTO_OPTIMIZE=0
+OPTIMIZE_ITERATIONS=3
+OPTIMIZE_HOURS="${LACP_VERIFY_HOURS}"
+OPTIMIZE_APPLY_ENV=1
 SINCE_CLEAN_BASELINE=0
 BASELINE_FILE=""
 REQUIRE_MANAGED_WRAPPERS=1
@@ -50,6 +58,10 @@ while [[ $# -gt 0 ]]; do
     --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
     --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
     --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --auto-optimize-on-fail) AUTO_OPTIMIZE=1; shift ;;
+    --optimize-iterations) OPTIMIZE_ITERATIONS="$2"; shift 2 ;;
+    --optimize-hours) OPTIMIZE_HOURS="$2"; shift 2 ;;
+    --no-optimize-apply-env) OPTIMIZE_APPLY_ENV=0; shift ;;
     --auto-rollback-on-fail) AUTO_ROLLBACK=1; shift ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -76,6 +88,7 @@ status_json=""
 report_json=""
 rollback_json="null"
 wrapper_gate_json="null"
+optimize_json="null"
 
 release_gate_rc=0
 canary_rc=0
@@ -83,6 +96,7 @@ status_rc=0
 report_rc=0
 rollback_rc=0
 wrapper_gate_rc=0
+optimize_rc=0
 
 gate_args=("${ROOT}/bin/lacp-release-gate" --json)
 if [[ "${QUICK}" -eq 1 ]]; then
@@ -105,6 +119,24 @@ fi
 run_capture canary_json "${canary_args[@]}" || canary_rc=$?
 run_capture status_json "${ROOT}/bin/lacp-status-report" --json || status_rc=$?
 run_capture report_json "${ROOT}/bin/lacp-report" --json || report_rc=$?
+
+canary_score() {
+  python3 - <<'PY' "$1"
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+s = data.get("summary", {}) or {}
+ok = bool(data.get("ok", False))
+hit = float(s.get("avg_hit_rate_at_k", 0.0) or 0.0)
+mrr = float(s.get("avg_mrr_at_k", 0.0) or 0.0)
+triage = int(s.get("triage_issues_total", 0) or 0)
+gate = int(s.get("gate_failures", 0) or 0)
+bench = int(s.get("benchmark_count", 0) or 0)
+score = (1000 if ok else 0) + (hit * 100) + (mrr * 100) - (triage * 5) - (gate * 15) + bench
+print(f"{score:.6f}")
+PY
+}
 
 if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]]; then
   wrapper_gate_json="$(python3 - <<'PY' "${report_json}" "${LACP_WRAPPER_BIN_DIR}"
@@ -141,8 +173,64 @@ PY
 )" || wrapper_gate_rc=$?
 fi
 
+canary_ok_now="false"
+if echo "${canary_json}" | jq -e '.ok == true' >/dev/null 2>&1; then canary_ok_now="true"; fi
+
+if [[ "${AUTO_OPTIMIZE}" -eq 1 && "${canary_ok_now}" != "true" ]]; then
+  env_file="${ROOT}/.env"
+  env_backup=""
+  if [[ -f "${env_file}" ]]; then
+    env_backup="$(mktemp)"
+    cp "${env_file}" "${env_backup}"
+  fi
+
+  pre_score="$(canary_score "${canary_json}")"
+  optimize_args=("${ROOT}/bin/lacp-canary-optimize" --iterations "${OPTIMIZE_ITERATIONS}" --hours "${OPTIMIZE_HOURS}" --days "${CANARY_DAYS}" --json)
+  if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+    optimize_args+=(--since-clean-baseline)
+  else
+    optimize_args+=(--no-since-clean-baseline)
+  fi
+  if [[ "${OPTIMIZE_APPLY_ENV}" -eq 0 ]]; then
+    optimize_args+=(--no-apply-env)
+  fi
+  run_capture optimize_json "${optimize_args[@]}" || optimize_rc=$?
+
+  run_capture canary_json "${canary_args[@]}" || canary_rc=$?
+  post_score="$(canary_score "${canary_json}")"
+  rollback_applied="false"
+  if python3 - <<'PY' "${post_score}" "${pre_score}"
+import sys
+raise SystemExit(0 if float(sys.argv[1]) < float(sys.argv[2]) else 1)
+PY
+  then
+    if [[ "${OPTIMIZE_APPLY_ENV}" -eq 1 && -n "${env_backup}" ]]; then
+      cp "${env_backup}" "${env_file}"
+      run_capture canary_json "${canary_args[@]}" || canary_rc=$?
+      rollback_applied="true"
+      post_score="$(canary_score "${canary_json}")"
+    fi
+  fi
+  optimize_json="$(jq -n \
+    --arg pre_score "${pre_score}" \
+    --arg post_score "${post_score}" \
+    --argjson rollback_applied "$([[ "${rollback_applied}" == "true" ]] && echo true || echo false)" \
+    --argjson optimize_rc "${optimize_rc}" \
+    --arg raw "${optimize_json}" \
+    '{
+      rc:$optimize_rc,
+      rollback_applied:$rollback_applied,
+      pre_score:($pre_score|tonumber),
+      post_score:($post_score|tonumber),
+      result:(try ($raw | fromjson) catch {ok:false, raw:$raw})
+    }')"
+  if [[ -n "${env_backup}" ]]; then
+    rm -f "${env_backup}"
+  fi
+fi
+
 overall_ok="true"
-if [[ "${release_gate_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 || "${wrapper_gate_rc}" -ne 0 ]]; then
+if [[ "${release_gate_rc}" -ne 0 || "${canary_rc}" -ne 0 || "${status_rc}" -ne 0 || "${report_rc}" -ne 0 || "${wrapper_gate_rc}" -ne 0 || "${optimize_rc}" -ne 0 ]]; then
   overall_ok="false"
 else
   if [[ "$(echo "${canary_json}" | jq -r '.ok // false')" != "true" ]]; then overall_ok="false"; fi
@@ -180,6 +268,10 @@ result_json="$(jq -n \
   --arg baseline_file "${BASELINE_FILE}" \
   --argjson skip_cache_gate "$([[ "${SKIP_CACHE_GATE}" -eq 1 ]] && echo true || echo false)" \
   --argjson skip_skill_audit_gate "$([[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson auto_optimize "$([[ "${AUTO_OPTIMIZE}" -eq 1 ]] && echo true || echo false)" \
+  --argjson optimize_iterations "${OPTIMIZE_ITERATIONS}" \
+  --argjson optimize_hours "${OPTIMIZE_HOURS}" \
+  --argjson optimize_apply_env "$([[ "${OPTIMIZE_APPLY_ENV}" -eq 1 ]] && echo true || echo false)" \
   --argjson require_managed_wrappers "$([[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 1 ]] && echo true || echo false)" \
   --argjson release_gate_ok "$([[ "${release_gate_ok}" == "true" ]] && echo true || echo false)" \
   --argjson canary_ok "$([[ "${canary_ok}" == "true" ]] && echo true || echo false)" \
@@ -192,12 +284,14 @@ result_json="$(jq -n \
   --argjson status_rc "${status_rc}" \
   --argjson report_rc "${report_rc}" \
   --argjson wrapper_gate_rc "${wrapper_gate_rc}" \
+  --argjson optimize_rc "${optimize_rc}" \
   --argjson rollback_rc "${rollback_rc}" \
   --arg release_gate_raw "${release_gate_json}" \
   --arg canary_raw "${canary_json}" \
   --arg status_raw "${status_json}" \
   --arg report_raw "${report_json}" \
   --arg wrapper_gate_raw "${wrapper_gate_json}" \
+  --arg optimize_raw "${optimize_json}" \
   --arg rollback_raw "${rollback_json}" \
   '{
     schema_version: $schema_version,
@@ -211,6 +305,10 @@ result_json="$(jq -n \
       baseline_file: (if $baseline_file == "" then null else $baseline_file end),
       skip_cache_gate: $skip_cache_gate,
       skip_skill_audit_gate: $skip_skill_audit_gate,
+      auto_optimize_on_fail: $auto_optimize,
+      optimize_iterations: $optimize_iterations,
+      optimize_hours: $optimize_hours,
+      optimize_apply_env: $optimize_apply_env,
       require_managed_wrappers: $require_managed_wrappers,
       auto_rollback_on_fail: $auto_rollback
     },
@@ -240,6 +338,10 @@ result_json="$(jq -n \
         ok: (if $require_managed_wrappers then $wrappers_ok else true end),
         result: (if $require_managed_wrappers then (try ($wrapper_gate_raw | fromjson) catch {ok:false, raw:$wrapper_gate_raw}) else null end)
       },
+      optimize: {
+        rc: $optimize_rc,
+        result: (if $optimize_raw == "null" then null else (try ($optimize_raw | fromjson) catch {ok:false, raw:$optimize_raw}) end)
+      },
       rollback: {
         rc: $rollback_rc,
         result: (if $rollback_raw == "null" then null else {raw: $rollback_raw} end)
@@ -253,7 +355,7 @@ else
   echo "${result_json}" | jq -r '
     "LACP Release Prepare",
     "  ok=\(.ok) quick=\(.options.quick) canary_days=\(.options.canary_days)",
-    "  rc.release_gate=\(.stages.release_gate.rc) rc.canary=\(.stages.canary.rc) rc.status=\(.stages.status.rc) rc.report=\(.stages.report.rc) rc.wrappers=\(.stages.wrappers.rc)",
+    "  rc.release_gate=\(.stages.release_gate.rc) rc.canary=\(.stages.canary.rc) rc.status=\(.stages.status.rc) rc.report=\(.stages.report.rc) rc.wrappers=\(.stages.wrappers.rc) rc.optimize=\(.stages.optimize.rc)",
     "  auto_rollback=\(.options.auto_rollback_on_fail) rc.rollback=\(.stages.rollback.rc)"
   '
 fi

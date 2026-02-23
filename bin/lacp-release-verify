@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-release-verify --tag <vX.Y.Z|X.Y.Z> [options]
+
+Run one-command local release verification:
+  1) build release artifacts via lacp-release-publish (--skip-gh)
+  2) verify SHA256SUMS integrity
+  3) verify archive structure
+  4) verify Homebrew tap install path via dry-run
+
+Options:
+  --tag <tag>                    Release tag (required, e.g. v0.2.1 or 0.2.1)
+  --repo <owner/repo>            Repo override forwarded to release-publish
+  --output-dir <path>            Output directory for release artifacts
+  --skip-prepare                 Skip release-prepare gate in release-publish
+  --quick                        Use quick release-prepare mode
+  --canary-days <n>              release-prepare canary days (default: 7)
+  --since-clean-baseline         release-prepare canary baseline mode
+  --baseline-file <path>         release-prepare baseline file override
+  --skip-cache-gate              Skip cache gate in release-prepare
+  --skip-skill-audit-gate        Skip skill-audit gate in release-prepare
+  --no-require-managed-wrappers  Do not require managed wrappers in release-prepare
+  --allow-dirty                  Allow uncommitted/staged changes
+  --skip-brew-install-check      Skip brew tap install dry-run check
+  --json                         Emit JSON payload
+  -h, --help                     Show help
+EOF
+}
+
+TAG=""
+REPO=""
+OUTPUT_DIR=""
+SKIP_PREPARE=0
+QUICK=0
+CANARY_DAYS="${LACP_CANARY_DAYS}"
+SINCE_CLEAN_BASELINE=0
+BASELINE_FILE=""
+SKIP_CACHE_GATE=0
+SKIP_SKILL_AUDIT_GATE=0
+REQUIRE_MANAGED_WRAPPERS=1
+ALLOW_DIRTY=0
+SKIP_BREW_INSTALL_CHECK=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag) TAG="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --skip-prepare) SKIP_PREPARE=1; shift ;;
+    --quick) QUICK=1; shift ;;
+    --canary-days) CANARY_DAYS="$2"; shift 2 ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
+    --skip-cache-gate) SKIP_CACHE_GATE=1; shift ;;
+    --skip-skill-audit-gate) SKIP_SKILL_AUDIT_GATE=1; shift ;;
+    --no-require-managed-wrappers) REQUIRE_MANAGED_WRAPPERS=0; shift ;;
+    --allow-dirty) ALLOW_DIRTY=1; shift ;;
+    --skip-brew-install-check) SKIP_BREW_INSTALL_CHECK=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+require_cmd jq
+require_cmd shasum
+require_cmd tar
+
+[[ -n "${TAG}" ]] || die "--tag is required"
+
+publish_args=("${ROOT}/bin/lacp-release-publish" --tag "${TAG}" --skip-gh --json)
+publish_args+=(--canary-days "${CANARY_DAYS}")
+if [[ -n "${REPO}" ]]; then
+  publish_args+=(--repo "${REPO}")
+fi
+if [[ -n "${OUTPUT_DIR}" ]]; then
+  publish_args+=(--output-dir "${OUTPUT_DIR}")
+fi
+if [[ "${SKIP_PREPARE}" -eq 1 ]]; then
+  publish_args+=(--skip-prepare)
+fi
+if [[ "${QUICK}" -eq 1 ]]; then
+  publish_args+=(--quick)
+fi
+if [[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]]; then
+  publish_args+=(--since-clean-baseline)
+fi
+if [[ -n "${BASELINE_FILE}" ]]; then
+  publish_args+=(--baseline-file "${BASELINE_FILE}")
+fi
+if [[ "${SKIP_CACHE_GATE}" -eq 1 ]]; then
+  publish_args+=(--skip-cache-gate)
+fi
+if [[ "${SKIP_SKILL_AUDIT_GATE}" -eq 1 ]]; then
+  publish_args+=(--skip-skill-audit-gate)
+fi
+if [[ "${REQUIRE_MANAGED_WRAPPERS}" -eq 0 ]]; then
+  publish_args+=(--no-require-managed-wrappers)
+fi
+if [[ "${ALLOW_DIRTY}" -eq 1 ]]; then
+  publish_args+=(--allow-dirty)
+fi
+
+publish_json="$("${publish_args[@]}")"
+archive_path="$(echo "${publish_json}" | jq -r '.artifacts.archive')"
+checksums_path="$(echo "${publish_json}" | jq -r '.artifacts.checksums')"
+tag_ref="$(echo "${publish_json}" | jq -r '.tag')"
+version="$(echo "${publish_json}" | jq -r '.version')"
+archive_name="$(basename "${archive_path}")"
+
+[[ -f "${archive_path}" ]] || die "archive missing: ${archive_path}"
+[[ -f "${checksums_path}" ]] || die "checksums missing: ${checksums_path}"
+
+(
+  cd "$(dirname "${checksums_path}")"
+  shasum -a 256 -c "$(basename "${checksums_path}")" >/dev/null
+)
+
+archive_prefix_ok="false"
+if tar -tzf "${archive_path}" | head -n 1 | rg -q "^lacp-${version}/"; then
+  archive_prefix_ok="true"
+fi
+[[ "${archive_prefix_ok}" == "true" ]] || die "archive structure invalid: expected lacp-${version}/ prefix"
+
+brew_check_ok=true
+brew_check_reason="ok"
+brew_check_command="brew install --dry-run 0xnyk/lacp/lacp"
+if [[ "${SKIP_BREW_INSTALL_CHECK}" -eq 1 ]]; then
+  brew_check_reason="skipped-by-flag"
+else
+  if ! command -v brew >/dev/null 2>&1; then
+    brew_check_ok=false
+    brew_check_reason="brew-missing"
+  elif ! brew info 0xnyk/lacp/lacp >/dev/null 2>&1; then
+    brew_check_ok=false
+    brew_check_reason="tap-or-formula-unavailable"
+  elif ! brew install --dry-run 0xnyk/lacp/lacp >/dev/null 2>&1; then
+    brew_check_ok=false
+    brew_check_reason="dry-run-install-failed"
+  fi
+fi
+
+ok=true
+if [[ "${brew_check_ok}" != "true" && "${SKIP_BREW_INSTALL_CHECK}" -ne 1 ]]; then
+  ok=false
+fi
+
+result_json="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "release_verify" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg tag "${tag_ref}" \
+  --arg version "${version}" \
+  --arg archive "${archive_path}" \
+  --arg checksums "${checksums_path}" \
+  --arg archive_name "${archive_name}" \
+  --arg brew_reason "${brew_check_reason}" \
+  --arg brew_cmd "${brew_check_command}" \
+  --argjson ok "$([[ "${ok}" == "true" ]] && echo true || echo false)" \
+  --argjson skip_brew_check "$([[ "${SKIP_BREW_INSTALL_CHECK}" -eq 1 ]] && echo true || echo false)" \
+  --argjson brew_ok "$([[ "${brew_check_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson publish "${publish_json}" \
+  '{
+    schema_version:$schema_version,
+    kind:$kind,
+    generated_at_utc:$generated_at_utc,
+    ok:$ok,
+    tag:$tag,
+    version:$version,
+    checks:{
+      archive_exists:true,
+      checksums_exists:true,
+      sha256_verified:true,
+      archive_prefix_verified:true,
+      brew_install_dry_run:{
+        skipped:$skip_brew_check,
+        ok:(if $skip_brew_check then null else $brew_ok end),
+        reason:$brew_reason,
+        command:$brew_cmd
+      }
+    },
+    artifacts:{
+      archive:$archive,
+      checksums:$checksums,
+      archive_name:$archive_name
+    },
+    publish:$publish
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  echo "${result_json}" | jq -r '
+    "LACP Release Verify",
+    "  ok=\(.ok) tag=\(.tag) version=\(.version)",
+    "  sha256_verified=\(.checks.sha256_verified) archive_prefix_verified=\(.checks.archive_prefix_verified)",
+    "  brew_install_dry_run=\(.checks.brew_install_dry_run.ok // "skipped") reason=\(.checks.brew_install_dry_run.reason)",
+    "  archive=\(.artifacts.archive)"
+  '
+fi
+
+if [[ "${ok}" != "true" ]]; then
+  exit 1
+fi

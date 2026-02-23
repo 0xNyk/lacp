@@ -34,6 +34,8 @@ PY
 
 ok_json="$("/bin/bash" "${ROOT}/bin/lacp-release-prepare" --quick --skip-cache-gate --skip-skill-audit-gate --no-require-managed-wrappers --json)"
 [[ "$(echo "${ok_json}" | jq -r '.ok')" == "true" ]] || { echo "[release-prepare-test] FAIL expected healthy release-prepare" >&2; exit 1; }
+[[ "$(echo "${ok_json}" | jq -r '.options.auto_optimize_on_fail')" == "false" ]] || { echo "[release-prepare-test] FAIL expected auto_optimize_on_fail=false by default" >&2; exit 1; }
+[[ "$(echo "${ok_json}" | jq -r '.stages.optimize.rc')" == "0" ]] || { echo "[release-prepare-test] FAIL expected optimize rc=0 by default" >&2; exit 1; }
 
 python3 - <<'PY' "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 import json
