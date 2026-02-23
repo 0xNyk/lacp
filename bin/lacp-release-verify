@@ -136,15 +136,44 @@ brew_check_command="brew install --dry-run 0xnyk/lacp/lacp"
 if [[ "${SKIP_BREW_INSTALL_CHECK}" -eq 1 ]]; then
   brew_check_reason="skipped-by-flag"
 else
+  brew_formula="0xnyk/lacp/lacp"
+  brew_out=""
+  run_brew_check() {
+    local cmd="$1"
+    set +e
+    brew_out="$(eval "${cmd}" 2>&1)"
+    local rc=$?
+    set -e
+    return "${rc}"
+  }
+
   if ! command -v brew >/dev/null 2>&1; then
     brew_check_ok=false
     brew_check_reason="brew-missing"
-  elif ! brew info 0xnyk/lacp/lacp >/dev/null 2>&1; then
+  elif ! brew info "${brew_formula}" >/dev/null 2>&1; then
     brew_check_ok=false
     brew_check_reason="tap-or-formula-unavailable"
-  elif ! brew install --dry-run 0xnyk/lacp/lacp >/dev/null 2>&1; then
-    brew_check_ok=false
-    brew_check_reason="dry-run-install-failed"
+  else
+    brew_check_command="brew install --dry-run ${brew_formula}"
+    if ! run_brew_check "${brew_check_command}"; then
+      if echo "${brew_out}" | rg -qi "HEAD-only formula"; then
+        brew_check_command="brew install --dry-run --HEAD ${brew_formula}"
+        if run_brew_check "${brew_check_command}"; then
+          brew_check_ok=true
+          brew_check_reason="ok-head"
+        else
+          brew_check_ok=false
+          brew_check_reason="dry-run-install-failed-head"
+        fi
+      elif echo "${brew_out}" | rg -qi "Cellar is not writable"; then
+        # Treat permission-only failures as non-fatal in local verify mode.
+        brew_check_ok=true
+        brew_check_reason="cellar-not-writable-nonfatal"
+      else
+        brew_check_ok=false
+        brew_check_reason="dry-run-install-failed"
+      fi
+    fi
   fi
 fi
 

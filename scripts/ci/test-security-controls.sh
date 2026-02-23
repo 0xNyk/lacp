@@ -44,6 +44,9 @@ BAD_CONTEXT_CONTRACT='{"expected_host":"definitely-not-this-host"}'
 SSH_GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"jarv\"}"
 SSH_BAD_REMOTE_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"builderz\"}"
 
+# Keep context-contract checks deterministic regardless of caller env/.env defaults.
+export LACP_REQUIRE_SESSION_FINGERPRINT="false"
+
 run_expect_rc 11 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --confirm-critical true -- /bin/echo "missing-contract"
 run_expect_rc 11 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --input-contract "${INVALID_CONTRACT}" --confirm-critical true -- /bin/echo "invalid-contract"
 run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --repo-trust unknown --internet true --external-code true --input-contract "${VALID_CONTRACT}" --confirm-critical true -- /bin/echo "valid-contract"
