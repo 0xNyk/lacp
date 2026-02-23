@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-optimize-loop [options]
+
+Run a bounded weekly optimization loop:
+  1) verify/context/lessons health checks
+  2) canary evaluation
+  3) optional canary optimization if unhealthy
+  4) emit concrete improvement proposals
+
+Options:
+  --iterations <n>         Max loop iterations (default: 2)
+  --hours <n>              Verify hours per iteration (default: LACP_VERIFY_HOURS)
+  --days <n>               Canary days (default: LACP_CANARY_DAYS)
+  --repo-root <path>       Repo root for context audit (default: current dir)
+  --dry-run                Do not run verify/canary-optimize mutating steps
+  --json                   Emit JSON output
+EOF
+}
+
+ITERATIONS=2
+HOURS="${LACP_VERIFY_HOURS}"
+DAYS="${LACP_CANARY_DAYS}"
+REPO_ROOT="."
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --iterations) ITERATIONS="$2"; shift 2 ;;
+    --hours) HOURS="$2"; shift 2 ;;
+    --days) DAYS="$2"; shift 2 ;;
+    --repo-root) REPO_ROOT="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if ! [[ "${ITERATIONS}" =~ ^[0-9]+$ ]] || [[ "${ITERATIONS}" -lt 1 ]]; then
+  die "--iterations must be a positive integer"
+fi
+
+run_capture() {
+  local out_var="$1"
+  shift
+  local captured
+  set +e
+  captured="$("$@" 2>&1)"
+  local rc=$?
+  set -e
+  captured="$(printf '%s' "${captured}" | tr -d '\000-\010\013\014\016-\037')"
+  printf -v "${out_var}" '%s' "${captured}"
+  return "${rc}"
+}
+
+attempts='[]'
+final_ok="false"
+
+for i in $(seq 1 "${ITERATIONS}"); do
+  verify_out='{"ok":true,"skipped":true}'
+  verify_rc=0
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    run_capture verify_out "${ROOT}/bin/lacp-verify" --hours "${HOURS}" || verify_rc=$?
+  fi
+
+  context_out='{}'
+  context_rc=0
+  run_capture context_out "${ROOT}/bin/lacp-context" audit --repo-root "${REPO_ROOT}" --json || context_rc=$?
+
+  lessons_out='{}'
+  lessons_rc=0
+  run_capture lessons_out "${ROOT}/bin/lacp-lessons" lint --json || lessons_rc=$?
+
+  canary_out='{}'
+  canary_rc=0
+  run_capture canary_out "${ROOT}/bin/lacp-canary" --days "${DAYS}" --json || canary_rc=$?
+
+  optimize_out='null'
+  optimize_rc=0
+  if [[ "${canary_rc}" -ne 0 || "$(echo "${canary_out}" | jq -r '.ok // false')" != "true" ]]; then
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      run_capture optimize_out "${ROOT}/bin/lacp-canary-optimize" --iterations 1 --hours "${HOURS}" --days "${DAYS}" --json || optimize_rc=$?
+    else
+      optimize_out='{"ok":false,"dry_run":true,"kind":"canary_optimize"}'
+    fi
+  fi
+
+  attempt="$(jq -n \
+    --argjson iteration "${i}" \
+    --argjson verify_rc "${verify_rc}" \
+    --arg verify_out "${verify_out}" \
+    --argjson context_rc "${context_rc}" \
+    --arg context_out "${context_out}" \
+    --argjson lessons_rc "${lessons_rc}" \
+    --arg lessons_out "${lessons_out}" \
+    --argjson canary_rc "${canary_rc}" \
+    --arg canary_out "${canary_out}" \
+    --argjson optimize_rc "${optimize_rc}" \
+    --arg optimize_out "${optimize_out}" \
+    '{
+      iteration:$iteration,
+      verify:{rc:$verify_rc, output:(try ($verify_out|fromjson) catch {"raw":$verify_out})},
+      context:{rc:$context_rc, output:(try ($context_out|fromjson) catch {"raw":$context_out})},
+      lessons:{rc:$lessons_rc, output:(try ($lessons_out|fromjson) catch {"raw":$lessons_out})},
+      canary:{rc:$canary_rc, output:(try ($canary_out|fromjson) catch {"raw":$canary_out})},
+      optimize:{rc:$optimize_rc, output:(if $optimize_out == "null" then null else (try ($optimize_out|fromjson) catch {"raw":$optimize_out}) end)}
+    }')"
+  attempts="$(jq -c --argjson item "${attempt}" '. + [$item]' <<<"${attempts}")"
+
+  if [[ "${canary_rc}" -eq 0 && "$(echo "${canary_out}" | jq -r '.ok // false')" == "true" && "${context_rc}" -eq 0 && "${lessons_rc}" -eq 0 ]]; then
+    final_ok="true"
+    break
+  fi
+done
+
+proposals="$(jq -n \
+  --argjson attempts "${attempts}" '
+  def latest: $attempts[-1];
+  [
+    (if (latest.context.output.ok // false) != true then "Run: lacp context minimize --repo-root . --json" else empty end),
+    (if (latest.lessons.output.ok // false) != true then "Run: lacp lessons lint --json and deduplicate stale rules" else empty end),
+    (if (latest.canary.output.ok // false) != true then "Run: lacp canary-optimize --iterations 3 --hours 24 --json" else empty end),
+    "Run weekly: lacp optimize-loop --iterations 2 --hours 24 --days 7 --json"
+  ]')"
+
+result="$(jq -n \
+  --argjson ok "$([[ "${final_ok}" == "true" ]] && echo true || echo false)" \
+  --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+  --argjson iterations "${ITERATIONS}" \
+  --argjson hours "${HOURS}" \
+  --argjson days "${DAYS}" \
+  --argjson attempts "${attempts}" \
+  --argjson proposals "${proposals}" \
+  '{
+    ok:$ok,
+    kind:"optimize_loop",
+    options:{dry_run:$dry_run,iterations:$iterations,hours:$hours,days:$days},
+    attempts:$attempts,
+    proposals:$proposals
+  }')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  echo "${result}" | jq .
+else
+  echo "${result}" | jq -r '"ok=\(.ok) iterations=\(.options.iterations) dry_run=\(.options.dry_run)"'
+  echo "${result}" | jq -r '.proposals[] | "proposal: \(.)"'
+fi
+
+[[ "${final_ok}" == "true" || "${DRY_RUN}" -eq 1 ]]

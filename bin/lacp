@@ -20,6 +20,9 @@ Core:
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop
   up            dmux-style multi-instance launch with auto session/pane fanout
+  context       Minimal context-file lifecycle (template/audit/minimize/regression)
+  lessons       Lessons/rule linting and dedupe-safe rule updates
+  optimize-loop Weekly benchmark/context optimization control loop
   trace-triage  Cluster recent failed runs into root-cause groups
   context-profile List/render reusable context-contract profiles
   session-fingerprint Emit deterministic runtime session fingerprint
@@ -117,6 +120,15 @@ case "${cmd}" in
     ;;
   up)
     exec "${ROOT}/bin/lacp-up" "$@"
+    ;;
+  context)
+    exec "${ROOT}/bin/lacp-context" "$@"
+    ;;
+  lessons)
+    exec "${ROOT}/bin/lacp-lessons" "$@"
+    ;;
+  optimize-loop)
+    exec "${ROOT}/bin/lacp-optimize-loop" "$@"
     ;;
   trace-triage)
     exec "${ROOT}/bin/lacp-trace-triage" "$@"

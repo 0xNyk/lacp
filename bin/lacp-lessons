@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-lessons lint [--file <path>] [--max-rules <n>] [--json]
+  lacp-lessons add-rule --rule <text> [--file <path>] [--json]
+
+Maintain compact, deduplicated self-improvement lessons.
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+cmd_lint() {
+  local file="${ROOT}/tasks/lessons.md"
+  local max_rules="120"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file) file="$2"; shift 2 ;;
+      --max-rules) max_rules="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  local result
+  result="$(python3 - <<'PY' "${file}" "${max_rules}"
+import json, pathlib, re, sys
+
+path = pathlib.Path(sys.argv[1]).expanduser().resolve()
+max_rules = int(sys.argv[2])
+if not path.exists():
+    print(json.dumps({
+        "ok": True,
+        "kind": "lessons_lint",
+        "file": str(path),
+        "summary": {"rules": 0, "duplicates": 0, "over_budget": False},
+        "hints": [f"Create lessons file: {path}"]
+    }))
+    raise SystemExit(0)
+
+text = path.read_text(encoding="utf-8", errors="ignore")
+rules = []
+for line in text.splitlines():
+    line = line.strip()
+    if line.startswith("- "):
+        rules.append(line[2:].strip())
+    elif re.match(r"^\d+\.\s+", line):
+        rules.append(re.sub(r"^\d+\.\s+", "", line))
+
+norm = [re.sub(r"\s+", " ", r.lower()).strip() for r in rules if r.strip()]
+seen = set()
+dupes = []
+for idx, item in enumerate(norm):
+    if item in seen:
+        dupes.append(rules[idx])
+    else:
+        seen.add(item)
+
+over_budget = len(rules) > max_rules
+ok = (len(dupes) == 0) and (not over_budget)
+hints = []
+if dupes:
+    hints.append("Deduplicate repeated rules; keep one canonical statement per failure pattern.")
+if over_budget:
+    hints.append(f"Prune lessons to <= {max_rules} active rules.")
+
+print(json.dumps({
+    "ok": ok,
+    "kind": "lessons_lint",
+    "file": str(path),
+    "summary": {
+        "rules": len(rules),
+        "duplicates": len(dupes),
+        "over_budget": over_budget
+    },
+    "duplicates": dupes[:20],
+    "hints": hints
+}))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"ok=\(.ok) rules=\(.summary.rules) duplicates=\(.summary.duplicates) over_budget=\(.summary.over_budget)"'
+  fi
+  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+}
+
+cmd_add_rule() {
+  local file="${ROOT}/tasks/lessons.md"
+  local rule=""
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file) file="$2"; shift 2 ;;
+      --rule) rule="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${rule}" ]] || die "--rule is required"
+
+  local result
+  result="$(python3 - <<'PY' "${file}" "${rule}"
+import json, pathlib, re, sys
+
+path = pathlib.Path(sys.argv[1]).expanduser().resolve()
+rule = re.sub(r"\s+", " ", sys.argv[2]).strip()
+if not rule:
+    raise SystemExit("empty rule")
+
+path.parent.mkdir(parents=True, exist_ok=True)
+if not path.exists():
+    path.write_text("# Lessons\n\n")
+
+text = path.read_text(encoding="utf-8", errors="ignore")
+lines = text.splitlines()
+
+norm_rule = rule.lower()
+existing = set()
+for line in lines:
+    line = line.strip()
+    if line.startswith("- "):
+        existing.add(re.sub(r"\s+", " ", line[2:].strip().lower()))
+    elif re.match(r"^\d+\.\s+", line):
+        existing.add(re.sub(r"\s+", " ", re.sub(r"^\d+\.\s+", "", line).strip().lower()))
+
+added = False
+if norm_rule not in existing:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += f"- {rule}\n"
+    path.write_text(text)
+    added = True
+
+print(json.dumps({
+    "ok": True,
+    "kind": "lessons_add_rule",
+    "file": str(path),
+    "rule": rule,
+    "added": added
+}))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"added=\(.added) rule=\(.rule)"'
+  fi
+}
+
+case "${sub}" in
+  lint) cmd_lint "$@" ;;
+  add-rule) cmd_add_rule "$@" ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
