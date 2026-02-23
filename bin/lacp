@@ -19,6 +19,7 @@ Core:
 
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop
+  up            dmux-style multi-instance launch with auto session/pane fanout
   trace-triage  Cluster recent failed runs into root-cause groups
   context-profile List/render reusable context-contract profiles
   session-fingerprint Emit deterministic runtime session fingerprint
@@ -113,6 +114,9 @@ case "${cmd}" in
     ;;
   loop)
     exec "${ROOT}/bin/lacp-loop" "$@"
+    ;;
+  up)
+    exec "${ROOT}/bin/lacp-up" "$@"
     ;;
   trace-triage)
     exec "${ROOT}/bin/lacp-trace-triage" "$@"
