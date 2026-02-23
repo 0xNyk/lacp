@@ -30,6 +30,7 @@ export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
 export LACP_ALLOW_EXTERNAL_REMOTE="false"
 export LACP_REQUIRE_INPUT_CONTRACT="false"
+export LACP_RUNTIME_PRESSURE_OVERRIDE="normal"
 export LACP_DMUX_TUI_TEMPLATE='dmux attach --session "{session}"'
 
 manifest="${TMP}/swarm.json"
@@ -41,6 +42,22 @@ launch_json="$("${ROOT}/bin/lacp-swarm" launch --manifest "${manifest}" --json)"
 echo "${launch_json}" | jq -e '.ok == true and (.artifact | length > 0)' >/dev/null
 artifact_path="$(echo "${launch_json}" | jq -r '.artifact')"
 [[ -f "${artifact_path}" ]] || { echo "[swarm-test] FAIL missing artifact file" >&2; exit 1; }
+
+export LACP_RUNTIME_PRESSURE_OVERRIDE="high"
+export LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS="1"
+export LACP_RUNTIME_BACKOFF_SEC="0"
+set +e
+pressure_launch_json="$("${ROOT}/bin/lacp-swarm" launch --manifest "${manifest}" --json)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 14 ]]; then
+  echo "[swarm-test] FAIL expected runtime-pressure launch rc=14, got ${rc}" >&2
+  exit 1
+fi
+echo "${pressure_launch_json}" | jq -e '.ok == false and .error == "runtime_pressure"' >/dev/null
+export LACP_RUNTIME_PRESSURE_OVERRIDE="normal"
+unset LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS
+unset LACP_RUNTIME_BACKOFF_SEC
 
 "${ROOT}/bin/lacp-swarm" status --file "${artifact_path}" --json | jq -e '.ok == true and .swarm_id != null' >/dev/null
 "${ROOT}/bin/lacp-swarm" status --latest --json | jq -e '.ok == true and .swarm_id != null' >/dev/null

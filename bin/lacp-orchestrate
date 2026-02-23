@@ -263,6 +263,38 @@ PY
         one_args+=(--dry-run)
       fi
 
+      if ! lacp_wait_for_runtime_capacity "orchestrate:batch:${j_session}" >/dev/null 2>&1; then
+        local pressure_json pressure_reasons pressure_result
+        pressure_json="$(lacp_runtime_pressure_json)"
+        pressure_reasons="$(jq -r '.reasons | join("; ")' <<<"${pressure_json}")"
+        pressure_result="$(jq -n \
+          --argjson index "${idx}" \
+          --arg task "${j_task}" \
+          --arg backend "${j_backend}" \
+          --arg session "${j_session}" \
+          --arg command "${j_command}" \
+          --arg reasons "${pressure_reasons}" \
+          --arg details "${pressure_json}" \
+          '{
+            index:$index,
+            task:$task,
+            backend:$backend,
+            session:$session,
+            command:$command,
+            ok:false,
+            exit_code:14,
+            output:("blocked by runtime pressure: " + $reasons),
+            runtime_pressure:(try ($details|fromjson) catch null)
+          }')"
+        jobs_json="$(jq -c --argjson item "${pressure_result}" '. + [$item]' <<<"${jobs_json}")"
+        failed=$((failed + 1))
+        any_failed="true"
+        if [[ "${effective_continue_on_error}" != "true" ]]; then
+          break
+        fi
+        continue
+      fi
+
       set +e
       local run_out
       run_out="$("${ROOT}/bin/lacp-orchestrate" "${one_args[@]}" 2>&1)"
@@ -347,6 +379,22 @@ PY
       ;;
   esac
   require_file "${runner}"
+
+  if ! lacp_wait_for_runtime_capacity "orchestrate:${session}" >/dev/null 2>&1; then
+    local pressure_json pressure_reasons
+    pressure_json="$(lacp_runtime_pressure_json)"
+    pressure_reasons="$(jq -r '.reasons | join("; ")' <<<"${pressure_json}")"
+    if [[ "${as_json}" == "true" ]]; then
+      jq -n \
+        --arg error "runtime_pressure" \
+        --arg reason "${pressure_reasons}" \
+        --arg details "${pressure_json}" \
+        '{ok:false,error:$error,reason:$reason,runtime_pressure:(try ($details|fromjson) catch null)}'
+    else
+      die "blocked by runtime pressure: ${pressure_reasons}"
+    fi
+    return 14
+  fi
 
   export LACP_ORCH_BACKEND="${backend}"
   export LACP_ORCH_SESSION_NAME="${session}"

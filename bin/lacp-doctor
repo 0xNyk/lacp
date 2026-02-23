@@ -8,6 +8,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 usage() {
   cat <<'EOF'
 Usage: lacp-doctor [--json] [--fix] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
+                  [--check-limits]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
 Exits non-zero if required checks fail.
@@ -19,6 +20,7 @@ FIX=0
 FIX_DEPS=0
 AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
+CHECK_LIMITS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auto-deps-force)
       AUTO_DEPS_FORCE=1
+      shift
+      ;;
+    --check-limits)
+      CHECK_LIMITS=1
       shift
       ;;
     -h|--help)
@@ -427,6 +433,28 @@ if command -v e2b >/dev/null 2>&1; then
   add_check "cli:e2b" "PASS" "$(command -v e2b)"
 else
   add_check "cli:e2b" "WARN" "missing (optional unless using E2B_SANDBOX_ID mode)"
+fi
+
+if [[ "${CHECK_LIMITS}" -eq 1 ]]; then
+  runtime_json="$(lacp_runtime_pressure_json)"
+  runtime_high="$(jq -r '.high' <<<"${runtime_json}")"
+  load_per_cpu="$(jq -r '.metrics.load_per_cpu' <<<"${runtime_json}")"
+  max_load_per_cpu="$(jq -r '.thresholds.max_load_per_cpu' <<<"${runtime_json}")"
+  fork_headroom="$(jq -r '.metrics.fork_headroom // "unknown"' <<<"${runtime_json}")"
+  min_fork_headroom="$(jq -r '.thresholds.min_fork_headroom' <<<"${runtime_json}")"
+  ulimit_nproc="$(jq -r '.metrics.ulimit_nproc // "unlimited"' <<<"${runtime_json}")"
+  process_count="$(jq -r '.metrics.process_count // 0' <<<"${runtime_json}")"
+  reasons="$(jq -r '.reasons | join("; ")' <<<"${runtime_json}")"
+
+  add_check "runtime:load_per_cpu" "PASS" "load_per_cpu=${load_per_cpu} threshold=${max_load_per_cpu}"
+  add_check "runtime:fork_headroom" "PASS" "fork_headroom=${fork_headroom} threshold=${min_fork_headroom} (ulimit -u=${ulimit_nproc}, processes=${process_count})"
+
+  if [[ "${runtime_high}" == "true" ]]; then
+    add_check "runtime:pressure" "WARN" "high runtime pressure: ${reasons}"
+    add_check "runtime:advice" "WARN" "suggest: reduce parallel sessions; run 'ulimit -u' to inspect; raise user limits if needed"
+  else
+    add_check "runtime:pressure" "PASS" "runtime pressure normal"
+  fi
 fi
 
 if command -v node >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then

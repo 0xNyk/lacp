@@ -365,6 +365,22 @@ cmd_launch() {
   trap 'rm -f "${tmp_batch:-}"' RETURN
   jq '.planned' <<<"${plan_out}" > "${tmp_batch}"
 
+  if ! lacp_wait_for_runtime_capacity "swarm:launch" >/dev/null 2>&1; then
+    local pressure_json pressure_reasons
+    pressure_json="$(lacp_runtime_pressure_json)"
+    pressure_reasons="$(jq -r '.reasons | join("; ")' <<<"${pressure_json}")"
+    if [[ "${as_json}" == "true" ]]; then
+      jq -n \
+        --arg error "runtime_pressure" \
+        --arg reason "${pressure_reasons}" \
+        --arg details "${pressure_json}" \
+        '{ok:false,error:$error,reason:$reason,runtime_pressure:(try ($details|fromjson) catch null)}'
+    else
+      die "swarm launch blocked by runtime pressure: ${pressure_reasons}"
+    fi
+    return 14
+  fi
+
   local orch_out
   set +e
   orch_out="$("${ROOT}/bin/lacp-orchestrate" run --batch "${tmp_batch}" --json 2>&1)"
