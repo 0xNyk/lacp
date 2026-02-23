@@ -293,6 +293,7 @@ Notes:
 - `bin/lacp-bootstrap`: hard preflight (paths, scripts, policy file)
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
+  - runtime pressure diagnostics: `bin/lacp doctor --check-limits --json | jq`
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
@@ -480,6 +481,7 @@ bin/lacp test --isolated
 ## Troubleshooting
 
 - `bootstrap failed missing script`: run `bin/lacp-install --profile starter --force-scaffold`
+- `fork: Resource temporarily unavailable`: run `bin/lacp doctor --check-limits --json | jq`; reduce concurrent sessions/jobs or raise `ulimit -u` for your user
 - remote `exit_code=8`: run `bin/lacp-mode remote-enabled --ttl-min 30`
 - budget `exit_code=10`: lower `--estimated-cost-usd` or pass `--confirm-budget true`
 - critical `exit_code=9`: pass `--confirm-critical true`

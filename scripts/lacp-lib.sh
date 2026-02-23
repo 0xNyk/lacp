@@ -30,6 +30,11 @@ export LACP_CANARY_MIN_MRR="${LACP_CANARY_MIN_MRR:-0.65}"
 export LACP_CANARY_MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES:-2}"
 export LACP_WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR:-$HOME/.local/bin}"
 export LACP_AUTO_DEPS_FORMULAS="${LACP_AUTO_DEPS_FORMULAS:-jq ripgrep python@3.11 git tmux gh}"
+export LACP_RUNTIME_MAX_LOAD_PER_CPU="${LACP_RUNTIME_MAX_LOAD_PER_CPU:-2.00}"
+export LACP_RUNTIME_MIN_FORK_HEADROOM="${LACP_RUNTIME_MIN_FORK_HEADROOM:-64}"
+export LACP_RUNTIME_BACKOFF_SEC="${LACP_RUNTIME_BACKOFF_SEC:-2}"
+export LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS="${LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS:-3}"
+export LACP_RUNTIME_PRESSURE_OVERRIDE="${LACP_RUNTIME_PRESSURE_OVERRIDE:-auto}"
 
 log() {
   printf '[lacp] %s\n' "$*"
@@ -147,4 +152,118 @@ lacp_wrapper_managed_state() {
   else
     echo "unmanaged"
   fi
+}
+
+lacp_runtime_pressure_json() {
+  python3 - <<'PY' "${LACP_RUNTIME_MAX_LOAD_PER_CPU}" "${LACP_RUNTIME_MIN_FORK_HEADROOM}" "${LACP_RUNTIME_PRESSURE_OVERRIDE}"
+import json
+import os
+import subprocess
+import sys
+
+max_load_per_cpu = float(sys.argv[1])
+min_fork_headroom = int(sys.argv[2])
+pressure_override = sys.argv[3].strip().lower()
+
+cpu_count = os.cpu_count() or 1
+load1 = 0.0
+try:
+    load1 = float(os.getloadavg()[0])
+except Exception:
+    load1 = 0.0
+load_per_cpu = load1 / max(cpu_count, 1)
+
+def shell_out(cmd: list[str]) -> str:
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=1.0)
+        return (cp.stdout or "").strip()
+    except Exception:
+        return ""
+
+ulimit_nproc_raw = shell_out(["bash", "-lc", "ulimit -u 2>/dev/null || true"])
+ulimit_nofile_raw = shell_out(["bash", "-lc", "ulimit -n 2>/dev/null || true"])
+proc_count_raw = shell_out(["bash", "-lc", "sysctl -n kern.num_tasks 2>/dev/null || true"])
+if not proc_count_raw:
+    proc_count_raw = shell_out(["bash", "-lc", "ps -A -o pid= 2>/dev/null | wc -l | tr -d ' '"])
+
+def to_int(value: str):
+    value = (value or "").strip()
+    if not value or value == "unlimited":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+ulimit_nproc = to_int(ulimit_nproc_raw)
+ulimit_nofile = to_int(ulimit_nofile_raw)
+process_count = to_int(proc_count_raw)
+
+fork_headroom = None
+if isinstance(ulimit_nproc, int) and isinstance(process_count, int):
+    fork_headroom = ulimit_nproc - process_count
+
+reasons: list[str] = []
+if load_per_cpu > max_load_per_cpu:
+    reasons.append(
+        f"high_load_per_cpu:{load_per_cpu:.2f}>{max_load_per_cpu:.2f} (reduce concurrent sessions/jobs)"
+    )
+if isinstance(fork_headroom, int) and fork_headroom < min_fork_headroom:
+    reasons.append(
+        f"low_fork_headroom:{fork_headroom}<{min_fork_headroom} (raise 'ulimit -u' or reduce active processes)"
+    )
+
+high = bool(reasons)
+if pressure_override == "high":
+    high = True
+    reasons.append("override:high")
+elif pressure_override == "normal":
+    high = False
+    reasons = [r for r in reasons if not r.startswith("override:")]
+
+payload = {
+    "high": high,
+    "thresholds": {
+        "max_load_per_cpu": max_load_per_cpu,
+        "min_fork_headroom": min_fork_headroom,
+    },
+    "metrics": {
+        "cpu_count": cpu_count,
+        "load1": load1,
+        "load_per_cpu": load_per_cpu,
+        "process_count": process_count,
+        "ulimit_nproc": ulimit_nproc,
+        "ulimit_nofile": ulimit_nofile,
+        "fork_headroom": fork_headroom,
+        "pressure_override": pressure_override,
+    },
+    "reasons": reasons,
+}
+print(json.dumps(payload))
+PY
+}
+
+lacp_wait_for_runtime_capacity() {
+  local context="${1:-runtime}"
+  local attempts="${2:-${LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS}}"
+  local sleep_sec="${3:-${LACP_RUNTIME_BACKOFF_SEC}}"
+  local i json high reasons
+
+  i=1
+  while [[ "${i}" -le "${attempts}" ]]; do
+    json="$(lacp_runtime_pressure_json)"
+    high="$(jq -r '.high' <<<"${json}")"
+    if [[ "${high}" != "true" ]]; then
+      return 0
+    fi
+    reasons="$(jq -r '.reasons | join("; ")' <<<"${json}")"
+    if [[ "${i}" -ge "${attempts}" ]]; then
+      log "runtime-pressure ${context}: still high after ${attempts} attempts (${reasons})"
+      return 1
+    fi
+    log "runtime-pressure ${context}: high (${reasons}); backing off ${sleep_sec}s (attempt ${i}/${attempts})"
+    sleep "${sleep_sec}"
+    i=$((i + 1))
+  done
+  return 1
 }
