@@ -257,6 +257,7 @@ Notes:
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
 - `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
+- `bin/lacp-mcp-profile`: list/status/apply MCP operating profiles (`cli-first`, `mcp-selective`, `mcp-heavy`)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`

@@ -39,6 +39,7 @@ fi
 "${ROOT}/bin/lacp" release-verify --help >/dev/null
 "${ROOT}/bin/lacp" vendor-watch --help >/dev/null
 "${ROOT}/bin/lacp" automations-tui --help >/dev/null
+"${ROOT}/bin/lacp" mcp-profile --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null
 "${ROOT}/bin/lacp" skill-factory --help >/dev/null
 "${ROOT}/bin/lacp" adopt-local --help >/dev/null

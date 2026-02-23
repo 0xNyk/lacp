@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-doctor [--json] [--fix] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
+Usage: lacp-doctor [--json] [--fix] [--fix-hints] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
                   [--check-limits]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
@@ -17,6 +17,7 @@ EOF
 
 AS_JSON=0
 FIX=0
+FIX_HINTS=0
 FIX_DEPS=0
 AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
@@ -30,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fix)
       FIX=1
+      shift
+      ;;
+    --fix-hints)
+      FIX_HINTS=1
       shift
       ;;
     --fix-deps)
@@ -75,13 +80,22 @@ if [[ "${FIX}" -eq 1 ]]; then
 fi
 
 checks_tmp="$(mktemp)"
-trap 'rm -f "${checks_tmp}"' EXIT
+hints_tmp="$(mktemp)"
+trap 'rm -f "${checks_tmp}" "${hints_tmp}"' EXIT
 
 add_check() {
   local name="$1"
   local status="$2"
   local detail="$3"
   printf '%s\t%s\t%s\n' "${status}" "${name}" "${detail}" >> "${checks_tmp}"
+}
+
+add_hint() {
+  local hint="$1"
+  [[ -n "${hint}" ]] || return 0
+  if ! grep -Fqx "${hint}" "${hints_tmp}" 2>/dev/null; then
+    printf '%s\n' "${hint}" >> "${hints_tmp}"
+  fi
 }
 
 check_cmd() {
@@ -374,12 +388,15 @@ PY
         add_check "policy:remote_approval" "PASS" "${LACP_REMOTE_APPROVAL_FILE} expires_at_utc=${expires_at_utc}"
       else
         add_check "policy:remote_approval" "FAIL" "${LACP_REMOTE_APPROVAL_FILE} expired_at_utc=${expires_at_utc}; renew via bin/lacp-mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
+        add_hint "Renew remote approval: bin/lacp mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
       fi
     else
       add_check "policy:remote_approval" "FAIL" "${LACP_REMOTE_APPROVAL_FILE} missing expires_at_utc"
+      add_hint "Recreate remote approval token: bin/lacp mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
     fi
   else
     add_check "policy:remote_approval" "FAIL" "missing/invalid ${LACP_REMOTE_APPROVAL_FILE}; grant via bin/lacp-mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
+    add_hint "Grant remote approval token: bin/lacp mode remote-enabled --ttl-min ${LACP_REMOTE_APPROVAL_TTL_MIN}"
   fi
 else
   add_check "policy:remote_approval" "PASS" "not required in local-only mode"
@@ -409,6 +426,15 @@ if command -v daytona >/dev/null 2>&1; then
   add_check "cli:daytona" "PASS" "$(command -v daytona)"
 else
   add_check "cli:daytona" "WARN" "missing"
+fi
+
+if command -v brew >/dev/null 2>&1 && [[ -d "/opt/homebrew/Cellar" ]]; then
+  if [[ -w "/opt/homebrew/Cellar" ]]; then
+    add_check "brew:cellar_writable" "PASS" "/opt/homebrew/Cellar"
+  else
+    add_check "brew:cellar_writable" "WARN" "/opt/homebrew/Cellar not writable"
+    add_hint "Fix Homebrew Cellar permissions: sudo chown -R \"$(id -un)\" /opt/homebrew/Cellar"
+  fi
 fi
 
 if command -v tmux >/dev/null 2>&1; then
@@ -452,6 +478,9 @@ if [[ "${CHECK_LIMITS}" -eq 1 ]]; then
   if [[ "${runtime_high}" == "true" ]]; then
     add_check "runtime:pressure" "WARN" "high runtime pressure: ${reasons}"
     add_check "runtime:advice" "WARN" "suggest: reduce parallel sessions; run 'ulimit -u' to inspect; raise user limits if needed"
+    add_hint "Runtime pressure: reduce concurrent sessions/jobs, then retry."
+    add_hint "Inspect limits: ulimit -a"
+    add_hint "Inspect process load: bin/lacp doctor --check-limits --json | jq"
   else
     add_check "runtime:pressure" "PASS" "runtime pressure normal"
   fi
@@ -495,34 +524,50 @@ claude_wrapper_state="$(lacp_wrapper_managed_state claude)"
 codex_wrapper_state="$(lacp_wrapper_managed_state codex)"
 case "${claude_wrapper_state}" in
   managed) add_check "wrapper:claude_managed" "PASS" "${LACP_WRAPPER_BIN_DIR}/claude" ;;
-  missing) add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude missing (run bin/lacp-adopt-local)" ;;
-  *) add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude unmanaged (run bin/lacp-adopt-local --force)" ;;
+  missing)
+    add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude missing (run bin/lacp-adopt-local)"
+    add_hint "Adopt managed wrappers: bin/lacp adopt-local --force"
+    ;;
+  *)
+    add_check "wrapper:claude_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/claude unmanaged (run bin/lacp-adopt-local --force)"
+    add_hint "Repair managed wrappers: bin/lacp adopt-local --force"
+    ;;
 esac
 case "${codex_wrapper_state}" in
   managed) add_check "wrapper:codex_managed" "PASS" "${LACP_WRAPPER_BIN_DIR}/codex" ;;
-  missing) add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex missing (run bin/lacp-adopt-local)" ;;
-  *) add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex unmanaged (run bin/lacp-adopt-local --force)" ;;
+  missing)
+    add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex missing (run bin/lacp-adopt-local)"
+    add_hint "Adopt managed wrappers: bin/lacp adopt-local --force"
+    ;;
+  *)
+    add_check "wrapper:codex_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/codex unmanaged (run bin/lacp-adopt-local --force)"
+    add_hint "Repair managed wrappers: bin/lacp adopt-local --force"
+    ;;
 esac
 
 fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
 warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
 pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
+hint_count="$(wc -l < "${hints_tmp}" | tr -d ' ')"
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
-  python3 - <<'PY' "${checks_tmp}" "${fail_count}" "${warn_count}" "${pass_count}"
+  python3 - <<'PY' "${checks_tmp}" "${hints_tmp}" "${fail_count}" "${warn_count}" "${pass_count}" "${FIX_HINTS}"
 import json
 import sys
 from pathlib import Path
 
 checks_path = Path(sys.argv[1])
-fail_count = int(sys.argv[2])
-warn_count = int(sys.argv[3])
-pass_count = int(sys.argv[4])
+hints_path = Path(sys.argv[2])
+fail_count = int(sys.argv[3])
+warn_count = int(sys.argv[4])
+pass_count = int(sys.argv[5])
+fix_hints = sys.argv[6] == "1"
 
 checks = []
 for line in checks_path.read_text().splitlines():
     status, name, detail = line.split("\t", 2)
     checks.append({"status": status, "name": name, "detail": detail})
+hints = [line.strip() for line in hints_path.read_text().splitlines() if line.strip()]
 
 payload = {
     "ok": fail_count == 0,
@@ -533,6 +578,8 @@ payload = {
     },
     "checks": checks,
 }
+if fix_hints:
+    payload["remediation_hints"] = hints
 print(json.dumps(payload, indent=2))
 PY
 else
@@ -540,6 +587,16 @@ else
   while IFS=$'\t' read -r status name detail; do
     printf '%-5s %-34s %s\n' "${status}" "${name}" "${detail}"
   done < "${checks_tmp}"
+  if [[ "${FIX_HINTS}" -eq 1 ]]; then
+    if [[ "${hint_count}" -gt 0 ]]; then
+      echo
+      echo "Remediation hints:"
+      sed 's/^/ - /' "${hints_tmp}"
+    else
+      echo
+      echo "Remediation hints: none needed"
+    fi
+  fi
 fi
 
 if [[ "${fail_count}" -gt 0 ]]; then

@@ -1,0 +1,59 @@
+{
+  "version": "1",
+  "profiles": [
+    {
+      "name": "cli-first",
+      "description": "Default for local-first harnesses. Keep MCP minimal and prefer CLI/API + skills.",
+      "env": {
+        "LACP_MCP_MODE": "cli-first",
+        "LACP_MCP_MAX_CONNECTED_SERVERS": "2",
+        "LACP_MCP_MAX_TOOL_DEFINITIONS": "12",
+        "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "true",
+        "LACP_MCP_USE_TOOL_SEARCH": "true",
+        "LACP_MCP_DEFER_TOOL_LOADING": "true",
+        "LACP_MCP_PREFER_CLI_FIRST": "true"
+      },
+      "mcp_auth_policy_patch": {
+        "auth": {
+          "allow_static_tokens_in_env": false
+        }
+      }
+    },
+    {
+      "name": "mcp-selective",
+      "description": "Balanced profile. Use MCP for selective integrations with strict allowlists and deferred loading.",
+      "env": {
+        "LACP_MCP_MODE": "mcp-selective",
+        "LACP_MCP_MAX_CONNECTED_SERVERS": "6",
+        "LACP_MCP_MAX_TOOL_DEFINITIONS": "40",
+        "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "true",
+        "LACP_MCP_USE_TOOL_SEARCH": "true",
+        "LACP_MCP_DEFER_TOOL_LOADING": "true",
+        "LACP_MCP_PREFER_CLI_FIRST": "true"
+      },
+      "mcp_auth_policy_patch": {
+        "auth": {
+          "allow_static_tokens_in_env": false
+        }
+      }
+    },
+    {
+      "name": "mcp-heavy",
+      "description": "Integration-heavy profile. Larger MCP budget with explicit acceptance of higher context and token overhead.",
+      "env": {
+        "LACP_MCP_MODE": "mcp-heavy",
+        "LACP_MCP_MAX_CONNECTED_SERVERS": "12",
+        "LACP_MCP_MAX_TOOL_DEFINITIONS": "120",
+        "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "false",
+        "LACP_MCP_USE_TOOL_SEARCH": "true",
+        "LACP_MCP_DEFER_TOOL_LOADING": "false",
+        "LACP_MCP_PREFER_CLI_FIRST": "false"
+      },
+      "mcp_auth_policy_patch": {
+        "auth": {
+          "allow_static_tokens_in_env": false
+        }
+      }
+    }
+  ]
+}
