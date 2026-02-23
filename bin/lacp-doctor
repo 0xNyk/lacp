@@ -180,6 +180,29 @@ else
   add_check "config:env_file" "WARN" "missing (copy from config/lacp.env.example)"
 fi
 
+if lacp_env_truthy "${LACP_LOCAL_FIRST}"; then
+  add_check "policy:local_first" "PASS" "LACP_LOCAL_FIRST=${LACP_LOCAL_FIRST}"
+else
+  add_check "policy:local_first" "WARN" "LACP_LOCAL_FIRST=${LACP_LOCAL_FIRST} (expected true for local setup)"
+fi
+
+if lacp_env_truthy "${LACP_NO_EXTERNAL_CI}"; then
+  add_check "policy:no_external_ci" "PASS" "LACP_NO_EXTERNAL_CI=${LACP_NO_EXTERNAL_CI}"
+else
+  add_check "policy:no_external_ci" "WARN" "LACP_NO_EXTERNAL_CI=${LACP_NO_EXTERNAL_CI} (expected true for local setup)"
+fi
+
+if lacp_env_truthy "${LACP_NO_EXTERNAL_CI}"; then
+  workflow_count="$(find "${LACP_ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${workflow_count}" =~ ^[0-9]+$ ]] && [[ "${workflow_count}" -gt 0 ]]; then
+    add_check "policy:external_ci_workflows" "FAIL" "found ${workflow_count} workflow file(s) under .github/workflows while LACP_NO_EXTERNAL_CI=true"
+  else
+    add_check "policy:external_ci_workflows" "PASS" "no active GitHub Actions workflows detected"
+  fi
+else
+  add_check "policy:external_ci_workflows" "PASS" "LACP_NO_EXTERNAL_CI disabled"
+fi
+
 if [[ -n "${LACP_DRAFTS_ROOT}" ]]; then
   LEGACY_DRAFTS_ROOT="${HOME}/docs/ai-dev-optimization/articles"
   if [[ -d "${LEGACY_DRAFTS_ROOT}" ]]; then

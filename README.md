@@ -300,10 +300,13 @@ Expected:
 ## Remote Setup
 
 By default, LACP runs in **zero-external mode**:
+- `LACP_LOCAL_FIRST="true"`
+- `LACP_NO_EXTERNAL_CI="true"`
 - `LACP_ALLOW_EXTERNAL_REMOTE="false"`
 - `LACP_REMOTE_APPROVAL_TTL_MIN="30"` (used when granting remote approval)
 - remote routes can still be planned/tested via `--dry-run`
 - live remote execution is blocked unless explicitly enabled **and** approval is still within TTL
+- release gates enforce no active `.github/workflows/*.yml` files while `LACP_NO_EXTERNAL_CI=true`
 
 ### Daytona
 
@@ -476,6 +479,7 @@ bin/lacp pr-preflight \
 - No secrets in repo configuration files
 - Environment-driven configuration in `.env`
 - Zero-external-cost workflow policy (local CLI gates; no required GitHub Actions or paid CI providers)
+- Active GitHub Actions are disabled by default in this repo (`.github/workflows-disabled/` templates)
 - Policy-driven remote routing
 - External remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Risk-tier gating (`safe/review/critical`) with TTL and per-run confirmation controls
@@ -530,6 +534,8 @@ bin/lacp canary --since-clean-baseline --json | jq
 bin/lacp vendor-watch --json | jq
 bin/lacp release-prepare --profile local-iterative --since-clean-baseline --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
+# optional override when intentionally using GitHub Actions:
+bin/lacp release-prepare --allow-external-ci --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
 bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
 

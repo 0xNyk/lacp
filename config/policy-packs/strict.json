@@ -13,6 +13,8 @@
     }
   },
   "env": {
+    "LACP_LOCAL_FIRST": "true",
+    "LACP_NO_EXTERNAL_CI": "true",
     "LACP_ALLOW_EXTERNAL_REMOTE": "false",
     "LACP_REQUIRE_INPUT_CONTRACT": "true",
     "LACP_INPUT_CONTRACT_CONFIDENCE_MIN": "0.80",

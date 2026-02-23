@@ -11,6 +11,8 @@ fi
 export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-$HOME/control/automation/ai-dev-optimization}"
 export LACP_KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
 export LACP_DRAFTS_ROOT="${LACP_DRAFTS_ROOT:-$HOME/docs/content/drafts}"
+export LACP_LOCAL_FIRST="${LACP_LOCAL_FIRST:-true}"
+export LACP_NO_EXTERNAL_CI="${LACP_NO_EXTERNAL_CI:-true}"
 export LACP_VERIFY_HOURS="${LACP_VERIFY_HOURS:-24}"
 export LACP_BENCH_TOP_K="${LACP_BENCH_TOP_K:-8}"
 export LACP_BENCH_LOOKBACK="${LACP_BENCH_LOOKBACK:-30}"
@@ -159,6 +161,14 @@ lacp_wrapper_managed_state() {
   else
     echo "unmanaged"
   fi
+}
+
+lacp_env_truthy() {
+  local value="${1:-}"
+  case "${value,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 lacp_runtime_pressure_json() {
