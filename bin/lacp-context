@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-context init-template [--repo-root <path>] [--force] [--json]
+  lacp-context audit [--repo-root <path>] [--max-lines <n>] [--max-bytes <n>] [--json]
+  lacp-context minimize [--repo-root <path>] [--max-lines <n>] [--max-bytes <n>] [--json]
+  lacp-context regression --none <json> --minimal <json> [--max-success-drop <n>] [--max-cost-increase-pct <n>] [--json]
+
+Context discipline for agent repos:
+  - keep CLAUDE.md / AGENTS.md minimal, human-authored, high-signal
+  - audit for bloat and missing non-negotiable sections
+  - compare no-context vs minimal-context benchmark outcomes
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+cmd_init_template() {
+  local repo_root="."
+  local force="false"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --force) force="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  repo_root="$(python3 - <<'PY' "${repo_root}"
+import pathlib,sys
+print(pathlib.Path(sys.argv[1]).expanduser().resolve())
+PY
+)"
+  mkdir -p "${repo_root}"
+
+  local claude_file="${repo_root}/CLAUDE.md"
+  local agents_file="${repo_root}/AGENTS.md"
+  local created='[]'
+  local skipped='[]'
+
+  if [[ ! -f "${claude_file}" || "${force}" == "true" ]]; then
+    cat > "${claude_file}" <<'EOF'
+# CLAUDE.md
+
+## Non-Negotiables
+- Run tests and linting before marking done.
+- Keep changes minimal and root-cause oriented.
+- Do not bypass safety/policy gates.
+
+## Repo Commands
+- test: <fill in project test command>
+- lint: <fill in project lint command>
+- build: <fill in project build command>
+
+## Architecture Constraints
+- Prefer CLI/API integrations over prompt-only glue.
+- Keep context files compact and actionable.
+- Require machine-verifiable evidence for completion.
+EOF
+    created="$(jq -c --arg f "${claude_file}" '. + [$f]' <<<"${created}")"
+  else
+    skipped="$(jq -c --arg f "${claude_file}" '. + [$f]' <<<"${skipped}")"
+  fi
+
+  if [[ ! -f "${agents_file}" || "${force}" == "true" ]]; then
+    cat > "${agents_file}" <<'EOF'
+# AGENTS.md
+
+## Scope
+- This file defines repository-level execution rules for agents.
+
+## Required Checks
+- tests: required
+- lint: required
+- evidence: required for medium/high risk changes
+
+## Context Budget
+- Keep this file concise.
+- Prefer links to source-of-truth docs over duplicated prose.
+- Add one rule per repeated failure pattern; prune stale rules regularly.
+EOF
+    created="$(jq -c --arg f "${agents_file}" '. + [$f]' <<<"${created}")"
+  else
+    skipped="$(jq -c --arg f "${agents_file}" '. + [$f]' <<<"${skipped}")"
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n \
+      --arg repo_root "${repo_root}" \
+      --argjson created "${created}" \
+      --argjson skipped "${skipped}" \
+      '{ok:true,kind:"context_init_template",repo_root:$repo_root,created:$created,skipped:$skipped}'
+  else
+    log "context templates updated repo_root=${repo_root}"
+  fi
+}
+
+cmd_audit_or_minimize() {
+  local mode="$1"; shift || true
+  local repo_root="."
+  local max_lines="140"
+  local max_bytes="9000"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo-root) repo_root="$2"; shift 2 ;;
+      --max-lines) max_lines="$2"; shift 2 ;;
+      --max-bytes) max_bytes="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  require_cmd python3
+  local result
+  result="$(python3 - <<'PY' "${repo_root}" "${max_lines}" "${max_bytes}" "${mode}"
+import json
+import pathlib
+import sys
+
+repo_root = pathlib.Path(sys.argv[1]).expanduser().resolve()
+max_lines = int(sys.argv[2])
+max_bytes = int(sys.argv[3])
+mode = sys.argv[4]
+
+files = [repo_root / "CLAUDE.md", repo_root / "AGENTS.md"]
+required_markers = ["Non-Negotiables", "Required Checks", "Architecture"]
+reports = []
+hints = []
+fails = 0
+warns = 0
+
+for path in files:
+    if not path.exists():
+        reports.append({
+            "file": str(path),
+            "exists": False,
+            "status": "WARN",
+            "issues": ["missing file"],
+            "line_count": 0,
+            "byte_count": 0,
+        })
+        warns += 1
+        hints.append(f"Create {path.name} via: lacp context init-template --repo-root {repo_root}")
+        continue
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    lines = text.splitlines()
+    line_count = len(lines)
+    byte_count = len(text.encode("utf-8"))
+    issues = []
+    status = "PASS"
+
+    if line_count > max_lines:
+        issues.append(f"line budget exceeded: {line_count} > {max_lines}")
+        status = "FAIL"
+        fails += 1
+        hints.append(f"Trim {path.name}: keep only constraints/check commands; move narrative elsewhere.")
+    if byte_count > max_bytes:
+        issues.append(f"byte budget exceeded: {byte_count} > {max_bytes}")
+        if status != "FAIL":
+            status = "FAIL"
+            fails += 1
+        hints.append(f"Reduce {path.name} size under {max_bytes} bytes.")
+
+    marker_hits = sum(1 for m in required_markers if m.lower() in text.lower())
+    if marker_hits == 0:
+        issues.append("no recognizable high-signal sections found")
+        if status == "PASS":
+            status = "WARN"
+            warns += 1
+        hints.append(f"Add explicit sections in {path.name}: Non-Negotiables / Required Checks / Architecture.")
+
+    if status == "PASS" and mode == "minimize":
+        hints.append(f"{path.name}: already within budget, keep edits minimal and rule-focused.")
+
+    reports.append({
+        "file": str(path),
+        "exists": True,
+        "status": status,
+        "issues": issues,
+        "line_count": line_count,
+        "byte_count": byte_count,
+    })
+
+payload = {
+    "ok": fails == 0,
+    "kind": f"context_{mode}",
+    "repo_root": str(repo_root),
+    "policy": {"max_lines": max_lines, "max_bytes": max_bytes},
+    "summary": {"pass": len([r for r in reports if r["status"] == "PASS"]), "warn": warns, "fail": fails},
+    "files": reports,
+    "hints": sorted(set(hints)),
+}
+print(json.dumps(payload))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '.files[] | "\(.status)\t\(.file)\tlines=\(.line_count)\tbytes=\(.byte_count)\tissues=\(.issues|join("; "))"'
+    echo "${result}" | jq -r '.hints[]? | "HINT\t\(.)"'
+  fi
+  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+}
+
+cmd_regression() {
+  local none_file=""
+  local minimal_file=""
+  local max_success_drop="0.0"
+  local max_cost_increase_pct="10.0"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --none) none_file="$2"; shift 2 ;;
+      --minimal) minimal_file="$2"; shift 2 ;;
+      --max-success-drop) max_success_drop="$2"; shift 2 ;;
+      --max-cost-increase-pct) max_cost_increase_pct="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${none_file}" ]] || die "--none is required"
+  [[ -n "${minimal_file}" ]] || die "--minimal is required"
+  require_file "${none_file}"
+  require_file "${minimal_file}"
+
+  local result
+  result="$(python3 - <<'PY' "${none_file}" "${minimal_file}" "${max_success_drop}" "${max_cost_increase_pct}"
+import json, pathlib, sys
+
+def read(path):
+    return json.loads(pathlib.Path(path).read_text())
+
+def pick_success(d):
+    for key in ("success_rate",):
+        if key in d: return float(d[key])
+    s = d.get("summary", {}) if isinstance(d.get("summary"), dict) else {}
+    for key in ("success_rate","pass_rate","ok_rate"):
+        if key in s: return float(s[key])
+    return 0.0
+
+def pick_cost(d):
+    for key in ("avg_cost_usd", "cost_usd"):
+        if key in d: return float(d[key])
+    s = d.get("summary", {}) if isinstance(d.get("summary"), dict) else {}
+    for key in ("avg_cost_usd","cost_usd","mean_cost_usd"):
+        if key in s: return float(s[key])
+    return 0.0
+
+none = read(sys.argv[1]); minimal = read(sys.argv[2])
+max_success_drop = float(sys.argv[3]); max_cost_increase_pct = float(sys.argv[4])
+
+none_s = pick_success(none); min_s = pick_success(minimal)
+none_c = pick_cost(none); min_c = pick_cost(minimal)
+
+success_delta = min_s - none_s
+allowed_success = success_delta >= (-max_success_drop)
+cost_increase_pct = 0.0 if none_c == 0 else ((min_c - none_c) / none_c * 100.0)
+allowed_cost = cost_increase_pct <= max_cost_increase_pct
+
+ok = allowed_success and allowed_cost
+payload = {
+  "ok": ok,
+  "kind": "context_regression",
+  "none": {"success_rate": none_s, "avg_cost_usd": none_c},
+  "minimal": {"success_rate": min_s, "avg_cost_usd": min_c},
+  "deltas": {"success_rate": success_delta, "cost_increase_pct": cost_increase_pct},
+  "thresholds": {"max_success_drop": max_success_drop, "max_cost_increase_pct": max_cost_increase_pct},
+  "checks": {"allowed_success_drop": allowed_success, "allowed_cost_increase": allowed_cost}
+}
+print(json.dumps(payload))
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '%s\n' "${result}" | jq .
+  else
+    echo "${result}" | jq -r '"ok=\(.ok) success_delta=\(.deltas.success_rate) cost_increase_pct=\(.deltas.cost_increase_pct)"'
+  fi
+  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+}
+
+case "${sub}" in
+  init-template) cmd_init_template "$@" ;;
+  audit) cmd_audit_or_minimize audit "$@" ;;
+  minimize) cmd_audit_or_minimize minimize "$@" ;;
+  regression) cmd_regression "$@" ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
