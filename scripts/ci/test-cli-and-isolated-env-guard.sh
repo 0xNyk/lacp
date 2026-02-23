@@ -47,6 +47,9 @@ fi
 "${ROOT}/bin/lacp" pr-preflight --help >/dev/null
 "${ROOT}/bin/lacp" harness-validate --help >/dev/null
 "${ROOT}/bin/lacp" harness-run --help >/dev/null
+"${ROOT}/bin/lacp" e2e --help >/dev/null
+"${ROOT}/bin/lacp" api-e2e --help >/dev/null
+"${ROOT}/bin/lacp" contract-e2e --help >/dev/null
 "${ROOT}/bin/lacp" browser-evidence-validate --help >/dev/null
 "${ROOT}/bin/lacp" orchestrate --help >/dev/null
 "${ROOT}/bin/lacp" worktree --help >/dev/null

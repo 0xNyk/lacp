@@ -278,6 +278,9 @@ Notes:
 - `bin/lacp-pr-preflight`: evaluate PR policy gates (risk tier + docs drift + check runs + stale review state)
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
+- `bin/lacp-e2e`: run local Playwright-style e2e command + generate evidence manifest + auth pattern checks
+- `bin/lacp-api-e2e`: run API/backend e2e command wrappers with manifest evidence + API coverage checks
+- `bin/lacp-contract-e2e`: run smart-contract e2e command wrappers with manifest evidence + invariant/revert checks
 - `bin/lacp-browser-evidence-validate`: validate browser evidence manifests with freshness/assertion gates
 - `bin/lacp-orchestrate`: optional dmux/tmux/claude_worktree orchestration adapter (still routed through LACP gates)
   - default backend is `dmux` when available; falls back to `tmux`
@@ -294,6 +297,7 @@ Notes:
 - `bin/lacp-verify`: memory pipeline + retrieval gates + snapshot + trend refresh
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
   - runtime pressure diagnostics: `bin/lacp doctor --check-limits --json | jq`
+  - actionable remediation commands: `bin/lacp doctor --check-limits --fix-hints --json | jq '.remediation_hints'`
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
@@ -313,6 +317,10 @@ Use these files to formalize your orchestrator workflow from specs to loops:
 - `config/harness/browser-evidence.schema.json`: machine-verifiable browser flow evidence contract.
 - `config/risk-policy-contract.json`: single risk/merge/review/evidence policy contract.
 - `config/risk-policy-contract.schema.json`: contract schema for drift-resistant validation.
+- default policy requires browser/e2e evidence for `medium` and `high` risk tiers.
+- policy supports additional scoped evidence gates:
+  - `apiEvidence` for API/backend path scopes
+  - `contractEvidence` for smart-contract path scopes
 
 This maps directly to:
 - spec -> orchestrator-generated tasks
@@ -333,6 +341,47 @@ bin/lacp pr-preflight \
   --checks-json ./checks.json \
   --review-json ./review-state.json \
   --browser-evidence ./browser-evidence.json \
+  --api-evidence ./api-evidence.json \
+  --contract-evidence ./contract-evidence.json \
+  --json | jq
+
+# local Playwright/e2e evidence pipeline (no external CI cost required)
+bin/lacp e2e run \
+  --command "npx playwright test" \
+  --flows-file ./e2e-flows.json \
+  --manifest ./browser-evidence.json --json | jq
+bin/lacp e2e auth-check --manifest ./browser-evidence.json --json | jq
+
+# one-liner smoke profile (auto-inits from template if missing)
+bin/lacp e2e smoke \
+  --workdir . \
+  --init-template \
+  --command "npx playwright test --grep @smoke" \
+  --json | jq
+
+# API/backend smoke harness
+bin/lacp api-e2e smoke \
+  --workdir . \
+  --init-template \
+  --command "npx schemathesis run --checks all" \
+  --json | jq
+
+# smart-contract smoke harness
+bin/lacp contract-e2e smoke \
+  --workdir . \
+  --init-template \
+  --command "forge test -vv" \
+  --json | jq
+
+# optional preflight auto-run path
+bin/lacp pr-preflight \
+  --changed-files ./changed-files.txt \
+  --checks-json ./checks.json \
+  --review-json ./review-state.json \
+  --auto-e2e-run \
+  --auto-e2e-command "npx playwright test" \
+  --auto-e2e-flows-file ./e2e-flows.json \
+  --auto-e2e-auth-check \
   --json | jq
 ```
 
@@ -482,6 +531,7 @@ bin/lacp test --isolated
 
 - `bootstrap failed missing script`: run `bin/lacp-install --profile starter --force-scaffold`
 - `fork: Resource temporarily unavailable`: run `bin/lacp doctor --check-limits --json | jq`; reduce concurrent sessions/jobs or raise `ulimit -u` for your user
+- get concrete next commands: `bin/lacp doctor --check-limits --fix-hints`
 - remote `exit_code=8`: run `bin/lacp-mode remote-enabled --ttl-min 30`
 - budget `exit_code=10`: lower `--estimated-cost-usd` or pass `--confirm-budget true`
 - critical `exit_code=9`: pass `--confirm-critical true`

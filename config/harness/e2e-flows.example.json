@@ -1,0 +1,40 @@
+[
+  {
+    "id": "ui-smoke-home",
+    "entrypoint_kind": "ui-flow",
+    "entrypoint": "/",
+    "expected_identity": {
+      "mode": "user",
+      "value": "qa-user"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/ui-smoke-home.trace.zip",
+      "screenshot": "e2e-artifacts/ui-smoke-home.png"
+    },
+    "assertions": [
+      {
+        "name": "auth session visible in navbar",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "id": "auth-smoke-session",
+    "entrypoint_kind": "auth-flow",
+    "entrypoint": "/api/auth/session",
+    "expected_identity": {
+      "mode": "guest",
+      "value": "anon"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/auth-smoke-session.trace.zip",
+      "screenshot": "e2e-artifacts/auth-smoke-session.png"
+    },
+    "assertions": [
+      {
+        "name": "auth denied for guest session probe",
+        "ok": true
+      }
+    ]
+  }
+]

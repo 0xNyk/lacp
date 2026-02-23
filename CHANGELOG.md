@@ -22,6 +22,14 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-trace-triage` deterministic clustering of failed sandbox traces (`context_drift`/`policy_block`/`env_missing`/`test_fail`) with ranked signatures and remediation recommendations.
 - `bin/lacp-context-profile` for reusable context-contract profile rendering (`local-dev`, `ssh-prod`, `high-risk-migration`).
 - `bin/lacp-session-fingerprint` to compute deterministic runtime fingerprints (`host/cwd/branch/worktree/remote-host`).
+- `bin/lacp-e2e` command group with:
+  - `lacp e2e run` for local Playwright-style execution + browser evidence manifest generation
+  - `lacp e2e auth-check` for auth-pattern coverage validation over evidence manifests
+  - `lacp e2e smoke` one-liner local smoke workflow with optional template initialization
+- `bin/lacp-api-e2e` command group with `run/smoke` wrappers for API/backend e2e evidence + API coverage checks.
+- `bin/lacp-contract-e2e` command group with `run/smoke` wrappers for smart-contract e2e evidence + invariant/revert coverage checks.
+- `config/harness/e2e-flows.example.json` default flow template for app/web smoke evidence setup.
+- `config/harness/api-e2e-flows.example.json` and `config/harness/contract-e2e-flows.example.json` starter templates.
 - `config/context-profiles.json` profile catalog with variable substitution and required-var guards.
 - `bin/lacp-swarm plan` now supports advisory `reservations` per job and emits collision analysis under `.collaboration` (artifacted with swarm launches).
 - `bin/lacp-swarm status` now emits `collaboration_summary` (including `top_conflicts`) in JSON mode and concise collision triage hints in text mode.
@@ -56,7 +64,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-release-prepare` now supports optional canary remediation stage (`--auto-optimize-on-fail`) with post-optimize regression rollback.
 - `bin/lacp-release-prepare` now supports `--profile local-iterative` for one-flag local iteration defaults (`quick + 3-day canary + cache/skill gate skips`).
 - `bin/lacp-release-verify` Homebrew dry-run check now retries `--HEAD` for HEAD-only formulas and treats Cellar permission-only failures as non-fatal.
-- `bin/lacp-doctor` now supports `--check-limits` to report runtime pressure/fork headroom with actionable remediation hints.
+- `bin/lacp-doctor` now supports `--check-limits` plus `--fix-hints` to report runtime pressure/fork headroom and emit concrete remediation commands in text/JSON output.
 - `bin/lacp-orchestrate` and `bin/lacp-swarm` now apply runtime-pressure backoff before launches and fail fast with structured `runtime_pressure` errors when capacity stays constrained.
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
@@ -69,6 +77,8 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-loop` now supports `--context-profile` + repeatable `--context-profile-var KEY=VALUE` to render context contracts without hand-written JSON.
 - `bin/lacp-loop` now supports `--session-fingerprint auto|<value>` pass-through to sandbox-run for anti-drift guardrails.
 - `bin/lacp-workflow-run advance` now enforces explicit `plan->act` handoff: planner issues token, developer must present matching `--plan-token` (or explicit `--allow-unplanned true` bypass).
+- `bin/lacp-pr-preflight` now supports optional local auto-e2e evidence generation (`--auto-e2e-run`) and auth-check gating before browser evidence validation.
+- Risk policy baseline now requires browser/e2e evidence for both `medium` and `high` tiers.
 - `bin/lacp-sandbox-run` now supports optional session fingerprint validation (`--session-fingerprint`) and enforce mode (`LACP_REQUIRE_SESSION_FINGERPRINT=true`) for mutating/remote-target runs.
 - `scripts/ci/test-swarm.sh` now verifies reservation-collision detection behavior.
 - Homebrew formula command export list updated for new binaries.

@@ -1,0 +1,40 @@
+[
+  {
+    "id": "contract-transfer-invariant",
+    "entrypoint_kind": "contract-flow",
+    "entrypoint": "ERC20.transfer",
+    "expected_identity": {
+      "mode": "service",
+      "value": "ci-contract-runner"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/contract-transfer-invariant.trace.txt",
+      "screenshot": "e2e-artifacts/contract-transfer-invariant.report.txt"
+    },
+    "assertions": [
+      {
+        "name": "invariant totalSupply preserved after transfer",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "id": "contract-revert-unauthorized",
+    "entrypoint_kind": "contract-flow",
+    "entrypoint": "Treasury.withdraw",
+    "expected_identity": {
+      "mode": "guest",
+      "value": "unauthorized-caller"
+    },
+    "artifacts": {
+      "trace": "e2e-artifacts/contract-revert-unauthorized.trace.txt",
+      "screenshot": "e2e-artifacts/contract-revert-unauthorized.report.txt"
+    },
+    "assertions": [
+      {
+        "name": "revert on unauthorized withdraw",
+        "ok": true
+      }
+    ]
+  }
+]
