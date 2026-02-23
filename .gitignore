@@ -6,8 +6,11 @@
 # Local environment overrides
 .env
 .env.local
+.env.sentinel.backup*
 
 # Python artifacts
 __pycache__/
 *.pyc
 
+# Local release artifacts
+dist/
