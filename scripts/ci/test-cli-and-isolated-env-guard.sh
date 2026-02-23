@@ -31,6 +31,7 @@ fi
 "${ROOT}/bin/lacp" canary --help >/dev/null
 "${ROOT}/bin/lacp" canary-optimize --help >/dev/null
 "${ROOT}/bin/lacp" loop --help >/dev/null
+"${ROOT}/bin/lacp" up --help >/dev/null
 "${ROOT}/bin/lacp" auto-rollback --help >/dev/null
 "${ROOT}/bin/lacp" schedule-health --help >/dev/null
 "${ROOT}/bin/lacp" policy-pack --help >/dev/null

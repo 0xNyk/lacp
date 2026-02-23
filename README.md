@@ -170,6 +170,12 @@ bin/lacp loop --task "implement feature X" --repo-trust trusted --json -- <comma
 ### 4. Use isolation for parallel agent work
 
 ```bash
+# dmux-style: start 3 panes/sessions in one command
+bin/lacp up --session dev --instances 3 --command "claude" --json | jq
+
+# add one more instance to the same session later
+bin/lacp up --session dev --instances 1 --command "claude" --json | jq
+
 # worktree lifecycle
 bin/lacp worktree create --repo-root . --name "feature-a" --base HEAD --json | jq
 bin/lacp worktree list --repo-root . --json | jq
@@ -329,6 +335,7 @@ Notes:
 - `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
+- `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
 - `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
