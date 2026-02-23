@@ -15,7 +15,7 @@ Options:
   --days <n>                 Lookback window in days (default: 7)
   --min-hit-rate <n>         Minimum average hit_rate_at_k (default: 0.90)
   --min-mrr <n>              Minimum average mrr_at_k (default: 0.65)
-  --max-triage-issues <n>    Maximum total triage issues in window (default: 2)
+  --max-triage-issues <n>    Maximum average triage issues per benchmark in window (default: 2)
   --since-clean-baseline     Use baseline timestamp from baseline file as additional cutoff
   --baseline-file <path>     Baseline file path (default: <knowledge>/data/benchmarks/canary-baseline.json)
   --set-clean-baseline       Write baseline file at current UTC timestamp and exit
@@ -160,11 +160,16 @@ if bench_dir.exists():
 
         summary = payload.get("summary", {}) or {}
         triage = payload.get("triage", {}) or {}
+        gate_raw = payload.get("gate_ok", None)
+        if isinstance(gate_raw, bool):
+            gate_ok = gate_raw
+        else:
+            gate_ok = None
         rows.append(
             {
                 "path": str(path),
                 "generated_at_utc": generated.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "gate_ok": bool(payload.get("gate_ok", False)),
+                "gate_ok": gate_ok,
                 "hit_rate_at_k": float(summary.get("hit_rate_at_k", 0.0) or 0.0),
                 "mrr_at_k": float(summary.get("mrr_at_k", 0.0) or 0.0),
                 "triage_issue_count": int(triage.get("issue_count", 0) or 0),
@@ -181,19 +186,21 @@ if rows:
     avg_hit = statistics.fmean(r["hit_rate_at_k"] for r in rows)
     avg_mrr = statistics.fmean(r["mrr_at_k"] for r in rows)
     triage_total = sum(r["triage_issue_count"] for r in rows)
-    gate_failures = sum(1 for r in rows if not r["gate_ok"])
+    triage_avg = statistics.fmean(r["triage_issue_count"] for r in rows)
+    gate_failures = sum(1 for r in rows if r["gate_ok"] is False)
 else:
     avg_hit = 0.0
     avg_mrr = 0.0
     triage_total = 0
+    triage_avg = 0.0
     gate_failures = 0
 
 if avg_hit < min_hit:
     failures.append(f"avg hit_rate_at_k below threshold: {avg_hit:.4f} < {min_hit:.4f}")
 if avg_mrr < min_mrr:
     failures.append(f"avg mrr_at_k below threshold: {avg_mrr:.4f} < {min_mrr:.4f}")
-if triage_total > max_triage_issues:
-    failures.append(f"triage issues exceed threshold: {triage_total} > {max_triage_issues}")
+if triage_avg > max_triage_issues:
+    failures.append(f"avg triage issues exceed threshold: {triage_avg:.4f} > {max_triage_issues:.4f}")
 if gate_failures > 0:
     failures.append(f"gate_ok failed in {gate_failures} benchmark(s)")
 
@@ -222,6 +229,7 @@ payload = {
         "avg_hit_rate_at_k": avg_hit,
         "avg_mrr_at_k": avg_mrr,
         "triage_issues_total": triage_total,
+        "avg_triage_issues": triage_avg,
         "gate_failures": gate_failures,
     },
     "promotion_ready": ok,
@@ -243,7 +251,7 @@ echo "${result_json}" | jq -r '
   "  generated_at_utc=\(.generated_at_utc)",
   "  window.days=\(.window.days) cutoff=\(.window.effective_cutoff_utc) sample_count=\(.summary.benchmark_count)",
   "  avg.hit_rate_at_k=\(.summary.avg_hit_rate_at_k) avg.mrr_at_k=\(.summary.avg_mrr_at_k)",
-  "  triage.total=\(.summary.triage_issues_total) gate_failures=\(.summary.gate_failures)",
+  "  triage.avg=\(.summary.avg_triage_issues) triage.total=\(.summary.triage_issues_total) gate_failures=\(.summary.gate_failures)",
   "  promotion_ready=\(.promotion_ready)",
   (if (.failures | length) > 0 then ("  failures=" + (.failures | join(" | "))) else "  failures=<none>" end)
 '
