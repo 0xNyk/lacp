@@ -5,11 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-bootstrap-system [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--json]
+Usage: lacp-bootstrap-system [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--fresh-check] [--skip-fresh-check] [--json]
 
 Runs a full first-run bootstrap flow:
   1) install/onboard flow
   2) doctor summary
+  3) fresh-machine confidence checks (quick isolated suite + core command health)
 EOF
 }
 
@@ -21,6 +22,7 @@ AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
 NO_AUTO_DEPS=0
 NO_AUTO_ADOPT=0
+FRESH_CHECK=1
 JSON=0
 
 while [[ $# -gt 0 ]]; do
@@ -59,6 +61,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-adopt)
       NO_AUTO_ADOPT=1
+      shift
+      ;;
+    --fresh-check)
+      FRESH_CHECK=1
+      shift
+      ;;
+    --skip-fresh-check)
+      FRESH_CHECK=0
       shift
       ;;
     --json)
@@ -114,19 +124,67 @@ fi
 doctor_out="$("${ROOT}/bin/lacp-doctor" --json)"
 doctor_json="$(printf '%s\n' "${doctor_out}" | sed -n '/^{/,$p')"
 
+fresh_check_json='{"enabled":false,"ok":true,"tests":{"quick_isolated":{"ok":null}},"commands":{}}'
+if [[ "${FRESH_CHECK}" -eq 1 ]]; then
+  test_rc=0
+  set +e
+  "${ROOT}/bin/lacp-test" --quick --isolated >/dev/null
+  test_rc=$?
+  set -e
+
+  cmd_orchestrate=0
+  cmd_worktree=0
+  cmd_swarm=0
+  set +e
+  "${ROOT}/bin/lacp" orchestrate doctor --json >/dev/null 2>&1
+  cmd_orchestrate=$?
+  "${ROOT}/bin/lacp" worktree list --json >/dev/null 2>&1
+  cmd_worktree=$?
+  "${ROOT}/bin/lacp" swarm doctor --json >/dev/null 2>&1
+  cmd_swarm=$?
+  set -e
+
+  fresh_check_json="$(jq -n \
+    --argjson test_rc "${test_rc}" \
+    --argjson cmd_orchestrate "${cmd_orchestrate}" \
+    --argjson cmd_worktree "${cmd_worktree}" \
+    --argjson cmd_swarm "${cmd_swarm}" \
+    '{
+      enabled:true,
+      ok:($test_rc == 0 and $cmd_orchestrate == 0 and $cmd_worktree == 0 and $cmd_swarm == 0),
+      tests:{
+        quick_isolated:{ok:($test_rc == 0), rc:$test_rc}
+      },
+      commands:{
+        orchestrate_doctor:{ok:($cmd_orchestrate == 0), rc:$cmd_orchestrate},
+        worktree_list:{ok:($cmd_worktree == 0), rc:$cmd_worktree},
+        swarm_doctor:{ok:($cmd_swarm == 0), rc:$cmd_swarm}
+      }
+    }')"
+fi
+
+if [[ "$(echo "${fresh_check_json}" | jq -r '.ok')" != "true" ]]; then
+  if [[ "${JSON}" -ne 1 ]]; then
+    echo "[lacp] ERROR: fresh-check failed" >&2
+  fi
+  exit 1
+fi
+
 if [[ "${JSON}" -eq 1 ]]; then
-  python3 - <<'PY' "${doctor_json}" "${PROFILE}" "${WITH_VERIFY}" "${NO_AUTO_DEPS}"
+  python3 - <<'PY' "${doctor_json}" "${PROFILE}" "${WITH_VERIFY}" "${NO_AUTO_DEPS}" "${fresh_check_json}"
 import json
 import sys
 
 doctor = json.loads(sys.argv[1])
+fresh = json.loads(sys.argv[5])
 payload = {
-    "ok": bool(doctor.get("ok")),
+    "ok": bool(doctor.get("ok")) and bool(fresh.get("ok")),
     "kind": "bootstrap_system",
     "profile": sys.argv[2],
     "with_verify": sys.argv[3] == "1",
     "auto_deps_enabled": sys.argv[4] != "1",
     "doctor_summary": doctor.get("summary", {}),
+    "fresh_check": fresh,
 }
 print(json.dumps(payload, indent=2))
 PY

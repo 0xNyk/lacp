@@ -36,6 +36,7 @@ fi
 "${ROOT}/bin/lacp" policy-pack --help >/dev/null
 "${ROOT}/bin/lacp" release-prepare --help >/dev/null
 "${ROOT}/bin/lacp" release-publish --help >/dev/null
+"${ROOT}/bin/lacp" release-verify --help >/dev/null
 "${ROOT}/bin/lacp" vendor-watch --help >/dev/null
 "${ROOT}/bin/lacp" automations-tui --help >/dev/null
 "${ROOT}/bin/lacp" skill-audit --help >/dev/null

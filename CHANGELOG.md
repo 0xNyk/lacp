@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - `config/context-profiles.json` profile catalog with variable substitution and required-var guards.
 - `bin/lacp-swarm plan` now supports advisory `reservations` per job and emits collision analysis under `.collaboration` (artifacted with swarm launches).
 - `bin/lacp-swarm status` now emits `collaboration_summary` (including `top_conflicts`) in JSON mode and concise collision triage hints in text mode.
+- `bin/lacp-release-verify` one-command release smoke verifier (`release-publish --skip-gh` + SHA256 + archive structure + brew tap dry-run).
 - `bin/lacp-sandbox-run --context-contract` with mutating-run context enforcement (`host/cwd/git branch/worktree`) and structured evidence in run artifacts.
 - `bin/lacp-sandbox-run` context-contract gate now covers remote-target commands (`ssh`/`scp`/`rsync`/`sftp`) with `expected_remote_host` validation.
 - CI coverage for new surfaces:
@@ -43,16 +44,20 @@ All notable changes to this project will be documented in this file.
   - `scripts/ci/test-context-profile.sh`
   - `scripts/ci/test-session-fingerprint.sh`
   - `scripts/ci/test-trace-triage.sh`
+  - `scripts/ci/test-release-verify.sh`
 
 ### Changed
 - `bin/lacp-install` now enables fresh-system dependency auto-detection by default on macOS/Homebrew (`--no-auto-deps` opt-out, `--auto-deps-dry-run` supported).
+- `bin/lacp-install` starter profile now auto-applies `starter` policy pack when managing local `.env`.
 - `bin/lacp-onboard` now performs default dependency auto-detection/remediation on macOS/Homebrew (`--no-auto-deps` opt-out).
 - `bin/lacp-canary-optimize --json` now keeps JSON parse-safe output even in `--dry-run` mode.
 - `bin/lacp-release-prepare` now supports baseline-aware canary evaluation (`--since-clean-baseline`, `--baseline-file`).
+- `bin/lacp-release-prepare` now supports optional canary remediation stage (`--auto-optimize-on-fail`) with post-optimize regression rollback.
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
 - `bin/lacp-status-report` and `bin/lacp-report` JSON outputs now share top-level schema fields (`schema_version`, `kind`, `ok`, `summary`).
 - `bin/lacp` top-level dispatcher expanded with new commands (`canary`, `auto-rollback`, `schedule-health`, `policy-pack`, `release-prepare`).
+- `bin/lacp` top-level dispatcher expanded with `release-verify`.
 - `bin/lacp` top-level dispatcher expanded with `canary-optimize`.
 - `bin/lacp` top-level dispatcher expanded with `loop`.
 - `bin/lacp-loop --json` now emits deterministic failure analysis (`analysis.primary_cause`, `analysis.secondary_causes`, `analysis.signals`, `analysis.remediation_hints`, `analysis.confidence`) for faster post-run triage.
@@ -63,6 +68,7 @@ All notable changes to this project will be documented in this file.
 - `scripts/ci/test-swarm.sh` now verifies reservation-collision detection behavior.
 - Homebrew formula command export list updated for new binaries.
 - Security controls CI now covers context-contract gate behavior (`missing`, `mismatch`, `pass`) for mutating commands.
+- Starter/strict policy packs now enforce session-fingerprint guardrails by default (`LACP_REQUIRE_SESSION_FINGERPRINT=true`).
 
 ## [0.1.0] - 2026-02-20
 

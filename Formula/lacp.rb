@@ -35,6 +35,7 @@ class Lacp < Formula
       lacp-policy-pack
       lacp-release-prepare
       lacp-release-publish
+      lacp-release-verify
       lacp-vendor-watch
       lacp-automations-tui
       lacp-cache-audit

@@ -39,6 +39,8 @@ strict_json="$("/bin/bash" "${ROOT}/bin/lacp-policy-pack" apply --pack strict --
   exit 1
 }
 rg -q '^LACP_ALLOW_EXTERNAL_REMOTE="false"' "${ENV_FILE}" || { echo "[policy-pack-test] FAIL strict env update missing" >&2; exit 1; }
+rg -q '^LACP_REQUIRE_CONTEXT_CONTRACT="true"' "${ENV_FILE}" || { echo "[policy-pack-test] FAIL strict context contract env missing" >&2; exit 1; }
+rg -q '^LACP_REQUIRE_SESSION_FINGERPRINT="true"' "${ENV_FILE}" || { echo "[policy-pack-test] FAIL strict session fingerprint env missing" >&2; exit 1; }
 
 enterprise_json="$("/bin/bash" "${ROOT}/bin/lacp-policy-pack" apply --pack enterprise --json)"
 [[ "$(echo "${enterprise_json}" | jq -r '.ok')" == "true" ]] || { echo "[policy-pack-test] FAIL enterprise apply not ok" >&2; exit 1; }
@@ -47,5 +49,6 @@ enterprise_json="$("/bin/bash" "${ROOT}/bin/lacp-policy-pack" apply --pack enter
   exit 1
 }
 rg -q '^LACP_ALLOW_EXTERNAL_REMOTE="true"' "${ENV_FILE}" || { echo "[policy-pack-test] FAIL enterprise env update missing" >&2; exit 1; }
+rg -q '^LACP_REQUIRE_SESSION_FINGERPRINT="false"' "${ENV_FILE}" || { echo "[policy-pack-test] FAIL enterprise session fingerprint env missing" >&2; exit 1; }
 
 echo "[policy-pack-test] policy pack tests passed"
