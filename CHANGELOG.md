@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-claude-hooks` to audit/repair local Claude hook/plugin cache drift (including claude-mem version/install-path mismatch repair).
 - `bin/lacp-claude-hooks apply-profile/optimize` to apply safe local hook posture profiles (`minimal-stop`, `balanced`) and run one-command repair+profile+audit optimization.
 - `lacp-onboard` / `lacp-install` auto Claude hook optimization by default (`LACP_AUTO_HOOK_OPTIMIZE=true`, opt-out via `--no-auto-hook-optimize`).
+- `bin/lacp-console` interactive slash-command shell for local orchestration workflows (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/release`, `/run`) with custom command loading from `~/.lacp/commands` and `./.lacp/commands`.
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.
