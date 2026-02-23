@@ -18,6 +18,7 @@ Core:
   mode          Show/set operating mode
   posture       Evaluate local-first/no-external-ci posture contract
   claude-hooks  Audit/repair/optimize local Claude hooks + plugin cache drift
+  console       Interactive LACP shell with slash commands
 
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop
@@ -119,6 +120,9 @@ case "${cmd}" in
     ;;
   claude-hooks)
     exec "${ROOT}/bin/lacp-claude-hooks" "$@"
+    ;;
+  console)
+    exec "${ROOT}/bin/lacp-console" "$@"
     ;;
   report)
     exec "${ROOT}/bin/lacp-report" "$@"

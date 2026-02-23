@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-console [options]
+
+Interactive LACP shell with slash commands.
+
+Options:
+  --eval "<line>"                Execute one slash command and exit (repeatable)
+  --project-commands-dir <path>  Override project command dir (default: ./.lacp/commands)
+  --home-commands-dir <path>     Override home command dir (default: ~/.lacp/commands)
+  --no-project-commands          Disable project command loading
+  --no-home-commands             Disable home command loading
+  -h, --help                     Show help
+
+Built-ins:
+  /help                          Show command help
+  /commands                      List loaded custom slash commands
+  /doctor [args]                 Run: lacp doctor [args]
+  /up [args]                     Run: lacp up [args]
+  /orchestrate [args]            Run: lacp orchestrate [args]
+  /worktree [args]               Run: lacp worktree [args]
+  /swarm [args]                  Run: lacp swarm [args]
+  /e2e [args]                    Run: lacp e2e [args]
+  /api-e2e [args]                Run: lacp api-e2e [args]
+  /contract-e2e [args]           Run: lacp contract-e2e [args]
+  /mode [args]                   Run: lacp mode [args]
+  /policy [args]                 Run: lacp policy-pack [args]
+  /hooks [args]                  Run: lacp claude-hooks [args]
+  /release [args]                Run: lacp release-prepare [args]
+  /posture [args]                Run: lacp posture [args]
+  /status [args]                 Run: lacp status [args]
+  /run <lacp-subcommand...>      Run arbitrary lacp command
+  /clear                         Clear terminal
+  /exit | /quit                  Exit console
+EOF
+}
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "${s}"
+}
+
+declare -A CUSTOM_COMMAND_PATHS=()
+declare -A CUSTOM_COMMAND_SOURCE=()
+declare -a EVAL_LINES=()
+
+PROJECT_COMMANDS_ENABLED=1
+HOME_COMMANDS_ENABLED=1
+PROJECT_COMMANDS_DIR="${PWD}/.lacp/commands"
+HOME_COMMANDS_DIR="${HOME}/.lacp/commands"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --eval)
+      EVAL_LINES+=("$2")
+      shift 2
+      ;;
+    --project-commands-dir)
+      PROJECT_COMMANDS_DIR="$2"
+      shift 2
+      ;;
+    --home-commands-dir)
+      HOME_COMMANDS_DIR="$2"
+      shift 2
+      ;;
+    --no-project-commands)
+      PROJECT_COMMANDS_ENABLED=0
+      shift
+      ;;
+    --no-home-commands)
+      HOME_COMMANDS_ENABLED=0
+      shift
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+load_custom_commands_from_dir() {
+  local dir="$1"
+  local source_label="$2"
+  [[ -d "${dir}" ]] || return 0
+
+  local file base name
+  while IFS= read -r -d '' file; do
+    base="$(basename "${file}")"
+    name="${base%.*}"
+    [[ -n "${name}" ]] || continue
+    if [[ -z "${CUSTOM_COMMAND_PATHS["${name}"]+x}" ]]; then
+      CUSTOM_COMMAND_PATHS["${name}"]="${file}"
+      CUSTOM_COMMAND_SOURCE["${name}"]="${source_label}"
+    fi
+  done < <(find "${dir}" -maxdepth 1 -type f -print0 | sort -z)
+}
+
+if [[ "${PROJECT_COMMANDS_ENABLED}" -eq 1 ]]; then
+  load_custom_commands_from_dir "${PROJECT_COMMANDS_DIR}" "project"
+fi
+if [[ "${HOME_COMMANDS_ENABLED}" -eq 1 ]]; then
+  load_custom_commands_from_dir "${HOME_COMMANDS_DIR}" "home"
+fi
+
+run_lacp_subcommand() {
+  local sub="$1"
+  local args="${2:-}"
+  local cmd="\"${ROOT}/bin/lacp\" ${sub}"
+  if [[ -n "${args}" ]]; then
+    cmd="${cmd} ${args}"
+  fi
+  bash -lc "${cmd}"
+}
+
+run_custom_command() {
+  local name="$1"
+  local args="${2:-}"
+  local path="${CUSTOM_COMMAND_PATHS["${name}"]:-}"
+  [[ -n "${path}" ]] || return 1
+
+  if [[ -x "${path}" ]]; then
+    local cmd="\"${path}\""
+    if [[ -n "${args}" ]]; then
+      cmd="${cmd} ${args}"
+    fi
+    bash -lc "${cmd}"
+    return $?
+  fi
+
+  local template=""
+  local line
+  while IFS= read -r line; do
+    line="$(trim "${line}")"
+    [[ -n "${line}" ]] || continue
+    if [[ "${line}" == \#* ]]; then
+      continue
+    fi
+    if [[ "${line}" == run:* ]]; then
+      line="$(trim "${line#run:}")"
+    fi
+    template="${line}"
+    break
+  done < "${path}"
+
+  [[ -n "${template}" ]] || die "Custom command file has no runnable line: ${path}"
+
+  if [[ "${template}" == *"{{args}}"* ]]; then
+    template="${template//\{\{args\}\}/${args}}"
+  elif [[ -n "${args}" ]]; then
+    template="${template} ${args}"
+  fi
+
+  bash -lc "${template}"
+}
+
+print_custom_commands() {
+  if [[ "${#CUSTOM_COMMAND_PATHS[@]}" -eq 0 ]]; then
+    echo "No custom slash commands loaded."
+    return 0
+  fi
+
+  local name
+  for name in $(printf '%s\n' "${!CUSTOM_COMMAND_PATHS[@]}" | sort); do
+    printf '/%s\t%s\t%s\n' "${name}" "${CUSTOM_COMMAND_SOURCE["${name}"]}" "${CUSTOM_COMMAND_PATHS["${name}"]}"
+  done
+}
+
+dispatch_line() {
+  local line="$1"
+  local input cmd_token rest
+  input="$(trim "${line}")"
+  [[ -n "${input}" ]] || return 0
+
+  if [[ "${input}" != /* ]]; then
+    echo "[lacp] Use slash commands (try /help)." >&2
+    return 2
+  fi
+
+  cmd_token="${input%% *}"
+  rest="${input#"${cmd_token}"}"
+  rest="$(trim "${rest}")"
+
+  case "${cmd_token}" in
+    /help)
+      usage
+      return 0
+      ;;
+    /commands)
+      print_custom_commands
+      return 0
+      ;;
+    /exit|/quit)
+      return 99
+      ;;
+    /clear)
+      clear
+      return 0
+      ;;
+    /doctor) run_lacp_subcommand "doctor" "${rest}"; return $? ;;
+    /up) run_lacp_subcommand "up" "${rest}"; return $? ;;
+    /orchestrate) run_lacp_subcommand "orchestrate" "${rest}"; return $? ;;
+    /worktree) run_lacp_subcommand "worktree" "${rest}"; return $? ;;
+    /swarm) run_lacp_subcommand "swarm" "${rest}"; return $? ;;
+    /e2e) run_lacp_subcommand "e2e" "${rest}"; return $? ;;
+    /api-e2e) run_lacp_subcommand "api-e2e" "${rest}"; return $? ;;
+    /contract-e2e) run_lacp_subcommand "contract-e2e" "${rest}"; return $? ;;
+    /mode) run_lacp_subcommand "mode" "${rest}"; return $? ;;
+    /policy) run_lacp_subcommand "policy-pack" "${rest}"; return $? ;;
+    /hooks) run_lacp_subcommand "claude-hooks" "${rest}"; return $? ;;
+    /release) run_lacp_subcommand "release-prepare" "${rest}"; return $? ;;
+    /posture) run_lacp_subcommand "posture" "${rest}"; return $? ;;
+    /status) run_lacp_subcommand "status" "${rest}"; return $? ;;
+    /run)
+      [[ -n "${rest}" ]] || die "/run requires a lacp subcommand"
+      bash -lc "\"${ROOT}/bin/lacp\" ${rest}"
+      return $?
+      ;;
+    /*)
+      local custom_name="${cmd_token#/}"
+      if [[ -n "${CUSTOM_COMMAND_PATHS["${custom_name}"]+x}" ]]; then
+        run_custom_command "${custom_name}" "${rest}"
+        return $?
+      fi
+      echo "[lacp] Unknown slash command: ${cmd_token}" >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ "${#EVAL_LINES[@]}" -gt 0 ]]; then
+  for line in "${EVAL_LINES[@]}"; do
+    if ! dispatch_line "${line}"; then
+      rc=$?
+      if [[ "${rc}" -eq 99 ]]; then
+        exit 0
+      fi
+      exit "${rc}"
+    fi
+  done
+  exit 0
+fi
+
+echo "[lacp] Console ready. Use /help for commands."
+while true; do
+  if ! IFS= read -r -p "lacp> " line; then
+    echo
+    break
+  fi
+  if ! dispatch_line "${line}"; then
+    rc=$?
+    if [[ "${rc}" -eq 99 ]]; then
+      break
+    fi
+  fi
+done
