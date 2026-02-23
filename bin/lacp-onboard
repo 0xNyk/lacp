@@ -7,13 +7,14 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt]
+Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize]
 
 Initial setup helper:
 - creates .env from config/lacp.env.example when missing
 - auto-detects and installs missing core dependencies on macOS/Homebrew by default
 - runs bootstrap checks
 - adopts local claude/codex wrappers when both binaries are present (default-on)
+- repairs/applies Claude hook profile when local Claude config exists (default-on)
 - optionally runs a full verify cycle
 EOF
 }
@@ -26,6 +27,10 @@ AUTO_DEPS_FORCE=0
 case "${LACP_AUTO_ADOPT_LOCAL:-true}" in
   false|0|no) AUTO_ADOPT=0 ;;
   *) AUTO_ADOPT=1 ;;
+esac
+case "${LACP_AUTO_HOOK_OPTIMIZE:-true}" in
+  false|0|no) AUTO_HOOK_OPTIMIZE=0 ;;
+  *) AUTO_HOOK_OPTIMIZE=1 ;;
 esac
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-adopt)
       AUTO_ADOPT=0
+      shift
+      ;;
+    --no-auto-hook-optimize)
+      AUTO_HOOK_OPTIMIZE=0
       shift
       ;;
     -h|--help)
@@ -92,6 +101,18 @@ if [[ "${AUTO_ADOPT}" -eq 1 ]]; then
     fi
   else
     log "Auto-adopt skipped: claude/codex binaries not both present"
+  fi
+fi
+
+if [[ "${AUTO_HOOK_OPTIMIZE}" -eq 1 ]]; then
+  if command -v claude >/dev/null 2>&1 && [[ -d "${HOME}/.claude" ]]; then
+    if "${ROOT}/bin/lacp-claude-hooks" optimize --profile minimal-stop >/dev/null 2>&1; then
+      log "Auto-optimized Claude hooks/profile (minimal-stop)"
+    else
+      log "Auto-hook optimize skipped: run bin/lacp claude-hooks optimize --profile minimal-stop manually"
+    fi
+  else
+    log "Auto-hook optimize skipped: local Claude config not found"
   fi
 fi
 
