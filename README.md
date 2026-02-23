@@ -265,6 +265,7 @@ Notes:
 - `bin/lacp-schedule-health`: install/status/run-now/uninstall scheduled local health checks via launchd
 - `bin/lacp-policy-pack`: list/apply policy baseline packs (`starter`, `strict`, `enterprise`)
 - `bin/lacp-release-prepare`: one-command pre-live discipline (`release-gate` + `canary` + `status` + `report`)
+  - supports `--profile local-iterative` (equivalent defaults: `--quick --canary-days 3 --skip-cache-gate --skip-skill-audit-gate`)
 - `bin/lacp-release-publish`: local-only release artifact builder/publisher (`tar.gz` + `SHA256SUMS` + optional `gh release`)
 - `bin/lacp-release-verify`: one-command release verification (`release-publish --skip-gh` + checksum + archive + brew dry-run)
 - `bin/lacp-vendor-watch`: monitor local Claude/Codex versions and upstream docs/changelog drift
@@ -390,6 +391,7 @@ bin/lacp canary-optimize --iterations 3 --hours 24 --json | jq
 bin/lacp canary --set-clean-baseline
 bin/lacp canary --since-clean-baseline --json | jq
 bin/lacp vendor-watch --json | jq
+bin/lacp release-prepare --profile local-iterative --since-clean-baseline --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json | jq
 bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
