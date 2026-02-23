@@ -49,6 +49,8 @@ export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
 "/bin/bash" "${ROOT}/bin/lacp-install" --profile starter --with-verify --hours 1 >/dev/null
 "/bin/bash" "${ROOT}/bin/lacp-doctor" --fix --json | jq -e '.ok == true' >/dev/null
 echo "[ops-test] PASS doctor.fix"
+doctor_limits_json="$("/bin/bash" "${ROOT}/bin/lacp-doctor" --check-limits --json)"
+assert_eq "$(echo "${doctor_limits_json}" | jq -r '.checks[] | select(.name=="runtime:pressure") | .status | length > 0')" "true" "doctor.check_limits.runtime_pressure"
 
 # report should return structured output with run metrics.
 report_json="$("/bin/bash" "${ROOT}/bin/lacp-report" --hours 24 --json)"

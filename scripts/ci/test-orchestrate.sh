@@ -31,6 +31,7 @@ export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
 export LACP_ALLOW_EXTERNAL_REMOTE="false"
 export LACP_REQUIRE_INPUT_CONTRACT="false"
+export LACP_RUNTIME_PRESSURE_OVERRIDE="normal"
 
 # Doctor should render both backends.
 doctor_json="$("${ROOT}/bin/lacp-orchestrate" doctor --json)"
@@ -102,6 +103,29 @@ export LACP_DMUX_RUN_TEMPLATE='dmux run --session "{session}" --command "{comman
   --command "run migration checks" \
   --repo-trust trusted \
   --claude-tmux false >/dev/null
+
+# Runtime pressure gate should block with rc=14 after configured retries.
+export LACP_RUNTIME_PRESSURE_OVERRIDE="high"
+export LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS="1"
+export LACP_RUNTIME_BACKOFF_SEC="0"
+set +e
+pressure_json="$("${ROOT}/bin/lacp-orchestrate" run \
+  --task "orchestrate pressure blocked" \
+  --backend tmux \
+  --session "ci-pressure" \
+  --command "echo blocked" \
+  --repo-trust trusted \
+  --json)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 14 ]]; then
+  echo "[orchestrate-test] FAIL expected runtime-pressure rc=14, got ${rc}" >&2
+  exit 1
+fi
+echo "${pressure_json}" | jq -e '.ok == false and .error == "runtime_pressure"' >/dev/null
+export LACP_RUNTIME_PRESSURE_OVERRIDE="normal"
+unset LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS
+unset LACP_RUNTIME_BACKOFF_SEC
 
 # batch manifest run (all success)
 cat > "${TMP}/batch-success.json" <<'EOF'

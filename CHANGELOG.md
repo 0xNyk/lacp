@@ -56,6 +56,8 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-release-prepare` now supports optional canary remediation stage (`--auto-optimize-on-fail`) with post-optimize regression rollback.
 - `bin/lacp-release-prepare` now supports `--profile local-iterative` for one-flag local iteration defaults (`quick + 3-day canary + cache/skill gate skips`).
 - `bin/lacp-release-verify` Homebrew dry-run check now retries `--HEAD` for HEAD-only formulas and treats Cellar permission-only failures as non-fatal.
+- `bin/lacp-doctor` now supports `--check-limits` to report runtime pressure/fork headroom with actionable remediation hints.
+- `bin/lacp-orchestrate` and `bin/lacp-swarm` now apply runtime-pressure backoff before launches and fail fast with structured `runtime_pressure` errors when capacity stays constrained.
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
 - `bin/lacp-status-report` and `bin/lacp-report` JSON outputs now share top-level schema fields (`schema_version`, `kind`, `ok`, `summary`).
