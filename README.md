@@ -25,6 +25,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Risk Tiers](#risk-tiers)
 - [Budget Gates](#budget-gates)
 - [Quick Start](#quick-start)
+- [Daily Developer Workflow](#daily-developer-workflow)
 - [Install Options](#install-options)
 - [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
@@ -132,6 +133,80 @@ bin/lacp-mode show
 bin/lacp-mode remote-enabled --ttl-min 30
 bin/lacp-doctor
 bin/lacp-verify --hours 24
+```
+
+## Daily Developer Workflow
+
+Use this as the default day-to-day flow after install.
+
+### 1. Start session health checks
+
+```bash
+cd ~/control/frameworks/lacp
+bin/lacp doctor --fix-hints
+bin/lacp status --json | jq
+```
+
+### 2. Set operating mode
+
+```bash
+# local-only (default safe mode)
+bin/lacp mode local-only
+
+# or temporary remote mode with explicit TTL
+bin/lacp mode remote-enabled --ttl-min 30
+```
+
+### 3. Run work through LACP gates
+
+```bash
+# single command with routing/risk/budget/context gates
+bin/lacp run --task "trusted smoke" --repo-trust trusted -- /bin/echo hello
+
+# one-task control loop (intent -> execute -> observe -> adapt)
+bin/lacp loop --task "implement feature X" --repo-trust trusted --json -- <command>
+```
+
+### 4. Use isolation for parallel agent work
+
+```bash
+# worktree lifecycle
+bin/lacp worktree create --repo-root . --name "feature-a" --base HEAD --json | jq
+bin/lacp worktree list --repo-root . --json | jq
+
+# optional orchestrated multi-session runs
+bin/lacp orchestrate run --task "parallel batch" --backend dmux --json | jq
+bin/lacp swarm launch --manifest ./swarm.json --json | jq
+```
+
+### 5. Generate evidence before merge/release
+
+```bash
+# browser/web flows
+bin/lacp e2e smoke --workdir . --init-template --command "npx playwright test --grep @smoke" --json | jq
+
+# backend/API flows
+bin/lacp api-e2e smoke --workdir . --init-template --command "npx schemathesis run --checks all" --json | jq
+
+# smart-contract flows
+bin/lacp contract-e2e smoke --workdir . --init-template --command "forge test -vv" --json | jq
+
+# enforce policy gate for current PR context
+bin/lacp pr-preflight --changed-files ./changed-files.txt --checks-json ./checks.json --review-json ./review-state.json --json | jq
+```
+
+### 6. Final validation + release discipline
+
+```bash
+bin/lacp test --isolated
+bin/lacp release-prepare --profile local-iterative --json | jq
+bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+```
+
+### 7. Optional: make `claude` / `codex` default to LACP routing
+
+```bash
+bin/lacp adopt-local --force --json | jq
 ```
 
 ## Install Options
