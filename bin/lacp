@@ -16,6 +16,7 @@ Core:
   status        Render status report
   test          Run test suites
   mode          Show/set operating mode
+  posture       Evaluate local-first/no-external-ci posture contract
 
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop
@@ -111,6 +112,9 @@ case "${cmd}" in
     ;;
   mode)
     exec "${ROOT}/bin/lacp-mode" "$@"
+    ;;
+  posture)
+    exec "${ROOT}/bin/lacp-posture" "$@"
     ;;
   report)
     exec "${ROOT}/bin/lacp-report" "$@"
