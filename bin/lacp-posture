@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-posture [--strict] [--json]
+Usage: lacp-posture [--strict] [--fix] [--json]
 
 Evaluate local-first operating posture for this repository.
 
@@ -19,17 +19,23 @@ Checks:
 
 Options:
   --strict   Exit non-zero when any check fails
+  --fix      Apply starter posture defaults and remediate active workflows
   --json     Emit JSON payload
   -h, --help Show help
 EOF
 }
 
 STRICT=0
+FIX=0
 AS_JSON=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --strict)
       STRICT=1
+      shift
+      ;;
+    --fix)
+      FIX=1
       shift
       ;;
     --json)
@@ -45,6 +51,55 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+declare -a ACTIONS=()
+
+ensure_dotenv() {
+  if [[ ! -f "${ROOT}/.env" ]]; then
+    cp "${ROOT}/config/lacp.env.example" "${ROOT}/.env"
+    ACTIONS+=("created .env from config/lacp.env.example")
+  fi
+}
+
+fix_workflows() {
+  local disabled_dir="${ROOT}/.github/workflows-disabled"
+  local workflows_dir="${ROOT}/.github/workflows"
+  mkdir -p "${disabled_dir}" "${workflows_dir}"
+  local moved=0
+  local f target base ts
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    base="$(basename "${f}")"
+    target="${disabled_dir}/${base}"
+    if [[ -e "${target}" ]]; then
+      ts="$(date -u +%Y%m%dT%H%M%SZ)"
+      target="${disabled_dir}/${base%.yml}-${ts}.yml"
+    fi
+    mv "${f}" "${target}"
+    moved=$((moved + 1))
+    ACTIONS+=("moved workflow ${base} -> $(basename "${target}")")
+  done < <(find "${workflows_dir}" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null || true)
+
+  if [[ "${moved}" -eq 0 ]]; then
+    ACTIONS+=("no active workflows to move")
+  fi
+}
+
+if [[ "${FIX}" -eq 1 ]]; then
+  ensure_dotenv
+  "${ROOT}/bin/lacp-policy-pack" apply --pack starter >/dev/null
+  ACTIONS+=("applied starter policy pack")
+  fix_workflows
+
+  # Re-source .env so current process reflects fixed values.
+  if [[ -f "${ROOT}/.env" ]]; then
+    # shellcheck disable=SC1091
+    source "${ROOT}/.env"
+    export LACP_LOCAL_FIRST="${LACP_LOCAL_FIRST:-true}"
+    export LACP_NO_EXTERNAL_CI="${LACP_NO_EXTERNAL_CI:-true}"
+    export LACP_ALLOW_EXTERNAL_REMOTE="${LACP_ALLOW_EXTERNAL_REMOTE:-false}"
+  fi
+fi
 
 local_first_ok=false
 no_external_ci_ok=false
@@ -89,6 +144,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson no_external_ci_ok "${no_external_ci_ok}" \
     --argjson workflows_ok "${workflows_ok}" \
     --argjson remote_default_ok "${remote_default_ok}" \
+    --argjson fix "$([[ "${FIX}" -eq 1 ]] && echo true || echo false)" \
+    --argjson actions "$(printf '%s\n' "${ACTIONS[@]-}" | jq -R -s 'split("\n")[:-1]')" \
     '{
       schema_version:$schema_version,
       kind:$kind,
@@ -99,6 +156,10 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
         no_external_ci:{ok:$no_external_ci_ok,value:$no_external_ci,expected:"true"},
         workflows:{ok:$workflows_ok,active_count:$workflow_count,expected_active_count:0},
         remote_default:{ok:$remote_default_ok,value:$allow_external_remote,expected:"false"}
+      },
+      fix:{
+        applied:$fix,
+        actions:$actions
       },
       hints:[
         "Run `bin/lacp-policy-pack apply --pack starter` to reset safe defaults.",
@@ -113,6 +174,11 @@ else
   echo "  no_external_ci=${LACP_NO_EXTERNAL_CI} (expected true)"
   echo "  active_workflows=${workflow_count} (expected 0 when no_external_ci=true)"
   echo "  allow_external_remote=${LACP_ALLOW_EXTERNAL_REMOTE} (expected false)"
+  if [[ "${FIX}" -eq 1 ]]; then
+    for a in "${ACTIONS[@]-}"; do
+      [[ -n "${a}" ]] && echo "  fix: ${a}"
+    done
+  fi
 fi
 
 if [[ "${STRICT}" -eq 1 && "${overall_ok}" != "true" ]]; then

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `bin/lacp-posture` one-shot local-first/no-external-ci posture report (`--strict`, `--json`).
+- `bin/lacp-claude-hooks` to audit/repair local Claude hook/plugin cache drift (including claude-mem version/install-path mismatch repair).
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.
@@ -68,6 +69,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-release-gate` now enforces an external-CI policy gate by default (override with `--allow-external-ci`).
 - `bin/lacp-release-prepare` and `bin/lacp-release-publish` now expose/pass through `--allow-external-ci`.
 - `bin/lacp-test --quick` now includes strict posture validation (`lacp-posture --strict`).
+- `bin/lacp-test` now includes `scripts/ci/test-claude-hooks.sh`.
 - Active GitHub workflows were moved to `.github/workflows-disabled/` templates to keep repository defaults local-only.
 - `scripts/ci/test-workflow-cost-policy.sh` now treats “no active workflows” as a valid pass condition.
 - `bin/lacp-install` now enables fresh-system dependency auto-detection by default on macOS/Homebrew (`--no-auto-deps` opt-out, `--auto-deps-dry-run` supported).
