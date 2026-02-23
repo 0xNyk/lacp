@@ -337,6 +337,7 @@ Notes:
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
 - `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
+- `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
 - `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
@@ -524,6 +525,7 @@ Or use:
 bin/lacp-test
 bin/lacp-test --quick
 bin/lacp-test --isolated
+bin/lacp posture --strict --json | jq
 
 # pre-live gate
 bin/lacp release-gate --quick

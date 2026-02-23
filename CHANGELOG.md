@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `bin/lacp-posture` one-shot local-first/no-external-ci posture report (`--strict`, `--json`).
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.
@@ -66,6 +67,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-doctor` now validates local-first/no-external-ci posture and fails when active `.github/workflows/*.yml` files exist while `LACP_NO_EXTERNAL_CI=true`.
 - `bin/lacp-release-gate` now enforces an external-CI policy gate by default (override with `--allow-external-ci`).
 - `bin/lacp-release-prepare` and `bin/lacp-release-publish` now expose/pass through `--allow-external-ci`.
+- `bin/lacp-test --quick` now includes strict posture validation (`lacp-posture --strict`).
 - Active GitHub workflows were moved to `.github/workflows-disabled/` templates to keep repository defaults local-only.
 - `scripts/ci/test-workflow-cost-policy.sh` now treats “no active workflows” as a valid pass condition.
 - `bin/lacp-install` now enables fresh-system dependency auto-detection by default on macOS/Homebrew (`--no-auto-deps` opt-out, `--auto-deps-dry-run` supported).
