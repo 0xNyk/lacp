@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt]
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize]
 
 Bootstraps LACP for first-time users.
 
@@ -32,6 +32,7 @@ AUTO_DEPS=1
 AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
 AUTO_ADOPT=1
+AUTO_HOOK_OPTIMIZE=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +71,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-adopt)
       AUTO_ADOPT=0
+      shift
+      ;;
+    --no-auto-hook-optimize)
+      AUTO_HOOK_OPTIMIZE=0
       shift
       ;;
     -h|--help)
@@ -201,6 +206,9 @@ if [[ "${WITH_VERIFY}" -eq 1 ]]; then
 fi
 if [[ "${AUTO_ADOPT}" -eq 0 ]]; then
   ONBOARD_ARGS+=(--no-auto-adopt)
+fi
+if [[ "${AUTO_HOOK_OPTIMIZE}" -eq 0 ]]; then
+  ONBOARD_ARGS+=(--no-auto-hook-optimize)
 fi
 
 if [[ "${#ONBOARD_ARGS[@]}" -gt 0 ]]; then

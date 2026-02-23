@@ -17,7 +17,7 @@ Core:
   test          Run test suites
   mode          Show/set operating mode
   posture       Evaluate local-first/no-external-ci posture contract
-  claude-hooks  Audit/repair local Claude hooks + plugin cache drift
+  claude-hooks  Audit/repair/optimize local Claude hooks + plugin cache drift
 
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop

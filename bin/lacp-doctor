@@ -568,6 +568,26 @@ case "${codex_wrapper_state}" in
     ;;
 esac
 
+if command -v claude >/dev/null 2>&1; then
+  hook_audit="$("${LACP_ROOT}/bin/lacp-claude-hooks" audit --json 2>/dev/null || true)"
+  if [[ -n "${hook_audit}" ]]; then
+    hook_missing_plugins="$(echo "${hook_audit}" | jq -r '.summary.missing_plugin_paths // 0' 2>/dev/null || echo 0)"
+    hook_missing_commands="$(echo "${hook_audit}" | jq -r '.summary.missing_command_paths // 0' 2>/dev/null || echo 0)"
+    hook_drift="$(echo "${hook_audit}" | jq -r '.summary.version_drift // 0' 2>/dev/null || echo 0)"
+    hook_stop_total="$(echo "${hook_audit}" | jq -r '.summary.total_stop_hooks // 0' 2>/dev/null || echo 0)"
+    if [[ "${hook_missing_plugins}" == "0" && "${hook_missing_commands}" == "0" && "${hook_drift}" == "0" ]]; then
+      add_check "hooks:claude_posture" "PASS" "missing_plugin_paths=${hook_missing_plugins} missing_command_paths=${hook_missing_commands} drift=${hook_drift} total_stop_hooks=${hook_stop_total}"
+    else
+      add_check "hooks:claude_posture" "WARN" "missing_plugin_paths=${hook_missing_plugins} missing_command_paths=${hook_missing_commands} drift=${hook_drift} total_stop_hooks=${hook_stop_total}"
+      add_hint "Repair and optimize hooks: bin/lacp claude-hooks optimize --profile minimal-stop --json | jq"
+    fi
+  else
+    add_check "hooks:claude_posture" "WARN" "unable to read Claude hook posture"
+  fi
+else
+  add_check "hooks:claude_posture" "PASS" "skipped (claude not installed)"
+fi
+
 fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
 warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
 pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
