@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
+wf_tmp="${ROOT}/.github/workflows/.ci-policy-test.yml"
+cleanup() {
+  rm -rf "${TMP}"
+  rm -f "${wf_tmp}"
+}
+trap cleanup EXIT
 
 HOME_FIX="${TMP}/home"
 mkdir -p "${HOME_FIX}/.codex/sessions/2026/02/20"
@@ -51,6 +57,7 @@ export LACP_AUTOMATION_ROOT="${TMP}/automation"
 export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
 export LACP_ALLOW_EXTERNAL_REMOTE="false"
+export LACP_NO_EXTERNAL_CI="true"
 
 "${ROOT}/bin/lacp-release-gate" \
   --skip-tests \
@@ -76,5 +83,37 @@ if [[ "${rc}" -ne 1 ]]; then
   echo "[release-gate-test] FAIL expected strict cache threshold to fail with rc=1, got ${rc}" >&2
   exit 1
 fi
+
+cat > "${wf_tmp}" <<'EOF'
+name: ci-policy-test
+on: [push]
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "noop"
+EOF
+
+set +e
+"${ROOT}/bin/lacp-release-gate" \
+  --skip-tests \
+  --skip-doctor \
+  --skip-cache \
+  --skip-skill-audit \
+  --skip-shell-hardening >/dev/null 2>/dev/null
+rc=$?
+set -e
+if [[ "${rc}" -ne 1 ]]; then
+  echo "[release-gate-test] FAIL expected external-ci policy gate to fail with rc=1, got ${rc}" >&2
+  exit 1
+fi
+
+"${ROOT}/bin/lacp-release-gate" \
+  --skip-tests \
+  --skip-doctor \
+  --skip-cache \
+  --skip-skill-audit \
+  --skip-shell-hardening \
+  --allow-external-ci >/dev/null
 
 echo "[release-gate-test] release gate tests passed"
