@@ -54,6 +54,7 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-canary-optimize --json` now keeps JSON parse-safe output even in `--dry-run` mode.
 - `bin/lacp-release-prepare` now supports baseline-aware canary evaluation (`--since-clean-baseline`, `--baseline-file`).
 - `bin/lacp-release-prepare` now supports optional canary remediation stage (`--auto-optimize-on-fail`) with post-optimize regression rollback.
+- `bin/lacp-release-prepare` now supports `--profile local-iterative` for one-flag local iteration defaults (`quick + 3-day canary + cache/skill gate skips`).
 - `bin/lacp-release-verify` Homebrew dry-run check now retries `--HEAD` for HEAD-only formulas and treats Cellar permission-only failures as non-fatal.
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).

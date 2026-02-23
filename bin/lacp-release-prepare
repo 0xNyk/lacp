@@ -18,6 +18,7 @@ Checks:
   4) lacp-report
 
 Options:
+  --profile <name>               Apply preset defaults (local-iterative)
   --quick                        Use quick release-gate mode
   --canary-days <n>              Canary lookback window (default: 7)
   --since-clean-baseline         Evaluate canary since clean baseline cutoff
@@ -48,9 +49,48 @@ SINCE_CLEAN_BASELINE=0
 BASELINE_FILE=""
 REQUIRE_MANAGED_WRAPPERS=1
 AS_JSON=0
+PROFILE=""
+
+apply_profile_defaults() {
+  local profile_name="$1"
+  case "${profile_name}" in
+    local-iterative)
+      QUICK=1
+      CANARY_DAYS=3
+      SKIP_CACHE_GATE=1
+      SKIP_SKILL_AUDIT_GATE=1
+      ;;
+    *)
+      die "Unknown profile: ${profile_name}"
+      ;;
+  esac
+}
+
+args=("$@")
+idx=0
+while [[ ${idx} -lt ${#args[@]} ]]; do
+  arg="${args[$idx]}"
+  case "${arg}" in
+    --profile)
+      if [[ $((idx + 1)) -ge ${#args[@]} ]]; then
+        die "Missing value for --profile"
+      fi
+      PROFILE="${args[$((idx + 1))]}"
+      idx=$((idx + 2))
+      ;;
+    *)
+      idx=$((idx + 1))
+      ;;
+  esac
+done
+
+if [[ -n "${PROFILE}" ]]; then
+  apply_profile_defaults "${PROFILE}"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile) PROFILE="$2"; shift 2 ;;
     --quick) QUICK=1; shift ;;
     --canary-days) CANARY_DAYS="$2"; shift 2 ;;
     --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
@@ -262,6 +302,7 @@ result_json="$(jq -n \
   --arg kind "release_prepare" \
   --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --argjson quick "$([[ "${QUICK}" -eq 1 ]] && echo true || echo false)" \
+  --arg profile "${PROFILE}" \
   --argjson canary_days "${CANARY_DAYS}" \
   --argjson auto_rollback "$([[ "${AUTO_ROLLBACK}" -eq 1 ]] && echo true || echo false)" \
   --argjson since_clean_baseline "$([[ "${SINCE_CLEAN_BASELINE}" -eq 1 ]] && echo true || echo false)" \
@@ -299,6 +340,7 @@ result_json="$(jq -n \
     generated_at_utc: $generated_at_utc,
     ok: $ok,
     options: {
+      profile: (if $profile == "" then null else $profile end),
       quick: $quick,
       canary_days: $canary_days,
       since_clean_baseline: $since_clean_baseline,
