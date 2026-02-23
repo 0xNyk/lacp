@@ -50,9 +50,11 @@ All notable changes to this project will be documented in this file.
 - `bin/lacp-install` now enables fresh-system dependency auto-detection by default on macOS/Homebrew (`--no-auto-deps` opt-out, `--auto-deps-dry-run` supported).
 - `bin/lacp-install` starter profile now auto-applies `starter` policy pack when managing local `.env`.
 - `bin/lacp-onboard` now performs default dependency auto-detection/remediation on macOS/Homebrew (`--no-auto-deps` opt-out).
+- `bin/lacp-canary` now treats triage gate as average issues per benchmark and counts gate failures only for explicit `gate_ok=false`.
 - `bin/lacp-canary-optimize --json` now keeps JSON parse-safe output even in `--dry-run` mode.
 - `bin/lacp-release-prepare` now supports baseline-aware canary evaluation (`--since-clean-baseline`, `--baseline-file`).
 - `bin/lacp-release-prepare` now supports optional canary remediation stage (`--auto-optimize-on-fail`) with post-optimize regression rollback.
+- `bin/lacp-release-verify` Homebrew dry-run check now retries `--HEAD` for HEAD-only formulas and treats Cellar permission-only failures as non-fatal.
 - `bin/lacp-doctor` now supports dependency remediation mode (`--fix-deps`, `--auto-deps-dry-run`).
 - `bin/lacp-report` now includes wrapper observability (`observability.wrappers`, wrapper-routed runs, wrapper-task runs).
 - `bin/lacp-status-report` and `bin/lacp-report` JSON outputs now share top-level schema fields (`schema_version`, `kind`, `ok`, `summary`).
