@@ -162,6 +162,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-workflow-run.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-schedule-health.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-policy-pack.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-claude-hooks.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-vendor-watch.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-automations-tui.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-release-prepare.sh"
