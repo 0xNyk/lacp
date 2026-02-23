@@ -41,6 +41,9 @@ Ops:
   pr-preflight  Evaluate PR policy gates (risk tier/checks/review/evidence)
   harness-validate Validate tasks.json against harness contracts
   harness-run  Execute tasks.json with dependency-aware loop retries
+  e2e          Run local browser e2e workflows and auth pattern checks
+  api-e2e      Run API/backend e2e workflows with manifest evidence
+  contract-e2e Run contract/smart-contract e2e workflows with manifest evidence
   browser-evidence-validate Validate browser evidence manifest contract
   orchestrate   Run optional tmux/dmux orchestration through LACP gates
   worktree      Manage git worktree lifecycle for isolated agent runs
@@ -172,6 +175,15 @@ case "${cmd}" in
     ;;
   harness-run)
     exec "${ROOT}/bin/lacp-harness-run" "$@"
+    ;;
+  e2e)
+    exec "${ROOT}/bin/lacp-e2e" "$@"
+    ;;
+  api-e2e)
+    exec "${ROOT}/bin/lacp-api-e2e" "$@"
+    ;;
+  contract-e2e)
+    exec "${ROOT}/bin/lacp-contract-e2e" "$@"
     ;;
   browser-evidence-validate)
     exec "${ROOT}/bin/lacp-browser-evidence-validate" "$@"

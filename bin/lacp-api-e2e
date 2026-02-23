@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def check_api_manifest(manifest: Path) -> tuple[int, dict]:
+    errors: list[str] = []
+    payload = json.loads(manifest.read_text())
+    flows = payload.get("flows")
+    if not isinstance(flows, list) or not flows:
+        errors.append("manifest.flows must be non-empty array")
+        flows = []
+
+    kinds = set()
+    api_entrypoints = 0
+    status_assertions = 0
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        kind = flow.get("entrypoint_kind")
+        if isinstance(kind, str):
+            kinds.add(kind)
+        entrypoint = flow.get("entrypoint")
+        if isinstance(entrypoint, str) and entrypoint.startswith("/api/"):
+            api_entrypoints += 1
+        assertions = flow.get("assertions")
+        if isinstance(assertions, list):
+            for a in assertions:
+                if isinstance(a, dict):
+                    name = str(a.get("name", "")).lower()
+                    if "status" in name or "http" in name:
+                        status_assertions += 1
+
+    if "api-flow" not in kinds:
+        errors.append("missing entrypoint kind: api-flow")
+    if api_entrypoints == 0:
+        errors.append("expected at least one entrypoint under /api/")
+    if status_assertions == 0:
+        errors.append("expected at least one status/http assertion")
+
+    out = {
+        "ok": len(errors) == 0,
+        "summary": {
+            "flow_count": len(flows),
+            "entrypoint_kinds": sorted(kinds),
+            "api_entrypoints": api_entrypoints,
+            "status_assertions": status_assertions,
+        },
+        "errors": errors,
+    }
+    return (0 if out["ok"] else 1), out
+
+
+def cmd_run(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="lacp api-e2e run")
+    p.add_argument("--command", required=True)
+    p.add_argument("--workdir", default=".")
+    p.add_argument("--flows-file", required=True)
+    p.add_argument("--manifest", required=True)
+    p.add_argument("--skip-command", action="store_true")
+    p.add_argument("--json", action="store_true")
+    args = p.parse_args(argv)
+
+    lacp_root = Path(os.environ.get("LACP_SCRIPT_ROOT", ".")).resolve()
+    call = [
+        str(lacp_root / "bin/lacp-e2e"),
+        "run",
+        "--command",
+        args.command,
+        "--workdir",
+        str(Path(args.workdir).resolve()),
+        "--flows-file",
+        str(Path(args.flows_file).resolve()),
+        "--manifest",
+        str(Path(args.manifest).resolve()),
+        "--json",
+    ]
+    if args.skip_command:
+        call.append("--skip-command")
+    cp = run(call)
+    base = json.loads(cp.stdout) if cp.stdout.strip() else {"ok": False, "errors": ["no output"]}
+
+    api_check = {}
+    rc = cp.returncode
+    if cp.returncode == 0:
+        rc2, api_check = check_api_manifest(Path(args.manifest).resolve())
+        if rc2 != 0:
+            rc = rc2
+
+    out = {"ok": rc == 0, "run": base, "api_check": api_check}
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        print("[lacp] api-e2e passed" if rc == 0 else "[lacp] api-e2e failed")
+    return rc
+
+
+def cmd_smoke(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="lacp api-e2e smoke")
+    p.add_argument("--workdir", default=".")
+    p.add_argument("--command", default="npx schemathesis run --checks all")
+    p.add_argument("--flows-file", default="config/harness/api-e2e-flows.json")
+    p.add_argument("--example-flows", default="config/harness/api-e2e-flows.example.json")
+    p.add_argument("--manifest", default=".lacp/api-evidence.smoke.json")
+    p.add_argument("--init-template", action="store_true")
+    p.add_argument("--skip-command", action="store_true")
+    p.add_argument("--json", action="store_true")
+    args = p.parse_args(argv)
+
+    workdir = Path(args.workdir).resolve()
+    flows = (workdir / args.flows_file).resolve()
+    example = (workdir / args.example_flows).resolve() if not Path(args.example_flows).is_absolute() else Path(args.example_flows).resolve()
+    manifest = (workdir / args.manifest).resolve()
+
+    init_applied = False
+    init_error = ""
+    if args.init_template and not flows.exists():
+        if example.is_file():
+            flows.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(example, flows)
+            init_applied = True
+        else:
+            init_error = f"missing example flows template: {example}"
+
+    lacp_root = Path(os.environ.get("LACP_SCRIPT_ROOT", ".")).resolve()
+    cmd = [
+        str(lacp_root / "bin/lacp-api-e2e"),
+        "run",
+        "--command",
+        args.command,
+        "--workdir",
+        str(workdir),
+        "--flows-file",
+        str(flows),
+        "--manifest",
+        str(manifest),
+        "--json",
+    ]
+    if args.skip_command:
+        cmd.append("--skip-command")
+    cp = run(cmd)
+    run_payload = json.loads(cp.stdout) if cp.stdout.strip() else {"ok": False, "errors": ["no output"]}
+    rc = cp.returncode
+    if init_error:
+        rc = 1
+    out = {
+        "ok": rc == 0,
+        "init_template": {"requested": bool(args.init_template), "applied": init_applied, "error": init_error},
+        "flows_file": str(flows),
+        "manifest": str(manifest),
+        "run": run_payload,
+    }
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        print("[lacp] api-e2e smoke passed" if rc == 0 else "[lacp] api-e2e smoke failed")
+    return rc
+
+
+def usage() -> None:
+    print(
+        """Usage: lacp api-e2e <command>
+
+Commands:
+  run     Execute API/backend e2e command and validate manifest coverage
+  smoke   One-command smoke run (optional template init)
+"""
+    )
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in {"-h", "--help", "help"}:
+        usage()
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "run":
+        return cmd_run(rest)
+    if cmd == "smoke":
+        return cmd_smoke(rest)
+    print(f"[lacp] ERROR: unknown api-e2e command: {cmd}", file=sys.stderr)
+    usage()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+PY

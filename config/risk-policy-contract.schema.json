@@ -65,23 +65,13 @@
       "additionalProperties": false
     },
     "browserEvidence": {
-      "type": "object",
-      "required": ["requiredTiers", "manifestSchema", "requiredEntrypointKinds", "maxArtifactAgeHours"],
-      "properties": {
-        "requiredTiers": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "enum": ["high", "medium", "low"] }
-        },
-        "manifestSchema": { "type": "string", "minLength": 1 },
-        "requiredEntrypointKinds": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "maxArtifactAgeHours": { "type": "integer", "minimum": 1, "maximum": 168 }
-      },
-      "additionalProperties": false
+      "$ref": "#/$defs/evidenceGate"
+    },
+    "apiEvidence": {
+      "$ref": "#/$defs/evidenceGate"
+    },
+    "contractEvidence": {
+      "$ref": "#/$defs/evidenceGate"
     }
   },
   "additionalProperties": false,
@@ -105,6 +95,36 @@
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         }
+      },
+      "additionalProperties": false
+    },
+    "evidenceGate": {
+      "type": "object",
+      "required": ["requiredTiers", "manifestSchema", "requiredEntrypointKinds", "maxArtifactAgeHours"],
+      "properties": {
+        "requiredTiers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["high", "medium", "low"] }
+        },
+        "requiredMatchGlobs": { "$ref": "#/$defs/globArray" },
+        "manifestSchema": { "type": "string", "minLength": 1 },
+        "requiredEntrypointKinds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requiredEntrypointPrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requiredAssertionSubstringsAny": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "maxArtifactAgeHours": { "type": "integer", "minimum": 1, "maximum": 168 }
       },
       "additionalProperties": false
     }

@@ -10,6 +10,10 @@
     "medium": [
       "scripts/ci/**",
       "config/harness/**",
+      "app/api/**",
+      "api/**",
+      "contracts/**",
+      "src/contracts/**",
       "docs/runbook.md"
     ],
     "low": ["**"]
@@ -50,9 +54,27 @@
     "actionableSeverities": ["critical", "high", "medium"]
   },
   "browserEvidence": {
-    "requiredTiers": ["high"],
+    "requiredTiers": ["high", "medium"],
     "manifestSchema": "config/harness/browser-evidence.schema.json",
     "requiredEntrypointKinds": ["ui-flow", "auth-flow"],
+    "requiredMatchGlobs": ["app/**", "web/**", "frontend/**", "ui/**", "pages/**", "routes/**", "docs/**"],
+    "maxArtifactAgeHours": 24
+  },
+  "apiEvidence": {
+    "requiredTiers": ["high", "medium"],
+    "requiredMatchGlobs": ["app/api/**", "api/**", "openapi/**", "graphql/**", "services/**"],
+    "manifestSchema": "config/harness/browser-evidence.schema.json",
+    "requiredEntrypointKinds": ["api-flow"],
+    "requiredEntrypointPrefixes": ["/api/"],
+    "requiredAssertionSubstringsAny": ["status", "http", "authz", "forbidden", "unauthorized"],
+    "maxArtifactAgeHours": 24
+  },
+  "contractEvidence": {
+    "requiredTiers": ["high", "medium"],
+    "requiredMatchGlobs": ["contracts/**", "src/contracts/**", "foundry.toml", "hardhat.config.*"],
+    "manifestSchema": "config/harness/browser-evidence.schema.json",
+    "requiredEntrypointKinds": ["contract-flow"],
+    "requiredAssertionSubstringsAny": ["invariant", "revert", "event", "gas"],
     "maxArtifactAgeHours": 24
   }
 }
