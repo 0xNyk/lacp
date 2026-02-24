@@ -8,6 +8,9 @@ class Lacp < Formula
   depends_on "jq"
   depends_on "python@3.11"
   depends_on "ripgrep"
+  depends_on "rust"
+  depends_on "llvm"
+  depends_on "z3"
 
   def install
     libexec.install Dir["*"]

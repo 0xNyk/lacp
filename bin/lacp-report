@@ -161,9 +161,32 @@ if time_sessions_file.exists():
 
 time_total_seconds = sum(int(r.get("duration_seconds", 0) or 0) for r in time_rows)
 time_by_project = {}
+split_types = ("clients", "projects", "experiments")
+split_map = {k: {} for k in split_types}
+split_other = {}
+
+def classify_project(raw):
+    p = str(raw or "").strip()
+    if not p:
+        return ("other", "<unknown>")
+    norm = p.replace("\\", "/")
+    segments = [s for s in norm.split("/") if s]
+    for idx, seg in enumerate(segments):
+        if seg in split_types:
+            if idx + 1 < len(segments) and segments[idx + 1]:
+                return (seg, segments[idx + 1])
+            return (seg, "<root>")
+    return ("other", p)
+
 for r in time_rows:
     p = str(r.get("project") or "<unknown>")
-    time_by_project[p] = time_by_project.get(p, 0) + int(r.get("duration_seconds", 0) or 0)
+    s = int(r.get("duration_seconds", 0) or 0)
+    time_by_project[p] = time_by_project.get(p, 0) + s
+    split_kind, split_name = classify_project(p)
+    if split_kind in split_map:
+        split_map[split_kind][split_name] = split_map[split_kind].get(split_name, 0) + s
+    else:
+        split_other[split_name] = split_other.get(split_name, 0) + s
 
 overall_ok = True
 if benchmark.get("gate_ok") is False:
@@ -222,6 +245,24 @@ payload = {
             {"project": k, "seconds": v, "hours": round(v / 3600, 3)}
             for k, v in sorted(time_by_project.items(), key=lambda kv: kv[1], reverse=True)[:5]
         ],
+        "directory_split": {
+            "clients": [
+                {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+                for k, v in sorted(split_map["clients"].items(), key=lambda kv: kv[1], reverse=True)
+            ],
+            "projects": [
+                {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+                for k, v in sorted(split_map["projects"].items(), key=lambda kv: kv[1], reverse=True)
+            ],
+            "experiments": [
+                {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+                for k, v in sorted(split_map["experiments"].items(), key=lambda kv: kv[1], reverse=True)
+            ],
+            "other": [
+                {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+                for k, v in sorted(split_other.items(), key=lambda kv: kv[1], reverse=True)
+            ],
+        },
         "sessions_file": str(time_sessions_file) if time_sessions_file.exists() else None,
     },
 }

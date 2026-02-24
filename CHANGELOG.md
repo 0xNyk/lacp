@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - `lacp-loop` now supports `--loop-profile` and `--credential-profile` to apply reusable posture defaults while preserving explicit CLI overrides.
 - `lacp-console` adds `/loop <loop-profile> [credential-profile] -- <command...>` shortcut for one-line profiled loop execution.
 - `bin/lacp-time` monthly session tracking by project/client (`start/stop/active/report/month`) with rollups for `YYYY-MM`.
+- default macOS auto-deps and Formula dependency baseline now include `rust`, `llvm`, and `z3` as first-class LACP toolchain dependencies.
 - `lacp-report` now includes `time_tracking` monthly summary (`sessions`, `total_hours`, `top_projects`).
 - `lacp-console` now auto-starts/stops `lacp-time` tracking for console sessions by default (opt-out: `--no-auto-time`), so docs/testing/coding work in a console session is counted together.
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).

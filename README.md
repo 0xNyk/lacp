@@ -268,6 +268,7 @@ LACP is not for:
 `bin/lacp bootstrap-system --profile starter --with-verify`:
 - creates `.env` from template when missing
 - auto-detects and installs missing Homebrew dependencies on macOS (disable with `--no-auto-deps`)
+  - default toolchain: `jq ripgrep python@3.11 git tmux gh rust llvm z3`
 - applies the `starter` policy pack defaults (starter profile)
 - ensures required root/data paths exist
 - scaffolds safe starter automation scripts when missing
@@ -340,7 +341,7 @@ Notes:
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`)
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
-- `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`)
+- `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
 - `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
@@ -540,6 +541,7 @@ bin/lacp console --eval "/loop safe-verify trusted-local-dev -- /bin/echo hello"
 bin/lacp time start --project "$(pwd)" --client acme --json | jq
 bin/lacp time stop --json | jq
 bin/lacp time month --json | jq
+bin/lacp time month --json | jq '.directory_split'
 
 # pre-live gate
 bin/lacp release-gate --quick
