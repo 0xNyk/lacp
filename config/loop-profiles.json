@@ -1,0 +1,75 @@
+{
+  "version": "1",
+  "profiles": {
+    "local-fast": {
+      "description": "Fast local iteration loop with minimal overhead.",
+      "routing_defaults": {
+        "repo_trust": "trusted",
+        "internet": false,
+        "external_code": false,
+        "sensitive_data": false,
+        "cpu_heavy": false,
+        "long_run": false,
+        "remote_provider": "auto",
+        "confirm_critical": false,
+        "confirm_budget": false
+      },
+      "loop_defaults": {
+        "with_verify": false,
+        "verify_hours": 24,
+        "with_canary": false,
+        "canary_days": 7,
+        "report_hours": 24,
+        "since_clean_baseline": false,
+        "auto_rollback_on_fail": false
+      }
+    },
+    "safe-verify": {
+      "description": "Safety-first loop with verify + canary checks enabled.",
+      "routing_defaults": {
+        "repo_trust": "unknown",
+        "internet": false,
+        "external_code": false,
+        "sensitive_data": false,
+        "cpu_heavy": false,
+        "long_run": false,
+        "remote_provider": "auto",
+        "confirm_critical": false,
+        "confirm_budget": false
+      },
+      "loop_defaults": {
+        "with_verify": true,
+        "verify_hours": 24,
+        "with_canary": true,
+        "canary_days": 3,
+        "report_hours": 24,
+        "since_clean_baseline": true,
+        "auto_rollback_on_fail": true
+      }
+    },
+    "remote-review": {
+      "description": "Remote review loop defaults for sandboxed remote tasks.",
+      "routing_defaults": {
+        "repo_trust": "unknown",
+        "internet": true,
+        "external_code": true,
+        "sensitive_data": false,
+        "cpu_heavy": false,
+        "long_run": true,
+        "remote_provider": "auto",
+        "confirm_critical": false,
+        "confirm_budget": false
+      },
+      "loop_defaults": {
+        "with_verify": true,
+        "verify_hours": 24,
+        "with_canary": false,
+        "canary_days": 7,
+        "report_hours": 24,
+        "since_clean_baseline": false,
+        "auto_rollback_on_fail": false
+      }
+    }
+  }
+}
+
