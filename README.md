@@ -535,6 +535,8 @@ bin/lacp claude-hooks audit --json | jq
 bin/lacp claude-hooks optimize --profile minimal-stop --json | jq
 bin/lacp console --eval "/doctor --json" | jq '.ok'
 bin/lacp console --eval "/loop safe-verify trusted-local-dev -- /bin/echo hello"
+# console auto-tracks session time by default (docs/testing/coding all included)
+# disable per session: bin/lacp console --no-auto-time
 bin/lacp time start --project "$(pwd)" --client acme --json | jq
 bin/lacp time stop --json | jq
 bin/lacp time month --json | jq
