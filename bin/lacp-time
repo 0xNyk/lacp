@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-time start [--project <name>] [--client <name>] [--session <id>] [--note <text>] [--json]
+  lacp-time stop [--session <id>] [--json]
+  lacp-time active [--json]
+  lacp-time report [--month YYYY-MM] [--json]
+  lacp-time month [--json]
+
+Monthly-first local time tracking for project/client sessions.
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" ]]; then
+  usage
+  exit 1
+fi
+shift || true
+
+mkdir -p "${LACP_TIME_TRACKING_ROOT}/active"
+ACTIVE_DIR="${LACP_TIME_TRACKING_ROOT}/active"
+SESSIONS_FILE="${LACP_TIME_TRACKING_ROOT}/sessions.jsonl"
+
+require_cmd python3
+require_cmd jq
+
+default_project() {
+  local git_root
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "${git_root}" ]]; then
+    printf '%s' "${git_root}"
+  else
+    printf '%s' "$(pwd)"
+  fi
+}
+
+start_cmd() {
+  local project="" client="" session_id="" note="" as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) project="$2"; shift 2 ;;
+      --client) client="$2"; shift 2 ;;
+      --session) session_id="$2"; shift 2 ;;
+      --note) note="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${project}" ]] || project="$(default_project)"
+  [[ -n "${session_id}" ]] || session_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+  out="$(python3 - <<'PY' "${ACTIVE_DIR}" "${session_id}" "${project}" "${client}" "${note}"
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+active_dir = pathlib.Path(sys.argv[1])
+session_id = sys.argv[2]
+project = sys.argv[3]
+client = sys.argv[4]
+note = sys.argv[5]
+
+now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+active_file = active_dir / f"{session_id}.json"
+if active_file.exists():
+    print(json.dumps({"ok": False, "error": f"session already active: {session_id}"}))
+    raise SystemExit(2)
+
+payload = {
+    "session_id": session_id,
+    "project": project,
+    "client": client or None,
+    "note": note or None,
+    "started_at_utc": now,
+    "cwd": os.getcwd(),
+}
+active_file.write_text(json.dumps(payload, indent=2) + "\n")
+print(json.dumps({"ok": True, "session": payload, "active_file": str(active_file)}))
+PY
+)"
+  [[ "$(jq -r '.ok // false' <<<"${out}")" == "true" ]] || die "$(jq -r '.error // "start failed"' <<<"${out}")"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    echo "${out}" | jq .
+  else
+    echo "${out}" | jq -r '"started session=\(.session.session_id) project=\(.session.project) client=\(.session.client // "-") started_at=\(.session.started_at_utc)"'
+  fi
+}
+
+stop_cmd() {
+  local session_id="" as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session) session_id="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  out="$(python3 - <<'PY' "${ACTIVE_DIR}" "${SESSIONS_FILE}" "${session_id}"
+import datetime as dt
+import json
+import pathlib
+import sys
+
+active_dir = pathlib.Path(sys.argv[1])
+sessions_file = pathlib.Path(sys.argv[2])
+session_id = sys.argv[3]
+
+def parse_ts(s):
+    return dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+
+if session_id:
+    active_file = active_dir / f"{session_id}.json"
+    if not active_file.exists():
+        print(json.dumps({"ok": False, "error": f"active session not found: {session_id}"}))
+        raise SystemExit(2)
+else:
+    active_files = sorted(active_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not active_files:
+        print(json.dumps({"ok": False, "error": "no active sessions"}))
+        raise SystemExit(2)
+    active_file = active_files[0]
+
+payload = json.loads(active_file.read_text())
+now_dt = dt.datetime.now(dt.timezone.utc)
+now = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+started = parse_ts(payload["started_at_utc"])
+duration_seconds = max(0, int((now_dt - started).total_seconds()))
+
+closed = {
+    **payload,
+    "ended_at_utc": now,
+    "duration_seconds": duration_seconds,
+}
+sessions_file.parent.mkdir(parents=True, exist_ok=True)
+with sessions_file.open("a", encoding="utf-8") as f:
+    f.write(json.dumps(closed) + "\n")
+
+active_file.unlink(missing_ok=True)
+print(json.dumps({"ok": True, "session": closed, "sessions_file": str(sessions_file)}))
+PY
+)"
+  [[ "$(jq -r '.ok // false' <<<"${out}")" == "true" ]] || die "$(jq -r '.error // "stop failed"' <<<"${out}")"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    echo "${out}" | jq .
+  else
+    echo "${out}" | jq -r '"stopped session=\(.session.session_id) duration_seconds=\(.session.duration_seconds) ended_at=\(.session.ended_at_utc)"'
+  fi
+}
+
+active_cmd() {
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  out="$(python3 - <<'PY' "${ACTIVE_DIR}"
+import json
+import pathlib
+import sys
+
+active_dir = pathlib.Path(sys.argv[1])
+rows = []
+for p in sorted(active_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+    try:
+        rows.append(json.loads(p.read_text()))
+    except Exception:
+        continue
+print(json.dumps({"ok": True, "active_count": len(rows), "active": rows}))
+PY
+)"
+  if [[ "${as_json}" -eq 1 ]]; then
+    echo "${out}" | jq .
+  else
+    echo "${out}" | jq -r '"active_count=\(.active_count)"'
+    echo "${out}" | jq -r '.active[]? | "active\t\(.session_id)\t\(.project)\t\(.started_at_utc)"'
+  fi
+}
+
+report_cmd() {
+  local month="" as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --month) month="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ -z "${month}" ]]; then
+    month="$(date -u +%Y-%m)"
+  fi
+
+  out="$(python3 - <<'PY' "${SESSIONS_FILE}" "${month}"
+import datetime as dt
+import json
+import pathlib
+import sys
+
+sessions_file = pathlib.Path(sys.argv[1])
+month = sys.argv[2]
+
+try:
+    dt.datetime.strptime(month + "-01", "%Y-%m-%d")
+except Exception:
+    print(json.dumps({"ok": False, "error": f"invalid month format: {month} (expected YYYY-MM)"}))
+    raise SystemExit(2)
+
+rows = []
+if sessions_file.exists():
+    for line in sessions_file.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        ts = item.get("started_at_utc", "")
+        if not isinstance(ts, str) or not ts.startswith(month + "-"):
+            continue
+        rows.append(item)
+
+total_seconds = sum(int(r.get("duration_seconds", 0) or 0) for r in rows)
+by_project = {}
+by_client = {}
+for r in rows:
+    p = str(r.get("project") or "<unknown>")
+    c = str(r.get("client") or "<none>")
+    by_project[p] = by_project.get(p, 0) + int(r.get("duration_seconds", 0) or 0)
+    by_client[c] = by_client.get(c, 0) + int(r.get("duration_seconds", 0) or 0)
+
+payload = {
+    "ok": True,
+    "kind": "time_report",
+    "month": month,
+    "summary": {
+      "sessions": len(rows),
+      "total_seconds": total_seconds,
+      "total_hours": round(total_seconds / 3600, 3),
+    },
+    "by_project": [
+      {"project": k, "seconds": v, "hours": round(v / 3600, 3)}
+      for k, v in sorted(by_project.items(), key=lambda kv: kv[1], reverse=True)
+    ],
+    "by_client": [
+      {"client": k, "seconds": v, "hours": round(v / 3600, 3)}
+      for k, v in sorted(by_client.items(), key=lambda kv: kv[1], reverse=True)
+    ],
+}
+print(json.dumps(payload))
+PY
+)"
+  [[ "$(jq -r '.ok // false' <<<"${out}")" == "true" ]] || die "$(jq -r '.error // "report failed"' <<<"${out}")"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    echo "${out}" | jq .
+  else
+    echo "${out}" | jq -r '"month=\(.month) sessions=\(.summary.sessions) total_hours=\(.summary.total_hours)"'
+    echo "${out}" | jq -r '.by_project[]? | "project\t\(.project)\t\(.hours)h"'
+  fi
+}
+
+case "${sub}" in
+  start) start_cmd "$@" ;;
+  stop) stop_cmd "$@" ;;
+  active) active_cmd "$@" ;;
+  report) report_cmd "$@" ;;
+  month) report_cmd "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
+
