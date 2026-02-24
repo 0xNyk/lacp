@@ -36,6 +36,8 @@ Built-ins:
   /hooks [args]                  Run: lacp claude-hooks [args]
   /loop-profile [args]           Run: lacp loop-profile [args]
   /credential-profile [args]     Run: lacp credential-profile [args]
+  /loop <loop-profile> [credential-profile] -- <command...>
+                                 Run: lacp loop with reusable profiles in one line
   /release [args]                Run: lacp release-prepare [args]
   /posture [args]                Run: lacp posture [args]
   /status [args]                 Run: lacp status [args]
@@ -168,6 +170,55 @@ run_custom_command() {
   bash -lc "${template}"
 }
 
+run_loop_shortcut() {
+  local raw="$1"
+  local -a words=()
+  mapfile -d '' -t words < <(python3 - <<'PY' "${raw}"
+import shlex
+import sys
+
+for token in shlex.split(sys.argv[1]):
+    sys.stdout.buffer.write(token.encode())
+    sys.stdout.buffer.write(b"\0")
+PY
+)
+
+  local idx sep_idx=-1
+  for idx in "${!words[@]}"; do
+    if [[ "${words[idx]}" == "--" ]]; then
+      sep_idx="${idx}"
+      break
+    fi
+  done
+  [[ "${sep_idx}" -ge 0 ]] || die "/loop requires '--' before command"
+  [[ "${sep_idx}" -ge 1 ]] || die "/loop requires at least <loop-profile> before '--'"
+  [[ "${#words[@]}" -gt $((sep_idx + 1)) ]] || die "/loop requires command after '--'"
+
+  local loop_profile credential_profile=""
+  loop_profile="${words[0]}"
+  if [[ "${sep_idx}" -ge 2 ]]; then
+    credential_profile="${words[1]}"
+  fi
+
+  local -a command_words=("${words[@]:$((sep_idx + 1))}")
+  local task="console loop: ${command_words[0]}"
+
+  local -a cmd=(
+    "${ROOT}/bin/lacp-loop"
+    --task "${task}"
+    --loop-profile "${loop_profile}"
+    --json
+  )
+
+  if [[ -n "${credential_profile}" && "${credential_profile}" != "-" && "${credential_profile}" != "none" ]]; then
+    cmd+=(--credential-profile "${credential_profile}")
+  fi
+
+  cmd+=(--)
+  cmd+=("${command_words[@]}")
+  "${cmd[@]}"
+}
+
 print_custom_commands() {
   if [[ "${#CUSTOM_COMMAND_PATHS[@]}" -eq 0 ]]; then
     echo "No custom slash commands loaded."
@@ -224,6 +275,7 @@ dispatch_line() {
     /hooks) run_lacp_subcommand "claude-hooks" "${rest}"; return $? ;;
     /loop-profile) run_lacp_subcommand "loop-profile" "${rest}"; return $? ;;
     /credential-profile) run_lacp_subcommand "credential-profile" "${rest}"; return $? ;;
+    /loop) run_loop_shortcut "${rest}"; return $? ;;
     /release) run_lacp_subcommand "release-prepare" "${rest}"; return $? ;;
     /posture) run_lacp_subcommand "posture" "${rest}"; return $? ;;
     /status) run_lacp_subcommand "status" "${rest}"; return $? ;;
