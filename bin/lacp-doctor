@@ -193,7 +193,11 @@ else
 fi
 
 if lacp_env_truthy "${LACP_NO_EXTERNAL_CI}"; then
-  workflow_count="$(find "${LACP_ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -d "${LACP_ROOT}/.github/workflows" ]]; then
+    workflow_count="$(find "${LACP_ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')"
+  else
+    workflow_count="0"
+  fi
   if [[ "${workflow_count}" =~ ^[0-9]+$ ]] && [[ "${workflow_count}" -gt 0 ]]; then
     add_check "policy:external_ci_workflows" "FAIL" "found ${workflow_count} workflow file(s) under .github/workflows while LACP_NO_EXTERNAL_CI=true"
   else
