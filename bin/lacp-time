@@ -244,11 +244,34 @@ if sessions_file.exists():
 total_seconds = sum(int(r.get("duration_seconds", 0) or 0) for r in rows)
 by_project = {}
 by_client = {}
+split_types = ("clients", "projects", "experiments")
+split_map = {k: {} for k in split_types}
+split_other = {}
+
+def classify_project(raw):
+    p = str(raw or "").strip()
+    if not p:
+        return ("other", "<unknown>")
+    norm = p.replace("\\", "/")
+    segments = [s for s in norm.split("/") if s]
+    for idx, seg in enumerate(segments):
+        if seg in split_types:
+            if idx + 1 < len(segments) and segments[idx + 1]:
+                return (seg, segments[idx + 1])
+            return (seg, "<root>")
+    return ("other", p)
+
 for r in rows:
     p = str(r.get("project") or "<unknown>")
     c = str(r.get("client") or "<none>")
-    by_project[p] = by_project.get(p, 0) + int(r.get("duration_seconds", 0) or 0)
-    by_client[c] = by_client.get(c, 0) + int(r.get("duration_seconds", 0) or 0)
+    s = int(r.get("duration_seconds", 0) or 0)
+    by_project[p] = by_project.get(p, 0) + s
+    by_client[c] = by_client.get(c, 0) + s
+    split_kind, split_name = classify_project(p)
+    if split_kind in split_map:
+        split_map[split_kind][split_name] = split_map[split_kind].get(split_name, 0) + s
+    else:
+        split_other[split_name] = split_other.get(split_name, 0) + s
 
 payload = {
     "ok": True,
@@ -267,6 +290,30 @@ payload = {
       {"client": k, "seconds": v, "hours": round(v / 3600, 3)}
       for k, v in sorted(by_client.items(), key=lambda kv: kv[1], reverse=True)
     ],
+    "directory_split": {
+      "clients": [
+        {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+        for k, v in sorted(split_map["clients"].items(), key=lambda kv: kv[1], reverse=True)
+      ],
+      "projects": [
+        {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+        for k, v in sorted(split_map["projects"].items(), key=lambda kv: kv[1], reverse=True)
+      ],
+      "experiments": [
+        {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+        for k, v in sorted(split_map["experiments"].items(), key=lambda kv: kv[1], reverse=True)
+      ],
+      "other": [
+        {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
+        for k, v in sorted(split_other.items(), key=lambda kv: kv[1], reverse=True)
+      ],
+      "totals": {
+        "clients_seconds": sum(split_map["clients"].values()),
+        "projects_seconds": sum(split_map["projects"].values()),
+        "experiments_seconds": sum(split_map["experiments"].values()),
+        "other_seconds": sum(split_other.values()),
+      },
+    },
 }
 print(json.dumps(payload))
 PY
@@ -278,6 +325,9 @@ PY
   else
     echo "${out}" | jq -r '"month=\(.month) sessions=\(.summary.sessions) total_hours=\(.summary.total_hours)"'
     echo "${out}" | jq -r '.by_project[]? | "project\t\(.project)\t\(.hours)h"'
+    echo "${out}" | jq -r '.directory_split.clients[]? | "clients\t\(.name)\t\(.hours)h"'
+    echo "${out}" | jq -r '.directory_split.projects[]? | "projects\t\(.name)\t\(.hours)h"'
+    echo "${out}" | jq -r '.directory_split.experiments[]? | "experiments\t\(.name)\t\(.hours)h"'
   fi
 }
 
@@ -290,4 +340,3 @@ case "${sub}" in
   -h|--help|help) usage ;;
   *) die "Unknown subcommand: ${sub}" ;;
 esac
-
