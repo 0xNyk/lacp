@@ -48,6 +48,11 @@ echo "${loop_profile_out}" | jq -e '.ok == true' >/dev/null
 credential_profile_out="$("${ROOT}/bin/lacp-console" --eval "/credential-profile list --json")"
 echo "${credential_profile_out}" | jq -e '.ok == true' >/dev/null
 
+loop_shortcut_out="$("${ROOT}/bin/lacp-console" --eval "/loop local-fast trusted-local-dev -- /bin/echo console-loop-ok")"
+echo "${loop_shortcut_out}" | jq -e '.ok == true' >/dev/null
+echo "${loop_shortcut_out}" | jq -e '.options.loop_profile == "local-fast"' >/dev/null
+echo "${loop_shortcut_out}" | jq -e '.options.credential_profile == "trusted-local-dev"' >/dev/null
+
 run_out="$("${ROOT}/bin/lacp-console" --eval "/run posture --json")"
 echo "${run_out}" | jq -e '.ok == true' >/dev/null
 
