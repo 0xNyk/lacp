@@ -19,6 +19,7 @@ Core:
   posture       Evaluate local-first/no-external-ci posture contract
   claude-hooks  Audit/repair/optimize local Claude hooks + plugin cache drift
   console       Interactive LACP shell with slash commands
+  time          Monthly project/client session time tracking
 
 Ops:
   loop          Intent -> execute -> observe -> adapt control loop
@@ -125,6 +126,9 @@ case "${cmd}" in
     ;;
   console)
     exec "${ROOT}/bin/lacp-console" "$@"
+    ;;
+  time)
+    exec "${ROOT}/bin/lacp-time" "$@"
     ;;
   report)
     exec "${ROOT}/bin/lacp-report" "$@"
