@@ -42,8 +42,13 @@ smoke_out="$("${ROOT}/bin/lacp-console" --project-commands-dir "${WORK}/.lacp/co
 posture_out="$("${ROOT}/bin/lacp-console" --eval "/posture --json")"
 echo "${posture_out}" | jq -e '.ok == true' >/dev/null
 
+loop_profile_out="$("${ROOT}/bin/lacp-console" --eval "/loop-profile list --json")"
+echo "${loop_profile_out}" | jq -e '.ok == true' >/dev/null
+
+credential_profile_out="$("${ROOT}/bin/lacp-console" --eval "/credential-profile list --json")"
+echo "${credential_profile_out}" | jq -e '.ok == true' >/dev/null
+
 run_out="$("${ROOT}/bin/lacp-console" --eval "/run posture --json")"
 echo "${run_out}" | jq -e '.ok == true' >/dev/null
 
 echo "[console-test] console command tests passed"
-

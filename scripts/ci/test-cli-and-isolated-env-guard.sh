@@ -38,6 +38,8 @@ fi
 "${ROOT}/bin/lacp" up --help >/dev/null
 "${ROOT}/bin/lacp" context --help >/dev/null
 "${ROOT}/bin/lacp" lessons --help >/dev/null
+"${ROOT}/bin/lacp" loop-profile --help >/dev/null
+"${ROOT}/bin/lacp" credential-profile --help >/dev/null
 "${ROOT}/bin/lacp" optimize-loop --help >/dev/null
 "${ROOT}/bin/lacp" auto-rollback --help >/dev/null
 "${ROOT}/bin/lacp" schedule-health --help >/dev/null

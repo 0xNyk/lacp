@@ -347,6 +347,8 @@ Notes:
 - `bin/lacp-optimize-loop`: bounded weekly optimization loop over verify/canary/context/lessons
 - `bin/lacp-trace-triage`: cluster recent failed run traces into root-cause groups with deterministic remediation hints
 - `bin/lacp-context-profile`: list/render reusable context-contract profiles for safe execution contexts
+- `bin/lacp-loop-profile`: list/render reusable loop defaults (routing + verify/canary/rollback posture)
+- `bin/lacp-credential-profile`: list/render reusable credential posture and input-contract templates
 - `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
 - `bin/lacp-mcp-profile`: list/status/apply MCP operating profiles (`cli-first`, `mcp-selective`, `mcp-heavy`)
 - `bin/lacp-report`: summarize recent run outcomes and latest artifact health
@@ -554,8 +556,17 @@ bin/lacp context-profile list --json | jq
 bin/lacp context-profile render --profile local-dev --json | jq
 bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json | jq
 
+# render reusable loop + credential profiles
+bin/lacp loop-profile list --json | jq
+bin/lacp loop-profile render --profile safe-verify --json | jq
+bin/lacp credential-profile list --json | jq
+bin/lacp credential-profile input-contract --profile trusted-local-dev --json | jq
+
 # run loop with profile-derived context contract (no raw JSON needed)
 bin/lacp loop --task "safe migration prep" --repo-trust trusted --context-profile high-risk-migration --json -- /bin/mkdir -p /tmp/lacp-migration
+
+# run loop with reusable loop + credential posture (CLI overrides still win)
+bin/lacp loop --task "guarded prod check" --loop-profile safe-verify --credential-profile prod-sensitive-guarded --json -- /bin/echo ok
 
 # minimal context + lessons discipline
 bin/lacp context init-template --repo-root . --json | jq

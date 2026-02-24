@@ -28,6 +28,8 @@ Ops:
   optimize-loop Weekly benchmark/context optimization control loop
   trace-triage  Cluster recent failed runs into root-cause groups
   context-profile List/render reusable context-contract profiles
+  loop-profile  List/render reusable loop defaults profiles
+  credential-profile  List/render reusable credential/input-contract profiles
   session-fingerprint Emit deterministic runtime session fingerprint
   report        Summarize recent run/artifact health
   canary        Evaluate 7-day promotion readiness gate
@@ -147,6 +149,12 @@ case "${cmd}" in
     ;;
   context-profile)
     exec "${ROOT}/bin/lacp-context-profile" "$@"
+    ;;
+  loop-profile)
+    exec "${ROOT}/bin/lacp-loop-profile" "$@"
+    ;;
+  credential-profile)
+    exec "${ROOT}/bin/lacp-credential-profile" "$@"
     ;;
   session-fingerprint)
     exec "${ROOT}/bin/lacp-session-fingerprint" "$@"

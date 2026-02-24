@@ -257,6 +257,8 @@ check_file "${LACP_ROOT}/config/harness/browser-evidence.schema.json" "config:ha
 check_file "${LACP_ROOT}/config/risk-policy-contract.json" "config:risk_policy_contract"
 check_file "${LACP_ROOT}/config/risk-policy-contract.schema.json" "config:risk_policy_contract_schema"
 check_file "${LACP_ROOT}/config/context-profiles.json" "config:context_profiles"
+check_file "${LACP_ROOT}/config/loop-profiles.json" "config:loop_profiles"
+check_file "${LACP_ROOT}/config/credential-profiles.json" "config:credential_profiles"
 
 if [[ -f "${LACP_SANDBOX_POLICY_FILE}" ]] && jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
   add_check "config:sandbox_policy_json" "PASS" "valid json"
