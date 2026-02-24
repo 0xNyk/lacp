@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-loop-profile list [--json]
+  lacp-loop-profile render --profile <name> [--json]
+
+Profile source:
+  config/loop-profiles.json
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" ]]; then
+  usage
+  exit 1
+fi
+shift || true
+
+PROFILES_FILE="${ROOT}/config/loop-profiles.json"
+require_file "${PROFILES_FILE}"
+require_cmd jq
+
+list_cmd() {
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  if [[ "${as_json}" -eq 1 ]]; then
+    jq '{
+      ok: true,
+      schema_version: (.version // "1"),
+      profiles: ((.profiles // {}) | to_entries | map({
+        name: .key,
+        description: (.value.description // ""),
+        routing_defaults: (.value.routing_defaults // {}),
+        loop_defaults: (.value.loop_defaults // {})
+      }))
+    }' "${PROFILES_FILE}"
+  else
+    jq -r '.profiles | to_entries[] | "- \(.key): \(.value.description // "")"' "${PROFILES_FILE}"
+  fi
+}
+
+render_cmd() {
+  local profile=""
+  local as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --profile) profile="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "${profile}" ]] || die "--profile is required"
+
+  local rendered
+  rendered="$(python3 - <<'PY' "${PROFILES_FILE}" "${profile}" "${as_json}"
+import json
+import sys
+from pathlib import Path
+
+cfg_path = Path(sys.argv[1])
+profile_name = sys.argv[2]
+as_json = sys.argv[3] == "1"
+
+cfg = json.loads(cfg_path.read_text())
+profiles = cfg.get("profiles") or {}
+if profile_name not in profiles:
+    print(json.dumps({"ok": False, "error": f"unknown profile: {profile_name}"}))
+    raise SystemExit(2)
+
+profile = profiles[profile_name]
+routing = profile.get("routing_defaults") or {}
+loop_defaults = profile.get("loop_defaults") or {}
+
+payload = {
+    "ok": True,
+    "schema_version": str(cfg.get("version", "1")),
+    "profile": profile_name,
+    "description": profile.get("description", ""),
+    "routing_defaults": routing,
+    "loop_defaults": loop_defaults,
+}
+print(json.dumps(payload, indent=2 if as_json else None))
+PY
+)"
+
+  if [[ "${as_json}" -eq 1 ]]; then
+    printf '%s\n' "${rendered}"
+  else
+    local ok
+    ok="$(jq -r '.ok // false' <<<"${rendered}")"
+    if [[ "${ok}" != "true" ]]; then
+      local err
+      err="$(jq -r '.error // "unknown error"' <<<"${rendered}")"
+      die "${err}"
+    fi
+    jq -c '{routing_defaults,loop_defaults}' <<<"${rendered}"
+  fi
+}
+
+case "${sub}" in
+  list) list_cmd "$@" ;;
+  render) render_cmd "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
+

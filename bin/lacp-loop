@@ -30,6 +30,8 @@ Routing options:
   --context-contract '<json>'
   --context-profile <name>
   --context-profile-var KEY=VALUE   (repeatable; used with --context-profile)
+  --loop-profile <name>
+  --credential-profile <name>
   --session-fingerprint <value|auto>
 
 Loop options:
@@ -83,6 +85,26 @@ CONTEXT_CONTRACT=""
 CONTEXT_PROFILE=""
 declare -a CONTEXT_PROFILE_VARS=()
 SESSION_FINGERPRINT=""
+LOOP_PROFILE=""
+CREDENTIAL_PROFILE=""
+
+SET_REPO_TRUST=0
+SET_INTERNET=0
+SET_EXTERNAL_CODE=0
+SET_SENSITIVE_DATA=0
+SET_CPU_HEAVY=0
+SET_LONG_RUN=0
+SET_REMOTE_PROVIDER=0
+SET_CONFIRM_CRITICAL=0
+SET_CONFIRM_BUDGET=0
+SET_INPUT_CONTRACT=0
+SET_WITH_VERIFY=0
+SET_VERIFY_HOURS=0
+SET_WITH_CANARY=0
+SET_CANARY_DAYS=0
+SET_REPORT_HOURS=0
+SET_SINCE_CLEAN_BASELINE=0
+SET_AUTO_ROLLBACK=0
 
 DRY_RUN=0
 WITH_VERIFY=0
@@ -98,30 +120,32 @@ AS_JSON=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --task) TASK="$2"; shift 2 ;;
-    --repo-trust) REPO_TRUST="$2"; shift 2 ;;
-    --internet) INTERNET="$(as_bool "$2")"; shift 2 ;;
-    --external-code) EXTERNAL_CODE="$(as_bool "$2")"; shift 2 ;;
-    --sensitive-data) SENSITIVE_DATA="$(as_bool "$2")"; shift 2 ;;
-    --cpu-heavy) CPU_HEAVY="$(as_bool "$2")"; shift 2 ;;
-    --long-run) LONG_RUN="$(as_bool "$2")"; shift 2 ;;
-    --remote-provider) REMOTE_PROVIDER_OVERRIDE="$2"; shift 2 ;;
+    --repo-trust) REPO_TRUST="$2"; SET_REPO_TRUST=1; shift 2 ;;
+    --internet) INTERNET="$(as_bool "$2")"; SET_INTERNET=1; shift 2 ;;
+    --external-code) EXTERNAL_CODE="$(as_bool "$2")"; SET_EXTERNAL_CODE=1; shift 2 ;;
+    --sensitive-data) SENSITIVE_DATA="$(as_bool "$2")"; SET_SENSITIVE_DATA=1; shift 2 ;;
+    --cpu-heavy) CPU_HEAVY="$(as_bool "$2")"; SET_CPU_HEAVY=1; shift 2 ;;
+    --long-run) LONG_RUN="$(as_bool "$2")"; SET_LONG_RUN=1; shift 2 ;;
+    --remote-provider) REMOTE_PROVIDER_OVERRIDE="$2"; SET_REMOTE_PROVIDER=1; shift 2 ;;
     --estimated-cost-usd) ESTIMATED_COST_USD="$2"; shift 2 ;;
-    --confirm-critical) CONFIRM_CRITICAL="$(as_bool "$2")"; shift 2 ;;
-    --confirm-budget) CONFIRM_BUDGET="$(as_bool "$2")"; shift 2 ;;
-    --input-contract) INPUT_CONTRACT="$2"; shift 2 ;;
+    --confirm-critical) CONFIRM_CRITICAL="$(as_bool "$2")"; SET_CONFIRM_CRITICAL=1; shift 2 ;;
+    --confirm-budget) CONFIRM_BUDGET="$(as_bool "$2")"; SET_CONFIRM_BUDGET=1; shift 2 ;;
+    --input-contract) INPUT_CONTRACT="$2"; SET_INPUT_CONTRACT=1; shift 2 ;;
     --context-contract) CONTEXT_CONTRACT="$2"; shift 2 ;;
     --context-profile) CONTEXT_PROFILE="$2"; shift 2 ;;
     --context-profile-var) CONTEXT_PROFILE_VARS+=("$2"); shift 2 ;;
+    --loop-profile) LOOP_PROFILE="$2"; shift 2 ;;
+    --credential-profile) CREDENTIAL_PROFILE="$2"; shift 2 ;;
     --session-fingerprint) SESSION_FINGERPRINT="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    --with-verify) WITH_VERIFY=1; shift ;;
-    --verify-hours) VERIFY_HOURS="$2"; REPORT_HOURS="$2"; shift 2 ;;
-    --with-canary) WITH_CANARY=1; shift ;;
-    --canary-days) CANARY_DAYS="$2"; shift 2 ;;
-    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; shift ;;
+    --with-verify) WITH_VERIFY=1; SET_WITH_VERIFY=1; shift ;;
+    --verify-hours) VERIFY_HOURS="$2"; REPORT_HOURS="$2"; SET_VERIFY_HOURS=1; SET_REPORT_HOURS=1; shift 2 ;;
+    --with-canary) WITH_CANARY=1; SET_WITH_CANARY=1; shift ;;
+    --canary-days) CANARY_DAYS="$2"; SET_CANARY_DAYS=1; shift 2 ;;
+    --since-clean-baseline) SINCE_CLEAN_BASELINE=1; SET_SINCE_CLEAN_BASELINE=1; shift ;;
     --baseline-file) BASELINE_FILE="$2"; shift 2 ;;
-    --report-hours) REPORT_HOURS="$2"; shift 2 ;;
-    --auto-rollback-on-fail) AUTO_ROLLBACK=1; shift ;;
+    --report-hours) REPORT_HOURS="$2"; SET_REPORT_HOURS=1; shift 2 ;;
+    --auto-rollback-on-fail) AUTO_ROLLBACK=1; SET_AUTO_ROLLBACK=1; shift ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
@@ -133,6 +157,63 @@ done
 [[ $# -gt 0 ]] || die "Missing command after --"
 if [[ -n "${CONTEXT_CONTRACT}" && -n "${CONTEXT_PROFILE}" ]]; then
   die "--context-contract and --context-profile are mutually exclusive"
+fi
+if [[ -n "${LOOP_PROFILE}" ]]; then
+  loop_profile_raw="$("${ROOT}/bin/lacp-loop-profile" render --profile "${LOOP_PROFILE}" --json 2>&1 || true)"
+  loop_profile_ok="$(jq -r '.ok // false' 2>/dev/null <<<"${loop_profile_raw}" || echo false)"
+  if [[ "${loop_profile_ok}" != "true" ]]; then
+    loop_profile_error="$(jq -r '.error // "failed to render loop profile"' 2>/dev/null <<<"${loop_profile_raw}" || echo "failed to render loop profile")"
+    die "loop profile render failed: ${loop_profile_error}"
+  fi
+  if [[ "${SET_REPO_TRUST}" -eq 0 ]]; then
+    v="$(jq -r '.routing_defaults.repo_trust // empty' <<<"${loop_profile_raw}")"
+    [[ -n "${v}" ]] && REPO_TRUST="${v}"
+  fi
+  if [[ "${SET_INTERNET}" -eq 0 ]]; then INTERNET="$(jq -r '.routing_defaults.internet // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_EXTERNAL_CODE}" -eq 0 ]]; then EXTERNAL_CODE="$(jq -r '.routing_defaults.external_code // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_SENSITIVE_DATA}" -eq 0 ]]; then SENSITIVE_DATA="$(jq -r '.routing_defaults.sensitive_data // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_CPU_HEAVY}" -eq 0 ]]; then CPU_HEAVY="$(jq -r '.routing_defaults.cpu_heavy // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_LONG_RUN}" -eq 0 ]]; then LONG_RUN="$(jq -r '.routing_defaults.long_run // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_REMOTE_PROVIDER}" -eq 0 ]]; then
+    v="$(jq -r '.routing_defaults.remote_provider // empty' <<<"${loop_profile_raw}")"
+    [[ -n "${v}" ]] && REMOTE_PROVIDER_OVERRIDE="${v}"
+  fi
+  if [[ "${SET_CONFIRM_CRITICAL}" -eq 0 ]]; then CONFIRM_CRITICAL="$(jq -r '.routing_defaults.confirm_critical // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_CONFIRM_BUDGET}" -eq 0 ]]; then CONFIRM_BUDGET="$(jq -r '.routing_defaults.confirm_budget // false' <<<"${loop_profile_raw}")"; fi
+  if [[ "${SET_WITH_VERIFY}" -eq 0 ]]; then WITH_VERIFY="$(jq -r '.loop_defaults.with_verify // false' <<<"${loop_profile_raw}" | sed 's/true/1/;s/false/0/')"; fi
+  if [[ "${SET_VERIFY_HOURS}" -eq 0 ]]; then
+    v="$(jq -r '.loop_defaults.verify_hours // empty' <<<"${loop_profile_raw}")"
+    [[ -n "${v}" ]] && VERIFY_HOURS="${v}"
+  fi
+  if [[ "${SET_WITH_CANARY}" -eq 0 ]]; then WITH_CANARY="$(jq -r '.loop_defaults.with_canary // false' <<<"${loop_profile_raw}" | sed 's/true/1/;s/false/0/')"; fi
+  if [[ "${SET_CANARY_DAYS}" -eq 0 ]]; then
+    v="$(jq -r '.loop_defaults.canary_days // empty' <<<"${loop_profile_raw}")"
+    [[ -n "${v}" ]] && CANARY_DAYS="${v}"
+  fi
+  if [[ "${SET_REPORT_HOURS}" -eq 0 ]]; then
+    v="$(jq -r '.loop_defaults.report_hours // empty' <<<"${loop_profile_raw}")"
+    [[ -n "${v}" ]] && REPORT_HOURS="${v}"
+  fi
+  if [[ "${SET_SINCE_CLEAN_BASELINE}" -eq 0 ]]; then SINCE_CLEAN_BASELINE="$(jq -r '.loop_defaults.since_clean_baseline // false' <<<"${loop_profile_raw}" | sed 's/true/1/;s/false/0/')"; fi
+  if [[ "${SET_AUTO_ROLLBACK}" -eq 0 ]]; then AUTO_ROLLBACK="$(jq -r '.loop_defaults.auto_rollback_on_fail // false' <<<"${loop_profile_raw}" | sed 's/true/1/;s/false/0/')"; fi
+fi
+if [[ -n "${CREDENTIAL_PROFILE}" ]]; then
+  cred_profile_raw="$("${ROOT}/bin/lacp-credential-profile" render --profile "${CREDENTIAL_PROFILE}" --json 2>&1 || true)"
+  cred_profile_ok="$(jq -r '.ok // false' 2>/dev/null <<<"${cred_profile_raw}" || echo false)"
+  if [[ "${cred_profile_ok}" != "true" ]]; then
+    cred_profile_error="$(jq -r '.error // "failed to render credential profile"' 2>/dev/null <<<"${cred_profile_raw}" || echo "failed to render credential profile")"
+    die "credential profile render failed: ${cred_profile_error}"
+  fi
+  if [[ "${SET_REPO_TRUST}" -eq 0 ]]; then
+    v="$(jq -r '.defaults.repo_trust // empty' <<<"${cred_profile_raw}")"
+    [[ -n "${v}" ]] && REPO_TRUST="${v}"
+  fi
+  if [[ "${SET_INTERNET}" -eq 0 ]]; then INTERNET="$(jq -r '.defaults.internet // false' <<<"${cred_profile_raw}")"; fi
+  if [[ "${SET_EXTERNAL_CODE}" -eq 0 ]]; then EXTERNAL_CODE="$(jq -r '.defaults.external_code // false' <<<"${cred_profile_raw}")"; fi
+  if [[ "${SET_SENSITIVE_DATA}" -eq 0 ]]; then SENSITIVE_DATA="$(jq -r '.defaults.sensitive_data // false' <<<"${cred_profile_raw}")"; fi
+  if [[ "${SET_CONFIRM_CRITICAL}" -eq 0 ]]; then CONFIRM_CRITICAL="$(jq -r '.defaults.confirm_critical // false' <<<"${cred_profile_raw}")"; fi
+  if [[ "${SET_CONFIRM_BUDGET}" -eq 0 ]]; then CONFIRM_BUDGET="$(jq -r '.defaults.confirm_budget // false' <<<"${cred_profile_raw}")"; fi
+  if [[ "${SET_INPUT_CONTRACT}" -eq 0 ]]; then INPUT_CONTRACT="$(jq -c '.input_contract // {}' <<<"${cred_profile_raw}")"; fi
 fi
 if [[ -n "${CONTEXT_PROFILE}" ]]; then
   profile_cmd=("${ROOT}/bin/lacp-context-profile" render --profile "${CONTEXT_PROFILE}")
@@ -384,6 +465,8 @@ result_json="$(jq -n \
   --argjson with_verify "$([[ "${WITH_VERIFY}" -eq 1 ]] && echo true || echo false)" \
   --argjson with_canary "$([[ "${WITH_CANARY}" -eq 1 ]] && echo true || echo false)" \
   --argjson auto_rollback "$([[ "${AUTO_ROLLBACK}" -eq 1 ]] && echo true || echo false)" \
+  --arg loop_profile "${LOOP_PROFILE}" \
+  --arg credential_profile "${CREDENTIAL_PROFILE}" \
   --arg task "${TASK}" \
   --arg repo_trust "${REPO_TRUST}" \
   --arg internet "${INTERNET}" \
@@ -430,7 +513,9 @@ result_json="$(jq -n \
       dry_run: $dry_run,
       with_verify: $with_verify,
       with_canary: $with_canary,
-      auto_rollback_on_fail: $auto_rollback
+      auto_rollback_on_fail: $auto_rollback,
+      loop_profile: (if $loop_profile == "" then null else $loop_profile end),
+      credential_profile: (if $credential_profile == "" then null else $credential_profile end)
     },
     stages: {
       execute: {

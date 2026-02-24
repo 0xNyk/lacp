@@ -34,6 +34,8 @@ Built-ins:
   /mode [args]                   Run: lacp mode [args]
   /policy [args]                 Run: lacp policy-pack [args]
   /hooks [args]                  Run: lacp claude-hooks [args]
+  /loop-profile [args]           Run: lacp loop-profile [args]
+  /credential-profile [args]     Run: lacp credential-profile [args]
   /release [args]                Run: lacp release-prepare [args]
   /posture [args]                Run: lacp posture [args]
   /status [args]                 Run: lacp status [args]
@@ -220,6 +222,8 @@ dispatch_line() {
     /mode) run_lacp_subcommand "mode" "${rest}"; return $? ;;
     /policy) run_lacp_subcommand "policy-pack" "${rest}"; return $? ;;
     /hooks) run_lacp_subcommand "claude-hooks" "${rest}"; return $? ;;
+    /loop-profile) run_lacp_subcommand "loop-profile" "${rest}"; return $? ;;
+    /credential-profile) run_lacp_subcommand "credential-profile" "${rest}"; return $? ;;
     /release) run_lacp_subcommand "release-prepare" "${rest}"; return $? ;;
     /posture) run_lacp_subcommand "posture" "${rest}"; return $? ;;
     /status) run_lacp_subcommand "status" "${rest}"; return $? ;;

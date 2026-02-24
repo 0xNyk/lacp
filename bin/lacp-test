@@ -150,6 +150,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-up.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-context.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-lessons.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-loop-and-credential-profiles.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-optimize-loop.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-context-profile.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-trace-triage.sh"
