@@ -18,6 +18,9 @@ Options:
   --home-commands-dir <path>     Override home command dir (default: ~/.lacp/commands)
   --no-project-commands          Disable project command loading
   --no-home-commands             Disable home command loading
+  --no-auto-time                 Disable automatic time tracking for this console session
+  --time-project <name>          Project label used by auto time tracking
+  --time-client <name>           Client label used by auto time tracking
   -h, --help                     Show help
 
 Built-ins:
@@ -55,6 +58,16 @@ trim() {
   printf '%s' "${s}"
 }
 
+default_project() {
+  local git_root
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "${git_root}" ]]; then
+    printf '%s' "${git_root}"
+  else
+    printf '%s' "$(pwd)"
+  fi
+}
+
 declare -A CUSTOM_COMMAND_PATHS=()
 declare -A CUSTOM_COMMAND_SOURCE=()
 declare -a EVAL_LINES=()
@@ -63,6 +76,11 @@ PROJECT_COMMANDS_ENABLED=1
 HOME_COMMANDS_ENABLED=1
 PROJECT_COMMANDS_DIR="${PWD}/.lacp/commands"
 HOME_COMMANDS_DIR="${HOME}/.lacp/commands"
+AUTO_TIME=1
+TIME_PROJECT=""
+TIME_CLIENT=""
+TIME_SESSION_ID=""
+TIME_TRACKING_ACTIVE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,6 +104,18 @@ while [[ $# -gt 0 ]]; do
       HOME_COMMANDS_ENABLED=0
       shift
       ;;
+    --no-auto-time)
+      AUTO_TIME=0
+      shift
+      ;;
+    --time-project)
+      TIME_PROJECT="$2"
+      shift 2
+      ;;
+    --time-client)
+      TIME_CLIENT="$2"
+      shift 2
+      ;;
     -h|--help|help)
       usage
       exit 0
@@ -95,6 +125,29 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+auto_time_start() {
+  [[ "${AUTO_TIME}" -eq 1 ]] || return 0
+  [[ -n "${TIME_PROJECT}" ]] || TIME_PROJECT="$(default_project)"
+  [[ -n "${TIME_SESSION_ID}" ]] || TIME_SESSION_ID="console-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+  local -a start_args=(start --session "${TIME_SESSION_ID}" --project "${TIME_PROJECT}" --json)
+  if [[ -n "${TIME_CLIENT}" ]]; then
+    start_args+=(--client "${TIME_CLIENT}")
+  fi
+  if "${ROOT}/bin/lacp-time" "${start_args[@]}" >/dev/null 2>&1; then
+    TIME_TRACKING_ACTIVE=1
+  else
+    echo "[lacp] WARN: auto time tracking start failed (continuing without tracking)" >&2
+  fi
+}
+
+auto_time_stop() {
+  if [[ "${TIME_TRACKING_ACTIVE}" -eq 1 ]]; then
+    "${ROOT}/bin/lacp-time" stop --session "${TIME_SESSION_ID}" --json >/dev/null 2>&1 || true
+    TIME_TRACKING_ACTIVE=0
+  fi
+}
 
 load_custom_commands_from_dir() {
   local dir="$1"
@@ -299,6 +352,8 @@ dispatch_line() {
 }
 
 if [[ "${#EVAL_LINES[@]}" -gt 0 ]]; then
+  auto_time_start
+  trap auto_time_stop EXIT
   for line in "${EVAL_LINES[@]}"; do
     if ! dispatch_line "${line}"; then
       rc=$?
@@ -310,6 +365,9 @@ if [[ "${#EVAL_LINES[@]}" -gt 0 ]]; then
   done
   exit 0
 fi
+
+auto_time_start
+trap auto_time_stop EXIT
 
 echo "[lacp] Console ready. Use /help for commands."
 while true; do

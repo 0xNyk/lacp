@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - `lacp-console` adds `/loop <loop-profile> [credential-profile] -- <command...>` shortcut for one-line profiled loop execution.
 - `bin/lacp-time` monthly session tracking by project/client (`start/stop/active/report/month`) with rollups for `YYYY-MM`.
 - `lacp-report` now includes `time_tracking` monthly summary (`sessions`, `total_hours`, `top_projects`).
+- `lacp-console` now auto-starts/stops `lacp-time` tracking for console sessions by default (opt-out: `--no-auto-time`), so docs/testing/coding work in a console session is counted together.
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.

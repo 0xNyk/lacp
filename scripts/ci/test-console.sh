@@ -7,6 +7,12 @@ trap 'rm -rf "${TMP}"' EXIT
 
 export HOME="${TMP}/home"
 mkdir -p "${HOME}/.lacp/commands"
+export LACP_SKIP_DOTENV=1
+export LACP_AUTOMATION_ROOT="${TMP}/automation"
+export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
+export LACP_DRAFTS_ROOT="${TMP}/drafts"
+export LACP_TIME_TRACKING_ROOT="${TMP}/knowledge/data/time-tracking"
+mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
 
 WORK="${TMP}/repo"
 mkdir -p "${WORK}/.lacp/commands"
@@ -49,11 +55,15 @@ credential_profile_out="$("${ROOT}/bin/lacp-console" --eval "/credential-profile
 echo "${credential_profile_out}" | jq -e '.ok == true' >/dev/null
 
 loop_shortcut_out="$("${ROOT}/bin/lacp-console" --eval "/loop local-fast trusted-local-dev -- /bin/echo console-loop-ok")"
-echo "${loop_shortcut_out}" | jq -e '.ok == true' >/dev/null
+echo "${loop_shortcut_out}" | jq -e '.kind == "control_loop"' >/dev/null
 echo "${loop_shortcut_out}" | jq -e '.options.loop_profile == "local-fast"' >/dev/null
 echo "${loop_shortcut_out}" | jq -e '.options.credential_profile == "trusted-local-dev"' >/dev/null
 
 run_out="$("${ROOT}/bin/lacp-console" --eval "/run posture --json")"
 echo "${run_out}" | jq -e '.ok == true' >/dev/null
+
+month_json="$("${ROOT}/bin/lacp-time" month --json)"
+echo "${month_json}" | jq -e '.ok == true' >/dev/null
+echo "${month_json}" | jq -e '.summary.sessions >= 1' >/dev/null
 
 echo "[console-test] console command tests passed"
