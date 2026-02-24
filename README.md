@@ -340,6 +340,7 @@ Notes:
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`)
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
+- `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
 - `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
@@ -534,6 +535,9 @@ bin/lacp claude-hooks audit --json | jq
 bin/lacp claude-hooks optimize --profile minimal-stop --json | jq
 bin/lacp console --eval "/doctor --json" | jq '.ok'
 bin/lacp console --eval "/loop safe-verify trusted-local-dev -- /bin/echo hello"
+bin/lacp time start --project "$(pwd)" --client acme --json | jq
+bin/lacp time stop --json | jq
+bin/lacp time month --json | jq
 
 # pre-live gate
 bin/lacp release-gate --quick

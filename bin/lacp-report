@@ -60,6 +60,7 @@ hours = int(sys.argv[2])
 latest_bench = sys.argv[3]
 latest_snapshot = sys.argv[4]
 wrapper_bin_dir = pathlib.Path(sys.argv[5]).expanduser()
+time_sessions_file = pathlib.Path(sys.argv[1]).parent / "time-tracking" / "sessions.jsonl"
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
 
@@ -143,6 +144,27 @@ if latest_bench:
 else:
     benchmark = {"path": None, "gate_ok": None, "summary": {}}
 
+month_key = now.strftime("%Y-%m")
+time_rows = []
+if time_sessions_file.exists():
+    for line in time_sessions_file.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        ts = str(item.get("started_at_utc", ""))
+        if ts.startswith(month_key + "-"):
+            time_rows.append(item)
+
+time_total_seconds = sum(int(r.get("duration_seconds", 0) or 0) for r in time_rows)
+time_by_project = {}
+for r in time_rows:
+    p = str(r.get("project") or "<unknown>")
+    time_by_project[p] = time_by_project.get(p, 0) + int(r.get("duration_seconds", 0) or 0)
+
 overall_ok = True
 if benchmark.get("gate_ok") is False:
     overall_ok = False
@@ -191,6 +213,17 @@ payload = {
             "total": wrapper_tasks["interactive claude session"] + wrapper_tasks["interactive codex session"],
         },
     },
+    "time_tracking": {
+        "month": month_key,
+        "sessions": len(time_rows),
+        "total_seconds": time_total_seconds,
+        "total_hours": round(time_total_seconds / 3600, 3),
+        "top_projects": [
+            {"project": k, "seconds": v, "hours": round(v / 3600, 3)}
+            for k, v in sorted(time_by_project.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        ],
+        "sessions_file": str(time_sessions_file) if time_sessions_file.exists() else None,
+    },
 }
 print(json.dumps(payload, indent=2))
 PY
@@ -208,6 +241,7 @@ else
     "  wrappers.bin_dir=\(.observability.wrappers.bin_dir)",
     "  wrappers.claude.managed=\(.observability.wrappers.claude.managed) wrappers.codex.managed=\(.observability.wrappers.codex.managed)",
     "  wrapper_runs.total=\(.observability.wrapper_routed_runs.total) wrapper_tasks.total=\(.observability.wrapper_task_runs.total)",
+    "  time.month=\(.time_tracking.month) time.sessions=\(.time_tracking.sessions) time.total_hours=\(.time_tracking.total_hours)",
     "  benchmark.path=\(.artifacts.latest_benchmark.path // "<none>")",
     "  benchmark.gate_ok=\(.artifacts.latest_benchmark.gate_ok)",
     "  snapshot.path=\(.artifacts.latest_snapshot // "<none>")"
