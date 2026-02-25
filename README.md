@@ -408,8 +408,10 @@ Notes:
 Use these files to formalize your orchestrator workflow from specs to loops:
 
 - `config/harness/tasks.schema.json`: contract for generated `tasks.json` plans.
+  - supports per-task cascading IO contracts: `expected_inputs` / `expected_outputs`
 - `config/harness/sandbox-profiles.yaml`: reproducible sandbox/runtime presets.
 - `config/harness/verification-policy.yaml`: per-task verification requirements and thresholds.
+  - `failure_action` drives retry semantics in `harness-run` (`block`, `require_human_review`, `retry_same_model`, `retry_stronger_model`)
 - `config/harness/browser-evidence.schema.json`: machine-verifiable browser flow evidence contract.
 - `config/risk-policy-contract.json`: single risk/merge/review/evidence policy contract.
 - `config/risk-policy-contract.schema.json`: contract schema for drift-resistant validation.

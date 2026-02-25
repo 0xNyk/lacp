@@ -116,6 +116,83 @@ def run_verification_checks(policy: dict, workdir: Path) -> tuple[bool, list[dic
     return passed >= min_passed, results
 
 
+def validate_expected_inputs(task: dict, deps: list[str], output_registry: dict[str, dict]) -> tuple[bool, list[dict], list[str]]:
+    contracts = task.get("expected_inputs") or []
+    if not isinstance(contracts, list):
+        return False, [], ["expected_inputs must be an array"]
+
+    deps_set = set(str(d) for d in deps)
+    resolved: list[dict] = []
+    errors: list[str] = []
+    for item in contracts:
+        if not isinstance(item, dict):
+            errors.append("expected_inputs entry must be an object")
+            continue
+        cid = str(item.get("id") or "").strip()
+        from_task = str(item.get("from_task") or "").strip()
+        output_id = str(item.get("output_id") or "").strip()
+        required = bool(item.get("required", True))
+        if not cid or not from_task or not output_id:
+            errors.append("expected_inputs entry missing id/from_task/output_id")
+            continue
+        if from_task not in deps_set:
+            errors.append(f"input contract {cid} references from_task={from_task} not present in depends_on")
+            continue
+
+        output_map = output_registry.get(from_task) or {}
+        output_ref = output_map.get(output_id)
+        exists = bool(output_ref and output_ref.get("exists"))
+        if required and not exists:
+            errors.append(f"input contract {cid} missing required upstream output {from_task}:{output_id}")
+            continue
+
+        resolved.append(
+            {
+                "id": cid,
+                "from_task": from_task,
+                "output_id": output_id,
+                "required": required,
+                "resolved": exists,
+                "path": (output_ref or {}).get("path"),
+            }
+        )
+    return len(errors) == 0, resolved, errors
+
+
+def collect_expected_outputs(task: dict, workdir: Path) -> tuple[bool, dict[str, dict], list[str]]:
+    contracts = task.get("expected_outputs") or []
+    if not isinstance(contracts, list):
+        return False, {}, ["expected_outputs must be an array"]
+
+    outputs: dict[str, dict] = {}
+    errors: list[str] = []
+    for item in contracts:
+        if not isinstance(item, dict):
+            errors.append("expected_outputs entry must be an object")
+            continue
+        oid = str(item.get("id") or "").strip()
+        path_raw = str(item.get("path") or "").strip()
+        kind = str(item.get("kind") or "").strip() or None
+        required = bool(item.get("required", True))
+        if not oid or not path_raw:
+            errors.append("expected_outputs entry missing id/path")
+            continue
+        p = Path(path_raw)
+        p_abs = p if p.is_absolute() else (workdir / p).resolve()
+        exists = p_abs.exists()
+        if required and not exists:
+            errors.append(f"output contract {oid} missing required path: {p_abs}")
+        outputs[oid] = {
+            "id": oid,
+            "path": str(p_abs),
+            "path_raw": path_raw,
+            "kind": kind,
+            "required": required,
+            "exists": exists,
+        }
+    return len(errors) == 0, outputs, errors
+
+
 def run_task_attempt(
     root: Path,
     workdir: Path,
@@ -255,6 +332,7 @@ def main() -> int:
     receipt_index = 0
 
     failed_ids: set[str] = set()
+    output_registry: dict[str, dict[str, dict]] = {}
     for task in tasks:
         task_id = str(task["id"])
         deps = task.get("depends_on", [])
@@ -273,9 +351,30 @@ def main() -> int:
                 break
             continue
 
+        input_ok, input_resolved, input_errors = validate_expected_inputs(task, deps, output_registry)
+        if not input_ok:
+            blocked += 1
+            failed_ids.add(task_id)
+            summary.append(
+                {
+                    "task_id": task_id,
+                    "status": "blocked",
+                    "reason": "input_contract_invalid",
+                    "input_errors": input_errors,
+                }
+            )
+            if not args.continue_on_fail:
+                break
+            continue
+
         profile = profiles_map[task["sandbox_profile"]]
         policy = verification_map[task["verification_policy"]]
         loops = task["iterations"]
+        failure_action = str(policy.get("failure_action", "require_human_review"))
+        allow_retry = failure_action in {"retry_same_model", "retry_stronger_model"}
+        loop2_max = int(loops.get("loop_2_max", 0))
+        if failure_action == "retry_stronger_model":
+            loop2_max = max(loop2_max, 1)
 
         task_ok = False
         records: list[dict] = []
@@ -297,9 +396,11 @@ def main() -> int:
             if ok:
                 task_ok = True
                 break
+            if not allow_retry:
+                break
 
-        if not task_ok:
-            for i in range(1, int(loops["loop_2_max"]) + 1):
+        if not task_ok and allow_retry:
+            for i in range(1, loop2_max + 1):
                 ok, rec, receipt_chain_head, receipt_index = run_task_attempt(
                     root,
                     workdir,
@@ -307,7 +408,7 @@ def main() -> int:
                     profile,
                     policy,
                     run_dir,
-                    "loop2",
+                    "loop2_stronger" if failure_action == "retry_stronger_model" else "loop2",
                     i,
                     args.dry_run,
                     receipt_chain_head,
@@ -316,6 +417,8 @@ def main() -> int:
                 records.append(rec)
                 if ok:
                     task_ok = True
+                    break
+                if not allow_retry:
                     break
 
         if task_ok and int(loops.get("quality_loop_max", 0)) > 0:
@@ -338,7 +441,32 @@ def main() -> int:
                 if ok:
                     quality_ok = True
                     break
+                if not allow_retry:
+                    break
             task_ok = quality_ok
+
+        output_errors: list[str] = []
+        if task_ok:
+            out_ok, out_map, out_errors = collect_expected_outputs(task, workdir)
+            output_errors = out_errors
+            if out_ok:
+                output_registry[task_id] = out_map
+            else:
+                task_ok = False
+                rec = {
+                    "task_id": task_id,
+                    "stage": "output_contract",
+                    "attempt": 1,
+                    "ok": False,
+                    "error": "output_contract_invalid",
+                    "errors": out_errors,
+                }
+                rec, receipt_chain_head = attach_receipt(rec, receipt_chain_head, receipt_index)
+                receipt_index += 1
+                out_file = run_dir / task_id / "output-contract.json"
+                out_file.parent.mkdir(parents=True, exist_ok=True)
+                out_file.write_text(json.dumps(rec, indent=2) + "\n")
+                records.append(rec)
 
         if task_ok:
             succeeded += 1
@@ -348,10 +476,28 @@ def main() -> int:
             failed_ids.add(task_id)
             status = "failed"
             if not args.continue_on_fail:
-                summary.append({"task_id": task_id, "status": status, "attempts": len(records)})
+                summary.append(
+                    {
+                        "task_id": task_id,
+                        "status": status,
+                        "attempts": len(records),
+                        "failure_action": failure_action,
+                        "input_contracts": input_resolved,
+                        "output_errors": output_errors,
+                    }
+                )
                 break
 
-        summary.append({"task_id": task_id, "status": status, "attempts": len(records)})
+        summary.append(
+            {
+                "task_id": task_id,
+                "status": status,
+                "attempts": len(records),
+                "failure_action": failure_action,
+                "input_contracts": input_resolved,
+                "output_errors": output_errors,
+            }
+        )
 
     ok = failed == 0 and blocked == 0
     payload = {
