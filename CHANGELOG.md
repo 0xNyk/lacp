@@ -18,6 +18,9 @@ All notable changes to this project will be documented in this file.
 - default macOS auto-deps and Formula dependency baseline now include `rust`, `llvm`, and `z3` as first-class LACP toolchain dependencies.
 - `lacp-report` now includes `time_tracking` monthly summary (`sessions`, `total_hours`, `top_projects`).
 - `lacp-console` now auto-starts/stops `lacp-time` tracking for console sessions by default (opt-out: `--no-auto-time`), so docs/testing/coding work in a console session is counted together.
+- Harness contracts now support cascading IO gates via `expected_inputs` and `expected_outputs` task fields.
+- `lacp-harness-run` now enforces input/output task contracts at runtime before dependent task execution.
+- `lacp-harness-run` now applies verification `failure_action` semantics (`block`, `require_human_review`, `retry_same_model`, `retry_stronger_model`) to retry behavior.
 - `bin/lacp-bootstrap-system` one-command first-run bootstrap (`install + onboard + doctor`).
 - `bin/lacp-canary` for 7-day promotion readiness gates over benchmark artifacts.
 - `bin/lacp-canary-optimize` bounded optimization loop with optional `LACP_BENCH_TOP_K` auto-tuning and persistence.

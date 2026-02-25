@@ -40,7 +40,14 @@ cat > "${valid_tasks}" <<'EOF'
         "quality_loop_max": 1
       },
       "sandbox_profile": "local-safe",
-      "verification_policy": "code-quality-default"
+      "verification_policy": "code-quality-default",
+      "expected_outputs": [
+        {
+          "id": "plan-doc",
+          "path": "docs/plan.md",
+          "required": false
+        }
+      ]
     },
     {
       "id": "task-impl",
@@ -58,7 +65,15 @@ cat > "${valid_tasks}" <<'EOF'
         "quality_loop_max": 2
       },
       "sandbox_profile": "local-untrusted",
-      "verification_policy": "security-sensitive"
+      "verification_policy": "security-sensitive",
+      "expected_inputs": [
+        {
+          "id": "needs-plan",
+          "from_task": "task-plan",
+          "output_id": "plan-doc",
+          "required": false
+        }
+      ]
     }
   ]
 }
@@ -115,4 +130,3 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 
 echo "[harness-validate-test] harness validate tests passed"
-
