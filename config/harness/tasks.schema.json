@@ -219,6 +219,10 @@
                   "type": "string",
                   "minLength": 1
                 },
+                "schema_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "kind": {
                   "type": "string"
                 },
