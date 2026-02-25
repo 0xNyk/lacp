@@ -344,7 +344,7 @@ Notes:
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including `hardened-exec` execution guard profile
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
-- `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`)
+- `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`), tag rollups, and activity buckets (`coding/testing/docs/ops`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
 - `bin/lacp-up`: dmux-style one-command multi-instance launch (`--layout`, `--brand`, `--instances`) with optional auto-attach and enforced context/fingerprint forwarding
 - `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
@@ -548,10 +548,11 @@ bin/lacp console --eval "/doctor --json" | jq '.ok'
 bin/lacp console --eval "/loop safe-verify trusted-local-dev -- /bin/echo hello"
 # console auto-tracks session time by default (docs/testing/coding all included)
 # disable per session: bin/lacp console --no-auto-time
-bin/lacp time start --project "$(pwd)" --client acme --json | jq
+bin/lacp time start --project "$(pwd)" --client acme --tags docs,testing --json | jq
 bin/lacp time stop --json | jq
 bin/lacp time month --json | jq
 bin/lacp time month --json | jq '.directory_split'
+bin/lacp time month --json | jq '.activity_buckets,.by_tag'
 
 # pre-live gate
 bin/lacp release-gate --quick
