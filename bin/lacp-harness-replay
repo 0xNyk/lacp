@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LACP_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export LACP_SCRIPT_ROOT
+
+python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def fail(msg: str, code: int = 2) -> int:
+    print(f"[lacp] ERROR: {msg}", file=sys.stderr)
+    return code
+
+
+def load_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        raise ValueError(f"invalid json at {path}: {exc}") from exc
+
+
+def pick_record(task_dir: Path, task_id: str, attempt: int | None) -> dict:
+    records: list[dict] = []
+    for p in sorted(task_dir.glob("*.json")):
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("task_id") or "") != task_id:
+            continue
+        runner = data.get("runner")
+        if not isinstance(runner, dict):
+            continue
+        cmd = str(runner.get("command") or "").strip()
+        if not cmd:
+            continue
+        rec_attempt = data.get("attempt")
+        if attempt is not None and int(rec_attempt or -1) != attempt:
+            continue
+        receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
+        receipt_index = int(receipt.get("receipt_index") or -1)
+        records.append({"_path": str(p), "_receipt_index": receipt_index, **data})
+
+    if not records:
+        raise ValueError("no replayable task records found")
+
+    records.sort(key=lambda x: (int(x.get("_receipt_index", -1)), str(x.get("_path", ""))))
+    return records[-1]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Replay a task attempt from a harness run receipt.")
+    parser.add_argument("--run-id", default="", help="Run id under $LACP_KNOWLEDGE_ROOT/data/harness-runs")
+    parser.add_argument("--run-dir", default="", help="Absolute run directory (alternative to --run-id)")
+    parser.add_argument("--task-id", required=True, help="Task id to replay")
+    parser.add_argument("--attempt", type=int, default=0, help="Optional attempt number to replay (default: latest)")
+    parser.add_argument("--workdir", default=".", help="Working directory for replayed command")
+    parser.add_argument("--runner-only", action="store_true", help="Replay only runner command and skip verification checks")
+    parser.add_argument("--json", action="store_true", help="Emit JSON output")
+    args = parser.parse_args()
+
+    if not args.run_id and not args.run_dir:
+        return fail("pass either --run-id or --run-dir")
+
+    knowledge_root = Path(
+        __import__("os").environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / "control/knowledge/knowledge-memory"))
+    )
+
+    if args.run_dir:
+        run_dir = Path(args.run_dir).resolve()
+    else:
+        run_dir = (knowledge_root / "data" / "harness-runs" / args.run_id).resolve()
+
+    summary_file = run_dir / "summary.json"
+    if not summary_file.exists():
+        return fail(f"run summary not found: {summary_file}")
+
+    try:
+        summary = load_json(summary_file)
+    except Exception as exc:
+        return fail(str(exc))
+
+    task_entries = summary.get("tasks") if isinstance(summary.get("tasks"), list) else []
+    task_entry = next((t for t in task_entries if isinstance(t, dict) and str(t.get("task_id") or "") == args.task_id), None)
+    if task_entry is None:
+        return fail(f"task_id not found in run summary: {args.task_id}")
+
+    task_dir = run_dir / args.task_id
+    if not task_dir.exists():
+        return fail(f"task artifact directory missing: {task_dir}")
+
+    attempt = args.attempt if args.attempt > 0 else None
+    try:
+        rec = pick_record(task_dir, args.task_id, attempt)
+    except Exception as exc:
+        return fail(str(exc))
+
+    runner = rec.get("runner") if isinstance(rec.get("runner"), dict) else {}
+    runner_cmd = str(runner.get("command") or "").strip()
+    workdir = Path(args.workdir).resolve()
+
+    replay_runner = run_cmd(["/usr/bin/env", "bash", "-lc", f"cd {json.dumps(str(workdir))} && {runner_cmd}"])
+
+    verify_results: list[dict] = []
+    verify_ok = True
+    if not args.runner_only:
+        checks = []
+        verification = rec.get("verification") if isinstance(rec.get("verification"), dict) else {}
+        for item in verification.get("results") or []:
+            if isinstance(item, dict):
+                cmd = str(item.get("command") or "").strip()
+                cid = str(item.get("id") or "check")
+                if cmd:
+                    checks.append((cid, cmd))
+
+        for cid, cmd in checks:
+            cp = run_cmd(["/usr/bin/env", "bash", "-lc", f"cd {json.dumps(str(workdir))} && {cmd}"])
+            ok = cp.returncode == 0
+            if not ok:
+                verify_ok = False
+            verify_results.append(
+                {
+                    "id": cid,
+                    "command": cmd,
+                    "exit_code": cp.returncode,
+                    "ok": ok,
+                    "stdout": cp.stdout[-2000:],
+                    "stderr": cp.stderr[-2000:],
+                }
+            )
+
+    ok = replay_runner.returncode == 0 and verify_ok
+    payload = {
+        "ok": ok,
+        "run_id": summary.get("run_id"),
+        "run_dir": str(run_dir),
+        "task_id": args.task_id,
+        "selected_record": {
+            "path": rec.get("_path"),
+            "stage": rec.get("stage"),
+            "attempt": rec.get("attempt"),
+            "receipt_index": rec.get("_receipt_index"),
+        },
+        "runner": {
+            "command": runner_cmd,
+            "exit_code": replay_runner.returncode,
+            "stdout": replay_runner.stdout[-4000:],
+            "stderr": replay_runner.stderr[-4000:],
+        },
+        "verification": {
+            "replayed": not args.runner_only,
+            "ok": verify_ok,
+            "results": verify_results,
+        },
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"[lacp] harness replay run_id={payload['run_id']} task_id={args.task_id} ok={str(ok).lower()}")
+        print(f"[lacp] selected_record={payload['selected_record']['path']}")
+
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY

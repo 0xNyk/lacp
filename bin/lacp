@@ -52,6 +52,7 @@ Ops:
   pr-preflight  Evaluate PR policy gates (risk tier/checks/review/evidence)
   harness-validate Validate tasks.json against harness contracts
   harness-run  Execute tasks.json with dependency-aware loop retries
+  harness-replay Replay failed harness task attempts from stored receipts
   e2e          Run local browser e2e workflows and auth pattern checks
   api-e2e      Run API/backend e2e workflows with manifest evidence
   contract-e2e Run contract/smart-contract e2e workflows with manifest evidence
@@ -219,6 +220,9 @@ case "${cmd}" in
     ;;
   harness-run)
     exec "${ROOT}/bin/lacp-harness-run" "$@"
+    ;;
+  harness-replay)
+    exec "${ROOT}/bin/lacp-harness-replay" "$@"
     ;;
   e2e)
     exec "${ROOT}/bin/lacp-e2e" "$@"

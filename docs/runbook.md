@@ -62,6 +62,7 @@ bin/lacp orchestrate doctor --json
 scripts/ci/test-harness-contracts.sh
 bin/lacp harness-validate --tasks ./tasks.json --json
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json
+bin/lacp harness-replay --run-id <run-id> --task-id <task-id> --workdir . --json
 bin/lacp migrate --json
 bin/lacp doctor --fix-deps --auto-deps-dry-run --json
 bin/lacp schedule-health status --json
