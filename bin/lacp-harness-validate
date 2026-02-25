@@ -217,6 +217,57 @@ for idx, task in enumerate(tasks.get("tasks", [])):
                 add_error(errors, f"{prefix}.depends_on has duplicate entry: {dep}")
             dep_seen.add(dep)
 
+    exp_inputs = task.get("expected_inputs")
+    if exp_inputs is not None:
+        if not isinstance(exp_inputs, list):
+            add_error(errors, f"{prefix}.expected_inputs must be an array when provided")
+        else:
+            seen_inputs: set[str] = set()
+            for i, item in enumerate(exp_inputs):
+                p2 = f"{prefix}.expected_inputs[{i}]"
+                if not isinstance(item, dict):
+                    add_error(errors, f"{p2} must be an object")
+                    continue
+                iid = require_str(item, "id", errors, p2)
+                ftask = require_str(item, "from_task", errors, p2)
+                oid = require_str(item, "output_id", errors, p2)
+                if isinstance(iid, str):
+                    if not id_pattern.match(iid):
+                        add_error(errors, f"{p2}.id has invalid format")
+                    if iid in seen_inputs:
+                        add_error(errors, f"{p2}.id duplicates existing input contract id: {iid}")
+                    seen_inputs.add(iid)
+                if isinstance(ftask, str) and not id_pattern.match(ftask):
+                    add_error(errors, f"{p2}.from_task has invalid format")
+                if isinstance(oid, str) and not id_pattern.match(oid):
+                    add_error(errors, f"{p2}.output_id has invalid format")
+                if "required" in item and not isinstance(item.get("required"), bool):
+                    add_error(errors, f"{p2}.required must be a boolean when provided")
+
+    exp_outputs = task.get("expected_outputs")
+    if exp_outputs is not None:
+        if not isinstance(exp_outputs, list):
+            add_error(errors, f"{prefix}.expected_outputs must be an array when provided")
+        else:
+            seen_outputs: set[str] = set()
+            for i, item in enumerate(exp_outputs):
+                p2 = f"{prefix}.expected_outputs[{i}]"
+                if not isinstance(item, dict):
+                    add_error(errors, f"{p2} must be an object")
+                    continue
+                oid = require_str(item, "id", errors, p2)
+                opath = require_str(item, "path", errors, p2)
+                if isinstance(oid, str):
+                    if not id_pattern.match(oid):
+                        add_error(errors, f"{p2}.id has invalid format")
+                    if oid in seen_outputs:
+                        add_error(errors, f"{p2}.id duplicates existing output contract id: {oid}")
+                    seen_outputs.add(oid)
+                if isinstance(opath, str) and not opath.strip():
+                    add_error(errors, f"{p2}.path must be non-empty")
+                if "required" in item and not isinstance(item.get("required"), bool):
+                    add_error(errors, f"{p2}.required must be a boolean when provided")
+
     rb = task.get("reasoning_budget")
     if not isinstance(rb, dict):
         add_error(errors, f"{prefix}.reasoning_budget must be object")
@@ -271,6 +322,14 @@ for idx, task in enumerate(tasks.get("tasks", [])):
                             break
 
 # second pass: dependency existence and self-dep
+dependents_map: dict[str, int] = {}
+for task in tasks.get("tasks", []):
+    if not isinstance(task, dict):
+        continue
+    for dep in task.get("depends_on", []) if isinstance(task.get("depends_on"), list) else []:
+        if isinstance(dep, str):
+            dependents_map[dep] = dependents_map.get(dep, 0) + 1
+
 for idx, task in enumerate(tasks.get("tasks", [])):
     if not isinstance(task, dict):
         continue
@@ -283,6 +342,23 @@ for idx, task in enumerate(tasks.get("tasks", [])):
             add_error(errors, f"tasks[{idx}].depends_on contains self dependency")
         elif dep not in task_ids:
             add_error(errors, f"tasks[{idx}].depends_on references unknown task id: {dep}")
+
+    exp_inputs = task.get("expected_inputs")
+    if isinstance(deps, list) and deps and (not isinstance(exp_inputs, list) or len(exp_inputs) == 0):
+        add_error(errors, f"tasks[{idx}] has dependencies but missing expected_inputs contracts")
+    elif isinstance(deps, list) and isinstance(exp_inputs, list):
+        dep_set = {d for d in deps if isinstance(d, str)}
+        for i, item in enumerate(exp_inputs):
+            if not isinstance(item, dict):
+                continue
+            ftask = item.get("from_task")
+            if isinstance(ftask, str) and ftask not in dep_set:
+                add_error(errors, f"tasks[{idx}].expected_inputs[{i}].from_task must be in depends_on")
+
+    if isinstance(tid, str) and dependents_map.get(tid, 0) > 0:
+        exp_outputs = task.get("expected_outputs")
+        if not isinstance(exp_outputs, list) or len(exp_outputs) == 0:
+            add_error(errors, f"tasks[{idx}] has downstream dependents but missing expected_outputs contracts")
 
 ok = len(errors) == 0
 payload = {
