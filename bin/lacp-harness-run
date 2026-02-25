@@ -116,6 +116,51 @@ def run_verification_checks(policy: dict, workdir: Path) -> tuple[bool, list[dic
     return passed >= min_passed, results
 
 
+def validate_json_schema(value, schema: dict, path: str = "$") -> list[str]:
+    errors: list[str] = []
+    if not isinstance(schema, dict):
+        return [f"{path}: schema must be an object"]
+
+    stype = schema.get("type")
+    if stype == "object":
+        if not isinstance(value, dict):
+            return [f"{path}: expected object"]
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            for key in required:
+                if isinstance(key, str) and key not in value:
+                    errors.append(f"{path}: missing required property '{key}'")
+        props = schema.get("properties", {})
+        if isinstance(props, dict):
+            for key, sub in props.items():
+                if key in value:
+                    errors.extend(validate_json_schema(value[key], sub, f"{path}.{key}"))
+    elif stype == "array":
+        if not isinstance(value, list):
+            return [f"{path}: expected array"]
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for idx, item in enumerate(value):
+                errors.extend(validate_json_schema(item, item_schema, f"{path}[{idx}]"))
+    elif stype == "string":
+        if not isinstance(value, str):
+            return [f"{path}: expected string"]
+    elif stype == "number":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return [f"{path}: expected number"]
+    elif stype == "integer":
+        if not isinstance(value, int) or isinstance(value, bool):
+            return [f"{path}: expected integer"]
+    elif stype == "boolean":
+        if not isinstance(value, bool):
+            return [f"{path}: expected boolean"]
+
+    enum_vals = schema.get("enum")
+    if isinstance(enum_vals, list) and enum_vals and value not in enum_vals:
+        errors.append(f"{path}: value not in enum")
+    return errors
+
+
 def validate_expected_inputs(task: dict, deps: list[str], output_registry: dict[str, dict]) -> tuple[bool, list[dict], list[str]]:
     contracts = task.get("expected_inputs") or []
     if not isinstance(contracts, list):
@@ -159,7 +204,7 @@ def validate_expected_inputs(task: dict, deps: list[str], output_registry: dict[
     return len(errors) == 0, resolved, errors
 
 
-def collect_expected_outputs(task: dict, workdir: Path) -> tuple[bool, dict[str, dict], list[str]]:
+def collect_expected_outputs(task: dict, workdir: Path, tasks_dir: Path, root: Path) -> tuple[bool, dict[str, dict], list[str]]:
     contracts = task.get("expected_outputs") or []
     if not isinstance(contracts, list):
         return False, {}, ["expected_outputs must be an array"]
@@ -173,6 +218,7 @@ def collect_expected_outputs(task: dict, workdir: Path) -> tuple[bool, dict[str,
         oid = str(item.get("id") or "").strip()
         path_raw = str(item.get("path") or "").strip()
         kind = str(item.get("kind") or "").strip() or None
+        schema_path_raw = str(item.get("schema_path") or "").strip() or None
         required = bool(item.get("required", True))
         if not oid or not path_raw:
             errors.append("expected_outputs entry missing id/path")
@@ -182,11 +228,50 @@ def collect_expected_outputs(task: dict, workdir: Path) -> tuple[bool, dict[str,
         exists = p_abs.exists()
         if required and not exists:
             errors.append(f"output contract {oid} missing required path: {p_abs}")
+
+        schema_errors: list[str] = []
+        schema_path_resolved: str | None = None
+        if exists and schema_path_raw:
+            candidate_paths: list[Path] = []
+            sp = Path(schema_path_raw)
+            if sp.is_absolute():
+                candidate_paths.append(sp)
+            else:
+                candidate_paths.append((tasks_dir / sp).resolve())
+                candidate_paths.append((root / sp).resolve())
+                candidate_paths.append((workdir / sp).resolve())
+            schema_file = next((c for c in candidate_paths if c.exists()), None)
+            if schema_file is None:
+                schema_errors.append(f"schema_path not found: {schema_path_raw}")
+            else:
+                schema_path_resolved = str(schema_file)
+                try:
+                    schema_doc = json.loads(schema_file.read_text())
+                except Exception as exc:
+                    schema_errors.append(f"invalid schema json ({schema_file}): {exc}")
+                    schema_doc = None
+
+                if schema_doc is not None:
+                    try:
+                        data_doc = json.loads(p_abs.read_text())
+                    except Exception as exc:
+                        schema_errors.append(f"output is not valid json for schema validation ({p_abs}): {exc}")
+                        data_doc = None
+
+                    if data_doc is not None:
+                        schema_errors.extend(validate_json_schema(data_doc, schema_doc))
+
+        if schema_errors:
+            errors.extend([f"output contract {oid} schema validation failed: {e}" for e in schema_errors])
+
         outputs[oid] = {
             "id": oid,
             "path": str(p_abs),
             "path_raw": path_raw,
             "kind": kind,
+            "schema_path": schema_path_resolved,
+            "schema_path_raw": schema_path_raw,
+            "schema_errors": schema_errors,
             "required": required,
             "exists": exists,
         }
@@ -286,6 +371,7 @@ def main() -> int:
         (root / args.verification).resolve() if not Path(args.verification).is_absolute() else Path(args.verification)
     )
     workdir = Path(args.workdir).resolve()
+    tasks_dir = tasks_file.parent.resolve()
     run_id = args.run_id.strip() or f"run-{utc_stamp()}-{os.getpid()}"
 
     validate_cp = run_cmd(
@@ -447,7 +533,7 @@ def main() -> int:
 
         output_errors: list[str] = []
         if task_ok:
-            out_ok, out_map, out_errors = collect_expected_outputs(task, workdir)
+            out_ok, out_map, out_errors = collect_expected_outputs(task, workdir, tasks_dir, root)
             output_errors = out_errors
             if out_ok:
                 output_registry[task_id] = out_map

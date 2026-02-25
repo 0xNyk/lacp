@@ -257,6 +257,7 @@ for idx, task in enumerate(tasks.get("tasks", [])):
                     continue
                 oid = require_str(item, "id", errors, p2)
                 opath = require_str(item, "path", errors, p2)
+                spath = item.get("schema_path")
                 if isinstance(oid, str):
                     if not id_pattern.match(oid):
                         add_error(errors, f"{p2}.id has invalid format")
@@ -265,6 +266,8 @@ for idx, task in enumerate(tasks.get("tasks", [])):
                     seen_outputs.add(oid)
                 if isinstance(opath, str) and not opath.strip():
                     add_error(errors, f"{p2}.path must be non-empty")
+                if spath is not None and (not isinstance(spath, str) or not spath.strip()):
+                    add_error(errors, f"{p2}.schema_path must be a non-empty string when provided")
                 if "required" in item and not isinstance(item.get("required"), bool):
                     add_error(errors, f"{p2}.required must be a boolean when provided")
 

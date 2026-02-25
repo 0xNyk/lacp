@@ -14,6 +14,17 @@ profiles_file="${TMP}/profiles.yaml"
 verification_file="${TMP}/verification.yaml"
 tasks_ok_file="${TMP}/tasks-ok.json"
 tasks_fail_file="${TMP}/tasks-fail.json"
+artifact_schema_file="${TMP}/artifact.schema.json"
+
+cat > "${artifact_schema_file}" <<'EOF'
+{
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": {"type": "string"}
+  }
+}
+EOF
 
 cat > "${profiles_file}" <<'EOF'
 version: "1.0"
@@ -41,7 +52,7 @@ policies:
     required:
       checks:
         - id: "check-artifact"
-          command: "test -f artifact.txt"
+          command: "test -f artifact.json"
     thresholds:
       min_passed_checks: 1
       max_flaky_retries: 0
@@ -51,7 +62,7 @@ policies:
     required:
       checks:
         - id: "check-artifact"
-          command: "test -f artifact.txt"
+          command: "test -f artifact.json"
     thresholds:
       min_passed_checks: 1
       max_flaky_retries: 0
@@ -61,7 +72,7 @@ policies:
     required:
       checks:
         - id: "check-artifact"
-          command: "test -f artifact.txt"
+          command: "test -f artifact.json"
     thresholds:
       min_passed_checks: 1
       max_flaky_retries: 0
@@ -95,9 +106,9 @@ cat > "${tasks_ok_file}" <<EOF
       "iterations": {"loop_1_max": 1, "loop_2_max": 0, "quality_loop_max": 0},
       "sandbox_profile": "local-safe",
       "verification_policy": "default",
-      "runner": {"command": "echo ok > artifact.txt"},
+      "runner": {"command": "printf '{\"status\":\"ok\"}\\n' > artifact.json"},
       "expected_outputs": [
-        {"id": "artifact-file", "path": "artifact.txt", "required": true}
+        {"id": "artifact-file", "path": "artifact.json", "required": true, "schema_path": "${artifact_schema_file}"}
       ]
     },
     {
@@ -113,7 +124,7 @@ cat > "${tasks_ok_file}" <<EOF
       "expected_inputs": [
         {"id": "needs-artifact", "from_task": "task-a", "output_id": "artifact-file", "required": true}
       ],
-      "runner": {"command": "test -f artifact.txt && echo done >> artifact.txt"}
+      "runner": {"command": "test -f artifact.json && echo done >/dev/null"}
     }
   ]
 }
@@ -211,9 +222,9 @@ cat > "${tasks_input_contract_fail_file}" <<EOF
       "iterations": {"loop_1_max": 1, "loop_2_max": 0, "quality_loop_max": 0},
       "sandbox_profile": "local-safe",
       "verification_policy": "retry-default",
-      "runner": {"command": "echo ok > artifact.txt"},
+      "runner": {"command": "printf '{\"status\":\"ok\"}\\n' > artifact.json"},
       "expected_outputs": [
-        {"id": "artifact-file", "path": "artifact.txt", "required": true}
+        {"id": "artifact-file", "path": "artifact.json", "required": true, "schema_path": "${artifact_schema_file}"}
       ]
     },
     {
@@ -230,6 +241,42 @@ cat > "${tasks_input_contract_fail_file}" <<EOF
         {"id": "needs-missing", "from_task": "task-upstream", "output_id": "not-there", "required": true}
       ],
       "runner": {"command": "echo should-not-run"}
+    }
+  ]
+}
+EOF
+
+tasks_output_schema_fail_file="${TMP}/tasks-output-schema-fail.json"
+cat > "${tasks_output_schema_fail_file}" <<EOF
+{
+  "version": "1.0",
+  "spec_id": "spec-harness-run-output-schema-fail",
+  "generated_at_utc": "2026-02-21T04:40:00Z",
+  "orchestrator": {
+    "reasoning_tier": "high",
+    "memory_keys": ["ci"],
+    "max_restarts_per_task": 1,
+    "default_models": {
+      "planner": "gpt-5",
+      "implementer": "gpt-5-codex",
+      "verifier": "gpt-5"
+    }
+  },
+  "tasks": [
+    {
+      "id": "task-schema-fail",
+      "title": "create invalid schema output",
+      "complexity": "low",
+      "depends_on": [],
+      "primary_model": "gpt-5-codex",
+      "reasoning_budget": {"max_input_tokens": 1000, "max_output_tokens": 500},
+      "iterations": {"loop_1_max": 1, "loop_2_max": 0, "quality_loop_max": 0},
+      "sandbox_profile": "local-safe",
+      "verification_policy": "retry-default",
+      "runner": {"command": "printf '{\"wrong\":\"x\"}\\n' > artifact.json"},
+      "expected_outputs": [
+        {"id": "artifact-file", "path": "artifact.json", "required": true, "schema_path": "${artifact_schema_file}"}
+      ]
     }
   ]
 }
@@ -301,5 +348,21 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 echo "${input_fail_json}" | jq -e '.summary.blocked == 1' >/dev/null
 echo "${input_fail_json}" | jq -e '.tasks[1].reason == "input_contract_invalid"' >/dev/null
+
+set +e
+schema_fail_json="$("${ROOT}/bin/lacp-harness-run" \
+  --tasks "${tasks_output_schema_fail_file}" \
+  --profiles "${profiles_file}" \
+  --verification "${verification_file}" \
+  --workdir "${TMP}/workspace" \
+  --json)"
+rc=$?
+set -e
+if [[ "${rc}" -ne 1 ]]; then
+  echo "[harness-run-test] FAIL expected output schema invalid run rc=1, got ${rc}" >&2
+  exit 1
+fi
+echo "${schema_fail_json}" | jq -e '.tasks[0].status == "failed"' >/dev/null
+echo "${schema_fail_json}" | jq -e '.tasks[0].output_errors | length >= 1' >/dev/null
 
 echo "[harness-run-test] harness run tests passed"
