@@ -332,6 +332,7 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 echo "${block_json}" | jq -e '.tasks[0].failure_action == "block"' >/dev/null
 echo "${block_json}" | jq -e '.tasks[0].attempts == 1' >/dev/null
+echo "${block_json}" | jq -e '.tasks[0].failure_class == "runner_nonzero"' >/dev/null
 
 set +e
 input_fail_json="$("${ROOT}/bin/lacp-harness-run" \
@@ -348,6 +349,7 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 echo "${input_fail_json}" | jq -e '.summary.blocked == 1' >/dev/null
 echo "${input_fail_json}" | jq -e '.tasks[1].reason == "input_contract_invalid"' >/dev/null
+echo "${input_fail_json}" | jq -e '.tasks[1].failure_class == "input_contract_invalid"' >/dev/null
 
 set +e
 schema_fail_json="$("${ROOT}/bin/lacp-harness-run" \
@@ -364,5 +366,12 @@ if [[ "${rc}" -ne 1 ]]; then
 fi
 echo "${schema_fail_json}" | jq -e '.tasks[0].status == "failed"' >/dev/null
 echo "${schema_fail_json}" | jq -e '.tasks[0].output_errors | length >= 1' >/dev/null
+echo "${schema_fail_json}" | jq -e '.tasks[0].failure_class == "schema_mismatch"' >/dev/null
+schema_run_dir="$(echo "${schema_fail_json}" | jq -r '.run_dir')"
+if [[ ! -f "${schema_run_dir}/remediation-plan.json" ]]; then
+  echo "[harness-run-test] FAIL remediation plan missing for schema fail run" >&2
+  exit 1
+fi
+jq -e '.summary.items >= 1 and (.summary.class_counts.schema_mismatch // 0) >= 1' "${schema_run_dir}/remediation-plan.json" >/dev/null
 
 echo "[harness-run-test] harness run tests passed"
