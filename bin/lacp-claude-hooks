@@ -10,8 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
-  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced] [--dry-run] [--json]
-  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -24,6 +24,7 @@ Focus areas:
 Profiles:
   minimal-stop  Disable known noisy Stop-hook plugins by default.
   balanced      Keep current enabled plugins unchanged.
+  hardened-exec Apply local execution guard hooks (PreToolUse/PermissionRequest/ConfigChange).
 EOF
 }
 
@@ -396,8 +397,8 @@ cmd_apply_profile() {
   done
 
   case "${profile}" in
-    minimal-stop|balanced) ;;
-    *) die "--profile must be minimal-stop|balanced" ;;
+    minimal-stop|balanced|hardened-exec) ;;
+    *) die "--profile must be minimal-stop|balanced|hardened-exec" ;;
   esac
 
   local result
@@ -412,6 +413,7 @@ claude_dir = pathlib.Path(sys.argv[1]).expanduser().resolve()
 dry_run = sys.argv[2] == "true"
 profile = sys.argv[3]
 settings_path = claude_dir / "settings.json"
+hooks_root = claude_dir / "lacp-hooks"
 
 def load_json(path: pathlib.Path):
     if not path.exists():
@@ -436,11 +438,20 @@ if not isinstance(enabled, dict):
     enabled = {}
     settings["enabledPlugins"] = enabled
 
+hooks_cfg = settings.get("hooks")
+if not isinstance(hooks_cfg, dict):
+    hooks_cfg = {}
+    settings["hooks"] = hooks_cfg
+
 actions = []
 backups = []
 
 profile_disable_map = {
     "minimal-stop": [
+        "claude-mem@thedotmack",
+        "flow-next@gmickel-claude-marketplace",
+    ],
+    "hardened-exec": [
         "claude-mem@thedotmack",
         "flow-next@gmickel-claude-marketplace",
     ],
@@ -466,6 +477,197 @@ for plugin_id in profile_disable_map.get(profile, []):
             "from": current,
             "to": False,
         })
+
+def prune_managed_lacp_hooks(event_name: str):
+    blocks = hooks_cfg.get(event_name, [])
+    if not isinstance(blocks, list):
+        blocks = []
+    kept = []
+    removed = 0
+    for block in blocks:
+        if not isinstance(block, dict):
+            kept.append(block)
+            continue
+        block_hooks = block.get("hooks", [])
+        if not isinstance(block_hooks, list):
+            kept.append(block)
+            continue
+        has_lacp_managed = False
+        for hk in block_hooks:
+            if not isinstance(hk, dict):
+                continue
+            if hk.get("type") != "command":
+                continue
+            cmd = str(hk.get("command", ""))
+            if "lacp-hooks/" in cmd and ("exec_guard.py" in cmd or "config_guard.py" in cmd):
+                has_lacp_managed = True
+                break
+        if has_lacp_managed:
+            removed += 1
+            continue
+        kept.append(block)
+    hooks_cfg[event_name] = kept
+    return removed
+
+def append_command_hook(event_name: str, command: str, matcher: str | None = None):
+    block = {"hooks": [{"type": "command", "command": command}]}
+    if matcher is not None:
+        block["matcher"] = matcher
+    existing = hooks_cfg.get(event_name, [])
+    if not isinstance(existing, list):
+        existing = []
+    existing.append(block)
+    hooks_cfg[event_name] = existing
+
+if profile == "hardened-exec":
+    hooks_root.mkdir(parents=True, exist_ok=True)
+    exec_guard_path = hooks_root / "exec_guard.py"
+    config_guard_path = hooks_root / "config_guard.py"
+    policy_path = hooks_root / "policy.json"
+
+    exec_guard_src = """#!/usr/bin/env python3
+import json
+import re
+import sys
+from pathlib import Path
+
+def load_policy(path: Path):
+    try:
+        return json.loads(path.read_text(encoding=\"utf-8\"))
+    except Exception:
+        return {
+            \"bash_deny_regex\": [
+                r\"(^|\\\\s)rm\\\\s+-rf(\\\\s|$)\",
+                r\"(^|\\\\s)(scp|rsync)\\\\b.*\\\\s/root(/|\\\\s|$)\",
+            ],
+            \"protected_path_regex\": [
+                r\"(^|/)\\\\.env($|\\\\.)\",
+                r\"(^|/)\\\\.ssh(/|$)\",
+                r\"(^|/)\\\\.aws(/|$)\",
+                r\"(^|/)id_rsa(\\\\.pub)?$\",
+            ],
+        }
+
+def deny(event_name: str, reason: str):
+    payload = {
+        \"hookSpecificOutput\": {
+            \"hookEventName\": event_name,
+            \"permissionDecision\": \"deny\",
+            \"permissionDecisionReason\": reason,
+        }
+    }
+    print(json.dumps(payload))
+    sys.exit(0)
+
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(0)
+
+event_name = str(data.get(\"hook_event_name\", \"PreToolUse\"))
+tool_name = str(data.get(\"tool_name\", \"\"))
+tool_input = data.get(\"tool_input\", {}) if isinstance(data.get(\"tool_input\"), dict) else {}
+policy = load_policy(Path(__file__).with_name(\"policy.json\"))
+
+deny_regex = [re.compile(p, re.IGNORECASE) for p in policy.get(\"bash_deny_regex\", [])]
+path_regex = [re.compile(p, re.IGNORECASE) for p in policy.get(\"protected_path_regex\", [])]
+
+if tool_name == \"Bash\":
+    cmd = str(tool_input.get(\"command\", \"\"))
+    cmd_l = cmd.lower()
+    if ((\"curl\" in cmd_l or \"wget\" in cmd_l) and \"|\" in cmd_l and (\"bash\" in cmd_l or \" sh\" in cmd_l)):
+        deny(event_name, \"Blocked network pipe-to-shell command by policy\")
+    for pat in deny_regex:
+        if pat.search(cmd):
+            deny(event_name, f\"Blocked risky shell command by policy: {pat.pattern}\")
+elif tool_name in {\"Write\", \"Edit\", \"MultiEdit\"}:
+    path_value = str(tool_input.get(\"file_path\", \"\"))
+    path_norm = path_value.replace(\"\\\\\\\\\", \"/\")
+    for pat in path_regex:
+        if pat.search(path_norm):
+            deny(event_name, f\"Blocked write/edit to protected path by policy: {path_value}\")
+
+sys.exit(0)
+"""
+    config_guard_src = """#!/usr/bin/env python3
+import json
+import sys
+
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
+
+lower_raw = raw.lower()
+risky_markers = [
+    \"dangerously-skip-permissions\",
+    \"dangerouslyskippermissions\",
+    \"allowmanagedhooksonly\\\": false\",
+]
+for marker in risky_markers:
+    if marker in lower_raw:
+        payload = {\"continue\": False, \"stopReason\": f\"Blocked risky config change marker: {marker}\"}
+        print(json.dumps(payload))
+        sys.exit(0)
+
+sys.exit(0)
+"""
+    policy_src = json.dumps(
+        {
+            "bash_deny_regex": [
+                r"(^|\\s)rm\\s+-rf(\\s|$)",
+                r"(^|\\s)(scp|rsync)\\b.*\\s/root(/|\\s|$)",
+            ],
+            "protected_path_regex": [
+                r"(^|/)\\.env($|\\.)",
+                r"(^|/)\\.ssh(/|$)",
+                r"(^|/)\\.aws(/|$)",
+                r"(^|/)id_rsa(\\.pub)?$",
+            ],
+        },
+        indent=2,
+    ) + "\\n"
+
+    files_to_write = [
+        (exec_guard_path, exec_guard_src),
+        (config_guard_path, config_guard_src),
+        (policy_path, policy_src),
+    ]
+    for path, content in files_to_write:
+        actions.append(
+            {
+                "status": "changed",
+                "action": "install_hook_asset",
+                "path": str(path),
+            }
+        )
+        if not dry_run:
+            path.write_text(content, encoding="utf-8")
+            if path.suffix == ".py":
+                path.chmod(0o700)
+
+    removed_total = 0
+    for ev in ("PreToolUse", "PermissionRequest", "ConfigChange"):
+        removed_total += prune_managed_lacp_hooks(ev)
+    actions.append(
+        {
+            "status": "changed" if removed_total > 0 else "noop",
+            "action": "prune_managed_hooks",
+            "removed_blocks": removed_total,
+        }
+    )
+    append_command_hook("PreToolUse", f"python3 {exec_guard_path}", "Bash|Write|Edit|MultiEdit")
+    append_command_hook("PermissionRequest", f"python3 {exec_guard_path}", "Bash|Write|Edit|MultiEdit|mcp__.*")
+    append_command_hook("ConfigChange", f"python3 {config_guard_path}")
+    actions.append(
+        {
+            "status": "changed",
+            "action": "apply_hardened_exec_hooks",
+            "hooks_root": str(hooks_root),
+        }
+    )
 
 if actions and not dry_run:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
