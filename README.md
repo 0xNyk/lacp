@@ -374,6 +374,7 @@ Notes:
 - `bin/lacp-pr-preflight`: evaluate PR policy gates (risk tier + docs drift + check runs + stale review state)
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
+- `bin/lacp-harness-replay`: replay failed task runner + captured verification commands from harness receipts
 - `bin/lacp-e2e`: run local Playwright-style e2e command + generate evidence manifest + auth pattern checks
 - `bin/lacp-api-e2e`: run API/backend e2e command wrappers with manifest evidence + API coverage checks
 - `bin/lacp-contract-e2e`: run smart-contract e2e command wrappers with manifest evidence + invariant/revert checks
@@ -431,6 +432,7 @@ Validate a generated task plan:
 cd ~/control/frameworks/lacp
 bin/lacp harness-validate --tasks ./tasks.json --json | jq
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json | jq
+bin/lacp harness-replay --run-id <run-id> --task-id <task-id> --workdir . --json | jq
 
 # PR preflight policy gate from local evidence files
 bin/lacp pr-preflight \
