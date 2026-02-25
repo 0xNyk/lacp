@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: lacp-open-source-check [options]
+
+Run local open-source readiness checks (no external CI/services).
+
+Options:
+  --repo-root <path>            Repository root to inspect (default: current repo)
+  --artifacts-dir <path>        Release artifacts directory (default: <repo-root>/dist)
+  --skip-bootstrap              Skip bootstrap sanity check
+  --skip-artifacts              Skip artifact checksum validation
+  --allow-missing-artifacts     Downgrade missing artifacts to WARN instead of FAIL
+  --max-doc-age-days <n>        Docs freshness threshold (default: 60)
+  --json                        Emit JSON output
+  -h, --help                    Show help
+USAGE
+}
+
+REPO_ROOT=""
+ARTIFACTS_DIR=""
+SKIP_BOOTSTRAP=0
+SKIP_ARTIFACTS=0
+ALLOW_MISSING_ARTIFACTS=0
+MAX_DOC_AGE_DAYS=60
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo-root) REPO_ROOT="$2"; shift 2 ;;
+    --artifacts-dir) ARTIFACTS_DIR="$2"; shift 2 ;;
+    --skip-bootstrap) SKIP_BOOTSTRAP=1; shift ;;
+    --skip-artifacts) SKIP_ARTIFACTS=1; shift ;;
+    --allow-missing-artifacts) ALLOW_MISSING_ARTIFACTS=1; shift ;;
+    --max-doc-age-days) MAX_DOC_AGE_DAYS="$2"; shift 2 ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if [[ -z "${REPO_ROOT}" ]]; then
+  REPO_ROOT="$(cd "${ROOT}" && pwd)"
+else
+  REPO_ROOT="$(cd "${REPO_ROOT}" && pwd)"
+fi
+if [[ -z "${ARTIFACTS_DIR}" ]]; then
+  ARTIFACTS_DIR="${REPO_ROOT}/dist"
+fi
+
+CHECKS='[]'
+add_check() {
+  local name="$1" status="$2" detail="$3"
+  CHECKS="$(jq -c --arg n "$name" --arg s "$status" --arg d "$detail" '. + [{name:$n,status:$s,detail:$d}]' <<<"${CHECKS}")"
+}
+
+# docs presence
+required_docs=("README.md" "docs/runbook.md" "docs/release-checklist.md")
+missing_docs=()
+for f in "${required_docs[@]}"; do
+  if [[ ! -s "${REPO_ROOT}/${f}" ]]; then
+    missing_docs+=("${f}")
+  fi
+done
+if [[ "${#missing_docs[@]}" -eq 0 ]]; then
+  add_check "docs:required_files" "PASS" "required docs present"
+else
+  add_check "docs:required_files" "FAIL" "missing docs: ${missing_docs[*]}"
+fi
+
+# docs freshness (git-based when available)
+if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  last_ts="$(git -C "${REPO_ROOT}" log -1 --format=%ct -- README.md docs 2>/dev/null || true)"
+  if [[ -n "${last_ts}" ]]; then
+    now_ts="$(date +%s)"
+    age_days="$(( (now_ts - last_ts) / 86400 ))"
+    if [[ "${age_days}" -le "${MAX_DOC_AGE_DAYS}" ]]; then
+      add_check "docs:freshness" "PASS" "latest docs change age_days=${age_days} threshold=${MAX_DOC_AGE_DAYS}"
+    else
+      add_check "docs:freshness" "WARN" "latest docs change age_days=${age_days} threshold=${MAX_DOC_AGE_DAYS}"
+    fi
+  else
+    add_check "docs:freshness" "WARN" "unable to compute docs freshness from git history"
+  fi
+else
+  add_check "docs:freshness" "WARN" "git unavailable; freshness skipped"
+fi
+
+# bootstrap sanity (local-only)
+if [[ "${SKIP_BOOTSTRAP}" -eq 1 ]]; then
+  add_check "bootstrap:sanity" "WARN" "skipped by flag"
+else
+  set +e
+  bootstrap_json="$("${ROOT}/bin/lacp-bootstrap-system" --profile existing --skip-verify --skip-fresh-check --no-auto-deps --no-auto-adopt --json 2>/dev/null)"
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 0 ]]; then
+    add_check "bootstrap:sanity" "PASS" "bootstrap-system existing profile succeeded"
+  else
+    add_check "bootstrap:sanity" "FAIL" "bootstrap-system failed rc=${rc}"
+  fi
+fi
+
+# license check
+if [[ -f "${REPO_ROOT}/LICENSE" || -f "${REPO_ROOT}/LICENSE.md" || -f "${REPO_ROOT}/COPYING" ]]; then
+  add_check "license:file" "PASS" "license file present"
+else
+  add_check "license:file" "FAIL" "missing LICENSE/COPYING file"
+fi
+
+# dependency lockfile hygiene
+lock_fail=0
+if [[ -f "${REPO_ROOT}/package.json" ]]; then
+  if [[ ! -f "${REPO_ROOT}/package-lock.json" && ! -f "${REPO_ROOT}/pnpm-lock.yaml" && ! -f "${REPO_ROOT}/yarn.lock" ]]; then
+    add_check "deps:node_lockfile" "FAIL" "package.json present but no node lockfile"
+    lock_fail=1
+  else
+    add_check "deps:node_lockfile" "PASS" "node lockfile present"
+  fi
+fi
+if [[ -f "${REPO_ROOT}/pyproject.toml" ]]; then
+  if [[ ! -f "${REPO_ROOT}/uv.lock" && ! -f "${REPO_ROOT}/poetry.lock" && ! -f "${REPO_ROOT}/requirements.txt" ]]; then
+    add_check "deps:python_lockfile" "FAIL" "pyproject.toml present but no python lock artifact"
+    lock_fail=1
+  else
+    add_check "deps:python_lockfile" "PASS" "python lock artifact present"
+  fi
+fi
+if [[ -f "${REPO_ROOT}/Cargo.toml" ]]; then
+  if [[ ! -f "${REPO_ROOT}/Cargo.lock" ]]; then
+    add_check "deps:cargo_lockfile" "FAIL" "Cargo.toml present but Cargo.lock missing"
+    lock_fail=1
+  else
+    add_check "deps:cargo_lockfile" "PASS" "Cargo.lock present"
+  fi
+fi
+if [[ "${lock_fail}" -eq 0 ]]; then
+  :
+fi
+
+# secret scan on tracked files
+if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  set +e
+  secret_hits="$(git -C "${REPO_ROOT}" ls-files -z | xargs -0 rg -n -I --no-heading -e 'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|sk-[A-Za-z0-9]{20,}|-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----' 2>/dev/null)"
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 0 && -n "${secret_hits}" ]]; then
+    add_check "security:secret_scan" "FAIL" "potential secret patterns detected in tracked files"
+  else
+    add_check "security:secret_scan" "PASS" "no high-signal secret patterns detected"
+  fi
+else
+  add_check "security:secret_scan" "WARN" "git unavailable; tracked-file secret scan skipped"
+fi
+
+# skill audit
+set +e
+skill_json="$("${ROOT}/bin/lacp-skill-audit" --json 2>/dev/null)"
+skill_rc=$?
+set -e
+if [[ "${skill_rc}" -eq 0 && "$(jq -r '.ok // false' <<<"${skill_json}")" == "true" ]]; then
+  add_check "security:skill_audit" "PASS" "skill audit clean"
+else
+  add_check "security:skill_audit" "FAIL" "skill audit failed or reported issues"
+fi
+
+# release artifact integrity
+if [[ "${SKIP_ARTIFACTS}" -eq 1 ]]; then
+  add_check "release:artifacts" "WARN" "skipped by flag"
+else
+  checksums_file="${ARTIFACTS_DIR}/SHA256SUMS"
+  if [[ ! -f "${checksums_file}" ]]; then
+    if [[ "${ALLOW_MISSING_ARTIFACTS}" -eq 1 ]]; then
+      add_check "release:artifacts" "WARN" "missing SHA256SUMS under ${ARTIFACTS_DIR}"
+    else
+      add_check "release:artifacts" "FAIL" "missing SHA256SUMS under ${ARTIFACTS_DIR}"
+    fi
+  else
+    set +e
+    (
+      cd "${ARTIFACTS_DIR}"
+      shasum -a 256 -c "SHA256SUMS" >/dev/null
+    )
+    sha_rc=$?
+    set -e
+    if [[ "${sha_rc}" -eq 0 ]]; then
+      add_check "release:artifacts" "PASS" "checksums verified"
+    else
+      add_check "release:artifacts" "FAIL" "checksum verification failed"
+    fi
+  fi
+fi
+
+summary="$(jq -n --argjson checks "${CHECKS}" '
+  {
+    pass: ($checks | map(select(.status=="PASS")) | length),
+    warn: ($checks | map(select(.status=="WARN")) | length),
+    fail: ($checks | map(select(.status=="FAIL")) | length)
+  }
+')"
+ok="$(jq -r '.fail == 0' <<<"${summary}")"
+
+payload="$(jq -n \
+  --arg schema_version "1" \
+  --arg kind "open_source_check" \
+  --arg generated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg repo_root "${REPO_ROOT}" \
+  --arg artifacts_dir "${ARTIFACTS_DIR}" \
+  --argjson ok "$([[ "${ok}" == "true" ]] && echo true || echo false)" \
+  --argjson summary "${summary}" \
+  --argjson checks "${CHECKS}" \
+  '{schema_version:$schema_version,kind:$kind,generated_at_utc:$generated_at_utc,ok:$ok,repo_root:$repo_root,artifacts_dir:$artifacts_dir,summary:$summary,checks:$checks}'
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  echo "${payload}" | jq .
+else
+  echo "${payload}" | jq -r '"open-source-check ok=\(.ok) pass=\(.summary.pass) warn=\(.summary.warn) fail=\(.summary.fail)"'
+  echo "${payload}" | jq -r '.checks[] | "\(.status)\t\(.name)\t\(.detail)"'
+fi
+
+[[ "${ok}" == "true" ]]
