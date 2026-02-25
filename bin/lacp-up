@@ -14,7 +14,9 @@ Start dmux-style multi-instance agent sessions from one command.
 Run again with the same --session to add more instances.
 
 Options:
-  --session <name>                Session name (default: lacp-dev)
+  --layout solo|pair|squad|swarm  Launch preset (default: pair)
+  --brand <name>                  Branding prefix for default session (default: lacp)
+  --session <name>                Session name (default: <brand>-dev)
   --instances <n>                 Number of instances to launch (default: 2)
   --command <cmd>                 Agent command for each instance (default: claude)
   --backend dmux|tmux|claude_worktree
@@ -25,6 +27,9 @@ Options:
   --cpu-heavy true|false          Default: false
   --long-run true|false           Default: false
   --attach true|false             Open dmux after launch when backend=dmux (default: true)
+  --context-contract <json>       Optional context-contract override
+  --enforce-context true|false    Pass context-contract to each launch (default: true)
+  --enforce-fingerprint true|false Pass session fingerprint to each launch (default: true)
   --dry-run                       Plan-only execution
   --json                          Output structured JSON
 
@@ -43,7 +48,10 @@ bool_arg() {
 }
 
 SESSION="lacp-dev"
-INSTANCES="2"
+LAYOUT="pair"
+BRAND="lacp"
+SESSION=""
+INSTANCES=""
 COMMAND_TEXT="claude"
 BACKEND="${LACP_ORCHESTRATOR_BACKEND:-dmux}"
 REPO_TRUST="trusted"
@@ -52,13 +60,20 @@ EXTERNAL_CODE="false"
 CPU_HEAVY="false"
 LONG_RUN="false"
 ATTACH="true"
+CONTEXT_CONTRACT=""
+ENFORCE_CONTEXT="true"
+ENFORCE_FINGERPRINT="true"
 DRY_RUN="false"
 AS_JSON="false"
+INSTANCES_SET="false"
+SESSION_SET="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --session) SESSION="$2"; shift 2 ;;
-    --instances) INSTANCES="$2"; shift 2 ;;
+    --layout) LAYOUT="$2"; shift 2 ;;
+    --brand) BRAND="$2"; shift 2 ;;
+    --session) SESSION="$2"; SESSION_SET="true"; shift 2 ;;
+    --instances) INSTANCES="$2"; INSTANCES_SET="true"; shift 2 ;;
     --command) COMMAND_TEXT="$2"; shift 2 ;;
     --backend) BACKEND="$2"; shift 2 ;;
     --repo-trust) REPO_TRUST="$2"; shift 2 ;;
@@ -67,6 +82,9 @@ while [[ $# -gt 0 ]]; do
     --cpu-heavy) CPU_HEAVY="$(bool_arg "$2")"; shift 2 ;;
     --long-run) LONG_RUN="$(bool_arg "$2")"; shift 2 ;;
     --attach) ATTACH="$(bool_arg "$2")"; shift 2 ;;
+    --context-contract) CONTEXT_CONTRACT="$2"; shift 2 ;;
+    --enforce-context) ENFORCE_CONTEXT="$(bool_arg "$2")"; shift 2 ;;
+    --enforce-fingerprint) ENFORCE_FINGERPRINT="$(bool_arg "$2")"; shift 2 ;;
     --dry-run) DRY_RUN="true"; shift ;;
     --json) AS_JSON="true"; shift ;;
     -h|--help|help) usage; exit 0 ;;
@@ -74,13 +92,37 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "${SESSION}" ]] || die "--session cannot be empty"
 [[ -n "${COMMAND_TEXT}" ]] || die "--command cannot be empty"
 [[ "${REPO_TRUST}" == "trusted" || "${REPO_TRUST}" == "unknown" ]] || die "--repo-trust must be trusted|unknown"
 [[ "${BACKEND}" == "dmux" || "${BACKEND}" == "tmux" || "${BACKEND}" == "claude_worktree" ]] || die "--backend must be dmux|tmux|claude_worktree"
+[[ "${LAYOUT}" == "solo" || "${LAYOUT}" == "pair" || "${LAYOUT}" == "squad" || "${LAYOUT}" == "swarm" ]] || die "--layout must be solo|pair|squad|swarm"
+
+if [[ "${SESSION_SET}" != "true" ]]; then
+  SESSION="${BRAND}-dev"
+fi
+[[ -n "${SESSION}" ]] || die "--session cannot be empty"
+if [[ "${INSTANCES_SET}" != "true" ]]; then
+  case "${LAYOUT}" in
+    solo) INSTANCES="1" ;;
+    pair) INSTANCES="2" ;;
+    squad) INSTANCES="4" ;;
+    swarm) INSTANCES="6" ;;
+  esac
+fi
 
 if ! [[ "${INSTANCES}" =~ ^[0-9]+$ ]] || [[ "${INSTANCES}" -lt 1 ]]; then
   die "--instances must be a positive integer"
+fi
+
+if [[ -z "${CONTEXT_CONTRACT}" && "${ENFORCE_CONTEXT}" == "true" ]]; then
+  HOST_SHORT="$(hostname -s 2>/dev/null || hostname)"
+  CWD_NOW="$(pwd -P)"
+  CONTEXT_CONTRACT="$(jq -cn --arg h "${HOST_SHORT}" --arg c "${CWD_NOW}" '{expected_host:$h, expected_cwd_prefix:$c}')"
+fi
+
+SESSION_FINGERPRINT=""
+if [[ "${ENFORCE_FINGERPRINT}" == "true" ]]; then
+  SESSION_FINGERPRINT="$("${ROOT}/bin/lacp-session-fingerprint")"
 fi
 
 # Make dmux usable out-of-the-box for this workflow without requiring manual template setup.
@@ -119,6 +161,12 @@ for i in $(seq 1 "${INSTANCES}"); do
     --long-run "${LONG_RUN}"
     --json
   )
+  if [[ "${ENFORCE_CONTEXT}" == "true" ]]; then
+    args+=(--context-contract "${CONTEXT_CONTRACT}")
+  fi
+  if [[ "${ENFORCE_FINGERPRINT}" == "true" ]]; then
+    args+=(--session-fingerprint "${SESSION_FINGERPRINT}")
+  fi
   if [[ "${DRY_RUN}" == "true" ]]; then
     args+=(--dry-run)
   fi
@@ -136,7 +184,9 @@ for i in $(seq 1 "${INSTANCES}"); do
     --argjson ok "$( [[ "${rc}" -eq 0 ]] && echo true || echo false )" \
     --argjson exit_code "${rc}" \
     --arg output "${output}" \
-    '{index:$index,backend:$backend,session:$session,command:$command,ok:$ok,exit_code:$exit_code,output:$output}')"
+    --argjson context_enforced "$( [[ "${ENFORCE_CONTEXT}" == "true" ]] && echo true || echo false )" \
+    --argjson fingerprint_enforced "$( [[ "${ENFORCE_FINGERPRINT}" == "true" ]] && echo true || echo false )" \
+    '{index:$index,backend:$backend,session:$session,command:$command,ok:$ok,exit_code:$exit_code,context_enforced:$context_enforced,fingerprint_enforced:$fingerprint_enforced,output:$output}')"
   results="$(jq -c --argjson item "${item}" '. + [$item]' <<<"${results}")"
 
   if [[ "${rc}" -eq 0 ]]; then
@@ -171,6 +221,8 @@ if [[ "${AS_JSON}" == "true" ]]; then
     --argjson instances "${INSTANCES}" \
     --argjson succeeded "${succeeded}" \
     --argjson failed "${failed}" \
+    --arg layout "${LAYOUT}" \
+    --arg brand "${BRAND}" \
     --argjson attach "${attached}" \
     --arg attach_output "${attach_output}" \
     --argjson dry_run "$( [[ "${DRY_RUN}" == "true" ]] && echo true || echo false )" \
@@ -179,6 +231,8 @@ if [[ "${AS_JSON}" == "true" ]]; then
       ok:$ok,
       backend:$backend,
       session:$session,
+      layout:$layout,
+      brand:$brand,
       summary:{
         instances:($instances|tonumber),
         succeeded:$succeeded,
