@@ -339,7 +339,7 @@ Notes:
 - `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
-- `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`)
+- `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including `hardened-exec` execution guard profile
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
 - `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
@@ -534,6 +534,7 @@ bin/lacp-test --isolated
 bin/lacp posture --strict --json | jq
 bin/lacp claude-hooks audit --json | jq
 bin/lacp claude-hooks optimize --profile minimal-stop --json | jq
+bin/lacp claude-hooks optimize --profile hardened-exec --json | jq
 bin/lacp console --eval "/doctor --json" | jq '.ok'
 bin/lacp console --eval "/loop safe-verify trusted-local-dev -- /bin/echo hello"
 # console auto-tracks session time by default (docs/testing/coding all included)

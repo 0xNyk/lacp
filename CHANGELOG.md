@@ -7,7 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 - `bin/lacp-posture` one-shot local-first/no-external-ci posture report (`--strict`, `--json`).
 - `bin/lacp-claude-hooks` to audit/repair local Claude hook/plugin cache drift (including claude-mem version/install-path mismatch repair).
-- `bin/lacp-claude-hooks apply-profile/optimize` to apply safe local hook posture profiles (`minimal-stop`, `balanced`) and run one-command repair+profile+audit optimization.
+- `bin/lacp-claude-hooks apply-profile/optimize` to apply safe local hook posture profiles (`minimal-stop`, `balanced`, `hardened-exec`) and run one-command repair+profile+audit optimization.
+- `hardened-exec` profile installs managed Claude hook guards for `PreToolUse`, `PermissionRequest`, and `ConfigChange` under `~/.claude/lacp-hooks`.
 - `lacp-onboard` / `lacp-install` auto Claude hook optimization by default (`LACP_AUTO_HOOK_OPTIMIZE=true`, opt-out via `--no-auto-hook-optimize`).
 - `bin/lacp-console` interactive slash-command shell for local orchestration workflows (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/release`, `/run`) with custom command loading from `~/.lacp/commands` and `./.lacp/commands`.
 - `bin/lacp-loop-profile` and `bin/lacp-credential-profile` for reusable loop defaults and task-scoped credential/input-contract posture.

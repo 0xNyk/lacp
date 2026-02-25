@@ -145,4 +145,30 @@ optimize_json="$("${ROOT}/bin/lacp-claude-hooks" optimize --claude-dir "${CLAUDE
   exit 1
 }
 
+hardened_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile hardened-exec --json)"
+[[ "$(echo "${hardened_json}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL hardened-exec apply-profile not ok" >&2
+  exit 1
+}
+[[ -f "${CLAUDE_DIR}/lacp-hooks/exec_guard.py" ]] || {
+  echo "[claude-hooks-test] FAIL missing exec_guard.py after hardened-exec apply" >&2
+  exit 1
+}
+[[ -f "${CLAUDE_DIR}/lacp-hooks/config_guard.py" ]] || {
+  echo "[claude-hooks-test] FAIL missing config_guard.py after hardened-exec apply" >&2
+  exit 1
+}
+[[ "$(jq -r '.hooks.PreToolUse[-1].hooks[0].command' "${CLAUDE_DIR}/settings.json")" == *"lacp-hooks/exec_guard.py"* ]] || {
+  echo "[claude-hooks-test] FAIL expected PreToolUse managed command hook" >&2
+  exit 1
+}
+[[ "$(jq -r '.hooks.PermissionRequest[-1].hooks[0].command' "${CLAUDE_DIR}/settings.json")" == *"lacp-hooks/exec_guard.py"* ]] || {
+  echo "[claude-hooks-test] FAIL expected PermissionRequest managed command hook" >&2
+  exit 1
+}
+[[ "$(jq -r '.hooks.ConfigChange[-1].hooks[0].command' "${CLAUDE_DIR}/settings.json")" == *"lacp-hooks/config_guard.py"* ]] || {
+  echo "[claude-hooks-test] FAIL expected ConfigChange managed command hook" >&2
+  exit 1
+}
+
 echo "[claude-hooks-test] claude hooks tests passed"
