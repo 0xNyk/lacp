@@ -59,6 +59,7 @@ fi
 "${ROOT}/bin/lacp" pr-preflight --help >/dev/null
 "${ROOT}/bin/lacp" harness-validate --help >/dev/null
 "${ROOT}/bin/lacp" harness-run --help >/dev/null
+"${ROOT}/bin/lacp" harness-replay --help >/dev/null
 "${ROOT}/bin/lacp" e2e --help >/dev/null
 "${ROOT}/bin/lacp" api-e2e --help >/dev/null
 "${ROOT}/bin/lacp" contract-e2e --help >/dev/null
@@ -67,6 +68,7 @@ fi
 "${ROOT}/bin/lacp" worktree --help >/dev/null
 "${ROOT}/bin/lacp" swarm --help >/dev/null
 "${ROOT}/bin/lacp" workflow-run --help >/dev/null
+"${ROOT}/bin/lacp" open-source-check --help >/dev/null
 
 # Pin .env to sentinel values and assert isolated runs do not mutate it.
 cat > "${ENV_FILE}" <<'EOF'

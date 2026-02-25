@@ -54,6 +54,7 @@ bin/lacp policy-pack list --json
 bin/lacp policy-pack apply --pack starter --json
 bin/lacp release-gate --quick
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json
+bin/lacp open-source-check --skip-bootstrap --json
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json
 bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
 bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json

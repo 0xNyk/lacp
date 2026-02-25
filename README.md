@@ -367,6 +367,7 @@ Notes:
   - supports `--profile local-iterative` (equivalent defaults: `--quick --canary-days 3 --skip-cache-gate --skip-skill-audit-gate`)
 - `bin/lacp-release-publish`: local-only release artifact builder/publisher (`tar.gz` + `SHA256SUMS` + optional `gh release`)
 - `bin/lacp-release-verify`: one-command release verification (`release-publish --skip-gh` + checksum + archive + brew dry-run)
+- `bin/lacp-open-source-check`: local open-source go/no-go gate (docs freshness, security/deps hygiene, artifact checksums, optional bootstrap sanity)
 - `bin/lacp-vendor-watch`: monitor local Claude/Codex versions and upstream docs/changelog drift
 - `bin/lacp-automations-tui`: unified local automation dashboard (`schedule/orchestrate/worktree/swarm/wrappers/vendor-watch`)
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
