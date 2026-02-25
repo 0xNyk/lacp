@@ -176,6 +176,9 @@ bin/lacp up --session dev --instances 3 --command "claude" --json | jq
 # add one more instance to the same session later
 bin/lacp up --session dev --instances 1 --command "claude" --json | jq
 
+# layout preset + brand default session (acme-dev)
+bin/lacp up --layout squad --brand acme --command "claude" --json | jq
+
 # worktree lifecycle
 bin/lacp worktree create --repo-root . --name "feature-a" --base HEAD --json | jq
 bin/lacp worktree list --repo-root . --json | jq
@@ -343,7 +346,7 @@ Notes:
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
 - `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
-- `bin/lacp-up`: dmux-style one-command multi-instance launch (`--instances N`) with optional auto-attach
+- `bin/lacp-up`: dmux-style one-command multi-instance launch (`--layout`, `--brand`, `--instances`) with optional auto-attach and enforced context/fingerprint forwarding
 - `bin/lacp-context`: minimal context lifecycle (`init-template`, `audit`, `minimize`, `regression`)
 - `bin/lacp-lessons`: add/lint compact self-improvement rules without duplication
 - `bin/lacp-optimize-loop`: bounded weekly optimization loop over verify/canary/context/lessons
