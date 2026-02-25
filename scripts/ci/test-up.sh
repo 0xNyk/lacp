@@ -35,6 +35,8 @@ echo "${dry_json}" | jq -e '.summary.instances == 3' >/dev/null
 echo "${dry_json}" | jq -e '.summary.succeeded == 3' >/dev/null
 echo "${dry_json}" | jq -e '.launches | length == 3' >/dev/null
 echo "${dry_json}" | jq -e '[.launches[].session] | unique | length == 1' >/dev/null
+echo "${dry_json}" | jq -e '[.launches[].context_enforced] | all' >/dev/null
+echo "${dry_json}" | jq -e '[.launches[].fingerprint_enforced] | all' >/dev/null
 
 # Non-dry-run should work out-of-the-box for dmux (default templates auto-populated in lacp-up).
 live_json="$("${ROOT}/bin/lacp-up" --session "ci-up-live" --instances 2 --command "echo hi live" --attach false --json)"
@@ -47,5 +49,11 @@ tmux_json="$("${ROOT}/bin/lacp-up" --backend tmux --session "ci-up-tmux" --insta
 echo "${tmux_json}" | jq -e '.ok == true' >/dev/null
 echo "${tmux_json}" | jq -e '.launches[0].session == "ci-up-tmux-1"' >/dev/null
 echo "${tmux_json}" | jq -e '.launches[1].session == "ci-up-tmux-2"' >/dev/null
+
+# Layout + brand defaults should shape session/instance plan.
+layout_json="$("${ROOT}/bin/lacp-up" --layout squad --brand acme --command "echo hi" --dry-run --json)"
+echo "${layout_json}" | jq -e '.session == "acme-dev"' >/dev/null
+echo "${layout_json}" | jq -e '.layout == "squad"' >/dev/null
+echo "${layout_json}" | jq -e '.summary.instances == 4' >/dev/null
 
 echo "[up-test] up command tests passed"
