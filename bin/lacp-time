@@ -8,7 +8,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  lacp-time start [--project <name>] [--client <name>] [--session <id>] [--note <text>] [--json]
+  lacp-time start [--project <name>] [--client <name>] [--session <id>] [--note <text>] [--tags <csv>] [--json]
   lacp-time stop [--session <id>] [--json]
   lacp-time active [--json]
   lacp-time report [--month YYYY-MM] [--json]
@@ -43,13 +43,14 @@ default_project() {
 }
 
 start_cmd() {
-  local project="" client="" session_id="" note="" as_json=0
+  local project="" client="" session_id="" note="" tags_csv="" as_json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project) project="$2"; shift 2 ;;
       --client) client="$2"; shift 2 ;;
       --session) session_id="$2"; shift 2 ;;
       --note) note="$2"; shift 2 ;;
+      --tags) tags_csv="$2"; shift 2 ;;
       --json) as_json=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "Unknown argument: $1" ;;
@@ -59,7 +60,7 @@ start_cmd() {
   [[ -n "${project}" ]] || project="$(default_project)"
   [[ -n "${session_id}" ]] || session_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
-  out="$(python3 - <<'PY' "${ACTIVE_DIR}" "${session_id}" "${project}" "${client}" "${note}"
+  out="$(python3 - <<'PY' "${ACTIVE_DIR}" "${session_id}" "${project}" "${client}" "${note}" "${tags_csv}"
 import datetime as dt
 import json
 import os
@@ -71,6 +72,7 @@ session_id = sys.argv[2]
 project = sys.argv[3]
 client = sys.argv[4]
 note = sys.argv[5]
+tags_csv = sys.argv[6]
 
 now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 active_file = active_dir / f"{session_id}.json"
@@ -78,11 +80,18 @@ if active_file.exists():
     print(json.dumps({"ok": False, "error": f"session already active: {session_id}"}))
     raise SystemExit(2)
 
+tags = []
+for raw in tags_csv.split(","):
+    t = raw.strip().lower()
+    if t and t not in tags:
+        tags.append(t)
+
 payload = {
     "session_id": session_id,
     "project": project,
     "client": client or None,
     "note": note or None,
+    "tags": tags,
     "started_at_utc": now,
     "cwd": os.getcwd(),
 }
@@ -273,6 +282,29 @@ for r in rows:
     else:
         split_other[split_name] = split_other.get(split_name, 0) + s
 
+def classify_activity(row):
+    tags = [str(t).strip().lower() for t in (row.get("tags") or []) if str(t).strip()]
+    note = str(row.get("note") or "").lower()
+    project = str(row.get("project") or "").lower()
+    combined = " ".join([project, note, " ".join(tags)])
+    if any(t in {"docs", "documentation", "readme", "runbook"} for t in tags) or "/docs" in project or "docs/" in project or "readme" in combined:
+        return "docs"
+    if any(t in {"test", "tests", "testing", "qa", "e2e"} for t in tags) or "/test" in project or "/tests" in project or " test" in combined:
+        return "testing"
+    if any(t in {"ops", "release", "deploy", "incident", "infra"} for t in tags) or "deploy" in combined or "release" in combined or "incident" in combined:
+        return "ops"
+    return "coding"
+
+by_tag = {}
+activity_buckets = {"coding": 0, "testing": 0, "docs": 0, "ops": 0}
+for r in rows:
+    s = int(r.get("duration_seconds", 0) or 0)
+    tags = [str(t).strip().lower() for t in (r.get("tags") or []) if str(t).strip()]
+    for t in tags:
+        by_tag[t] = by_tag.get(t, 0) + s
+    bucket = classify_activity(r)
+    activity_buckets[bucket] = activity_buckets.get(bucket, 0) + s
+
 payload = {
     "ok": True,
     "kind": "time_report",
@@ -290,6 +322,16 @@ payload = {
       {"client": k, "seconds": v, "hours": round(v / 3600, 3)}
       for k, v in sorted(by_client.items(), key=lambda kv: kv[1], reverse=True)
     ],
+    "by_tag": [
+      {"tag": k, "seconds": v, "hours": round(v / 3600, 3)}
+      for k, v in sorted(by_tag.items(), key=lambda kv: kv[1], reverse=True)
+    ],
+    "activity_buckets": {
+      "coding": {"seconds": activity_buckets.get("coding", 0), "hours": round(activity_buckets.get("coding", 0) / 3600, 3)},
+      "testing": {"seconds": activity_buckets.get("testing", 0), "hours": round(activity_buckets.get("testing", 0) / 3600, 3)},
+      "docs": {"seconds": activity_buckets.get("docs", 0), "hours": round(activity_buckets.get("docs", 0) / 3600, 3)},
+      "ops": {"seconds": activity_buckets.get("ops", 0), "hours": round(activity_buckets.get("ops", 0) / 3600, 3)},
+    },
     "directory_split": {
       "clients": [
         {"name": k, "seconds": v, "hours": round(v / 3600, 3)}
@@ -325,6 +367,7 @@ PY
   else
     echo "${out}" | jq -r '"month=\(.month) sessions=\(.summary.sessions) total_hours=\(.summary.total_hours)"'
     echo "${out}" | jq -r '.by_project[]? | "project\t\(.project)\t\(.hours)h"'
+    echo "${out}" | jq -r '.activity_buckets | to_entries[] | "\(.key)\t\(.value.hours)h"'
     echo "${out}" | jq -r '.directory_split.clients[]? | "clients\t\(.name)\t\(.hours)h"'
     echo "${out}" | jq -r '.directory_split.projects[]? | "projects\t\(.name)\t\(.hours)h"'
     echo "${out}" | jq -r '.directory_split.experiments[]? | "experiments\t\(.name)\t\(.hours)h"'
