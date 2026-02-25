@@ -344,6 +344,60 @@ def run_task_attempt(
     return ok, record, new_hash, receipt_index + 1
 
 
+def classify_failure(
+    *,
+    status: str,
+    reason: str | None,
+    records: list[dict],
+    output_errors: list[str],
+    input_errors: list[str],
+) -> tuple[str | None, str | None]:
+    if status == "succeeded":
+        return None, None
+
+    if status == "blocked":
+        if reason == "input_contract_invalid":
+            return "input_contract_invalid", "fix_input_contracts"
+        if isinstance(reason, str) and reason.startswith("dependency_failed:"):
+            return "dependency_failed", "fix_upstream_dependency"
+        return "blocked_unknown", "manual_triage"
+
+    if output_errors:
+        schema_related = any("schema validation failed" in str(e).lower() for e in output_errors)
+        if schema_related:
+            return "schema_mismatch", "fix_artifact_schema_or_payload"
+        return "output_contract_invalid", "fix_output_contract"
+
+    if input_errors:
+        return "input_contract_invalid", "fix_input_contracts"
+
+    latest_runner: dict | None = None
+    for rec in reversed(records):
+        runner = rec.get("runner") if isinstance(rec, dict) else None
+        if isinstance(runner, dict):
+            latest_runner = runner
+            break
+
+    if latest_runner is not None:
+        exit_code = int(latest_runner.get("exit_code") or 0)
+        text = f"{latest_runner.get('stdout') or ''}\n{latest_runner.get('stderr') or ''}".lower()
+        if exit_code != 0:
+            if "blocked by" in text or exit_code in {8, 9, 10, 11, 12, 13, 14}:
+                return "runner_blocked_gate", "review_policy_and_confirmations"
+            return "runner_nonzero", "fix_runner_command"
+
+    verify_failed = any(
+        isinstance(rec, dict)
+        and isinstance(rec.get("verification"), dict)
+        and rec.get("verification", {}).get("ok") is False
+        for rec in records
+    )
+    if verify_failed:
+        return "verification_fail", "fix_impl_or_verification_checks"
+
+    return "unknown_failure", "manual_triage"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Execute harness tasks in dependency order with loop retries.")
     parser.add_argument("--tasks", required=True, help="Path to tasks.json")
@@ -357,6 +411,11 @@ def main() -> int:
     parser.add_argument("--run-id", default="", help="Optional run id")
     parser.add_argument("--continue-on-fail", action="store_true", help="Continue later tasks after failures")
     parser.add_argument("--dry-run", action="store_true", help="Dry run for sandboxed command execution")
+    parser.add_argument(
+        "--remediation-plan",
+        default="",
+        help="Optional remediation plan output path (default: <run_dir>/remediation-plan.json)",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON summary")
     args = parser.parse_args()
 
@@ -411,6 +470,7 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     summary: list[dict] = []
+    remediation_items: list[dict] = []
     succeeded = 0
     failed = 0
     blocked = 0
@@ -426,13 +486,24 @@ def main() -> int:
         if dep_failed:
             blocked += 1
             failed_ids.add(task_id)
-            summary.append(
+            failure_class, remediation_action = classify_failure(
+                status="blocked",
+                reason=f"dependency_failed:{','.join(dep_failed)}",
+                records=[],
+                output_errors=[],
+                input_errors=[],
+            )
+            item = (
                 {
                     "task_id": task_id,
                     "status": "blocked",
                     "reason": f"dependency_failed:{','.join(dep_failed)}",
+                    "failure_class": failure_class,
+                    "remediation_action": remediation_action,
                 }
             )
+            summary.append(item)
+            remediation_items.append(item)
             if not args.continue_on_fail:
                 break
             continue
@@ -441,14 +512,25 @@ def main() -> int:
         if not input_ok:
             blocked += 1
             failed_ids.add(task_id)
-            summary.append(
+            failure_class, remediation_action = classify_failure(
+                status="blocked",
+                reason="input_contract_invalid",
+                records=[],
+                output_errors=[],
+                input_errors=input_errors,
+            )
+            item = (
                 {
                     "task_id": task_id,
                     "status": "blocked",
                     "reason": "input_contract_invalid",
                     "input_errors": input_errors,
+                    "failure_class": failure_class,
+                    "remediation_action": remediation_action,
                 }
             )
+            summary.append(item)
+            remediation_items.append(item)
             if not args.continue_on_fail:
                 break
             continue
@@ -557,33 +639,50 @@ def main() -> int:
         if task_ok:
             succeeded += 1
             status = "succeeded"
+            failure_class, remediation_action = None, None
         else:
             failed += 1
             failed_ids.add(task_id)
             status = "failed"
+            failure_class, remediation_action = classify_failure(
+                status=status,
+                reason=None,
+                records=records,
+                output_errors=output_errors,
+                input_errors=[],
+            )
             if not args.continue_on_fail:
-                summary.append(
+                item = (
                     {
                         "task_id": task_id,
                         "status": status,
                         "attempts": len(records),
                         "failure_action": failure_action,
+                        "failure_class": failure_class,
+                        "remediation_action": remediation_action,
                         "input_contracts": input_resolved,
                         "output_errors": output_errors,
                     }
                 )
+                summary.append(item)
+                remediation_items.append(item)
                 break
 
-        summary.append(
+        item = (
             {
                 "task_id": task_id,
                 "status": status,
                 "attempts": len(records),
                 "failure_action": failure_action,
+                "failure_class": failure_class,
+                "remediation_action": remediation_action,
                 "input_contracts": input_resolved,
                 "output_errors": output_errors,
             }
         )
+        summary.append(item)
+        if status != "succeeded":
+            remediation_items.append(item)
 
     ok = failed == 0 and blocked == 0
     payload = {
@@ -601,6 +700,25 @@ def main() -> int:
         "tasks": summary,
     }
     (run_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n")
+
+    class_counts: dict[str, int] = {}
+    for item in remediation_items:
+        key = str(item.get("failure_class") or "unknown")
+        class_counts[key] = class_counts.get(key, 0) + 1
+    remediation_plan = {
+        "ok": ok,
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "generated_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "summary": {
+            "items": len(remediation_items),
+            "class_counts": class_counts,
+        },
+        "tasks": remediation_items,
+    }
+    remediation_path = Path(args.remediation_plan).resolve() if args.remediation_plan else (run_dir / "remediation-plan.json")
+    remediation_path.parent.mkdir(parents=True, exist_ok=True)
+    remediation_path.write_text(json.dumps(remediation_plan, indent=2) + "\n")
 
     if args.json:
         print(json.dumps(payload, indent=2))

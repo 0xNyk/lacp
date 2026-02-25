@@ -375,6 +375,8 @@ Notes:
 - `bin/lacp-harness-validate`: validate `tasks.json` against schema + profile/policy catalogs
 - `bin/lacp-harness-run`: execute validated tasks with dependency ordering + loop retries
 - `bin/lacp-harness-replay`: replay failed task runner + captured verification commands from harness receipts
+  - emits per-task `failure_class` + `remediation_action`
+  - writes `<run_dir>/remediation-plan.json` (override with `--remediation-plan`)
 - `bin/lacp-e2e`: run local Playwright-style e2e command + generate evidence manifest + auth pattern checks
 - `bin/lacp-api-e2e`: run API/backend e2e command wrappers with manifest evidence + API coverage checks
 - `bin/lacp-contract-e2e`: run smart-contract e2e command wrappers with manifest evidence + invariant/revert checks
