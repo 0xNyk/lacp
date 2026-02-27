@@ -171,4 +171,76 @@ hardened_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${C
   exit 1
 }
 
+# --- quality-gate profile ---
+
+# Reset settings for quality-gate test
+cat > "${CLAUDE_DIR}/settings.json" <<'EOF'
+{
+  "enabledPlugins": {},
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Review the assistant response..."
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+qg_dry="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile quality-gate --dry-run --json)"
+[[ "$(echo "${qg_dry}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL quality-gate dry-run not ok" >&2
+  exit 1
+}
+
+qg_apply="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile quality-gate --json)"
+[[ "$(echo "${qg_apply}" | jq -r '.ok')" == "true" ]] || {
+  echo "[claude-hooks-test] FAIL quality-gate apply not ok" >&2
+  exit 1
+}
+
+# Verify the quality gate script was installed
+[[ -f "${CLAUDE_DIR}/hooks/stop_quality_gate.sh" ]] || {
+  echo "[claude-hooks-test] FAIL missing stop_quality_gate.sh after quality-gate apply" >&2
+  exit 1
+}
+[[ -x "${CLAUDE_DIR}/hooks/stop_quality_gate.sh" ]] || {
+  echo "[claude-hooks-test] FAIL stop_quality_gate.sh not executable" >&2
+  exit 1
+}
+
+# Verify prompt-type Stop hook was removed
+prompt_hooks=$(jq '[.hooks.Stop[]?.hooks[]? | select(.type == "prompt")] | length' "${CLAUDE_DIR}/settings.json")
+[[ "${prompt_hooks}" == "0" ]] || {
+  echo "[claude-hooks-test] FAIL expected prompt-type Stop hooks removed, found ${prompt_hooks}" >&2
+  exit 1
+}
+
+# Verify command-type Stop hook was added with quality gate
+qg_cmd=$(jq -r '.hooks.Stop[-1].hooks[-1].command' "${CLAUDE_DIR}/settings.json")
+echo "${qg_cmd}" | /usr/bin/grep -q "stop_quality_gate" || {
+  echo "[claude-hooks-test] FAIL expected Stop hook command to reference stop_quality_gate, got: ${qg_cmd}" >&2
+  exit 1
+}
+
+# Verify timeout was set
+qg_timeout=$(jq -r '.hooks.Stop[-1].hooks[-1].timeout // 0' "${CLAUDE_DIR}/settings.json")
+[[ "${qg_timeout}" == "30000" ]] || {
+  echo "[claude-hooks-test] FAIL expected timeout 30000, got ${qg_timeout}" >&2
+  exit 1
+}
+
+# Verify idempotency — applying again shouldn't duplicate
+qg_apply2="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile quality-gate --json)"
+stop_count=$(jq '[.hooks.Stop[]?.hooks[]? | select(.command and (.command | test("stop_quality_gate")))] | length' "${CLAUDE_DIR}/settings.json")
+[[ "${stop_count}" == "1" ]] || {
+  echo "[claude-hooks-test] FAIL expected 1 quality gate Stop hook after double apply, got ${stop_count}" >&2
+  exit 1
+}
+
 echo "[claude-hooks-test] claude hooks tests passed"
