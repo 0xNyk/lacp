@@ -10,8 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
-  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec] [--dry-run] [--json]
-  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -25,6 +25,7 @@ Profiles:
   minimal-stop  Disable known noisy Stop-hook plugins by default.
   balanced      Keep current enabled plugins unchanged.
   hardened-exec Apply local execution guard hooks (PreToolUse/PermissionRequest/ConfigChange).
+  quality-gate  Install ollama-backed Stop hook that blocks rationalized incomplete work.
 EOF
 }
 
@@ -397,12 +398,12 @@ cmd_apply_profile() {
   done
 
   case "${profile}" in
-    minimal-stop|balanced|hardened-exec) ;;
-    *) die "--profile must be minimal-stop|balanced|hardened-exec" ;;
+    minimal-stop|balanced|hardened-exec|quality-gate) ;;
+    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate" ;;
   esac
 
   local result
-  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}" "${profile}"
+  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}" "${profile}" "${ROOT}"
 import json
 import pathlib
 import shutil
@@ -412,6 +413,7 @@ from datetime import datetime, timezone
 claude_dir = pathlib.Path(sys.argv[1]).expanduser().resolve()
 dry_run = sys.argv[2] == "true"
 profile = sys.argv[3]
+lacp_root = pathlib.Path(sys.argv[4]).resolve() if len(sys.argv) > 4 else pathlib.Path(".")
 settings_path = claude_dir / "settings.json"
 hooks_root = claude_dir / "lacp-hooks"
 
@@ -668,6 +670,102 @@ sys.exit(0)
             "hooks_root": str(hooks_root),
         }
     )
+
+if profile == "quality-gate":
+    # Install ollama-backed Stop hook that blocks rationalized incomplete work.
+    # Replaces any existing prompt-type Stop hooks with a command-type hook
+    # pointing to the quality gate script.
+    import shutil as _shutil
+
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Locate the bundled quality gate script from the LACP repo
+    src_script = lacp_root / "hooks" / "stop_quality_gate.sh"
+    if not src_script.exists():
+        # Fallback: check if already installed locally
+        src_script = claude_dir / "hooks" / "stop_quality_gate.sh"
+        if not src_script.exists():
+            src_script = None
+
+    dst_script = hooks_dir / "stop_quality_gate.sh"
+
+    if src_script and src_script.exists():
+        actions.append({
+            "status": "changed",
+            "action": "install_quality_gate_script",
+            "from": str(src_script),
+            "to": str(dst_script),
+        })
+        if not dry_run:
+            _shutil.copy2(src_script, dst_script)
+            dst_script.chmod(0o755)
+    elif not dst_script.exists():
+        actions.append({
+            "status": "error",
+            "action": "install_quality_gate_script",
+            "reason": "source script not found and no existing install",
+        })
+    else:
+        actions.append({
+            "status": "noop",
+            "action": "install_quality_gate_script",
+            "reason": "already installed",
+        })
+
+    # Remove existing prompt-type Stop hooks (the broken v2.1.62 pattern)
+    stop_blocks = hooks_cfg.get("Stop", [])
+    if not isinstance(stop_blocks, list):
+        stop_blocks = []
+    kept_stop = []
+    removed_prompt_hooks = 0
+    for block in stop_blocks:
+        if not isinstance(block, dict):
+            kept_stop.append(block)
+            continue
+        block_hooks = block.get("hooks", [])
+        if not isinstance(block_hooks, list):
+            kept_stop.append(block)
+            continue
+        has_prompt = any(
+            isinstance(h, dict) and h.get("type") == "prompt"
+            for h in block_hooks
+        )
+        # Also skip existing quality gate command hooks (to avoid duplicates)
+        has_quality_gate = any(
+            isinstance(h, dict) and h.get("type") == "command"
+            and "stop_quality_gate" in str(h.get("command", ""))
+            for h in block_hooks
+        )
+        if has_prompt or has_quality_gate:
+            removed_prompt_hooks += 1
+            continue
+        kept_stop.append(block)
+    hooks_cfg["Stop"] = kept_stop
+
+    if removed_prompt_hooks:
+        actions.append({
+            "status": "changed",
+            "action": "remove_prompt_stop_hooks",
+            "removed": removed_prompt_hooks,
+        })
+
+    # Add the command-type quality gate hook
+    quality_gate_cmd = str(dst_script)
+    append_command_hook("Stop", quality_gate_cmd)
+    actions.append({
+        "status": "changed",
+        "action": "apply_quality_gate_stop_hook",
+        "command": quality_gate_cmd,
+        "timeout": 30000,
+    })
+
+    # Patch the timeout on the newly added hook block
+    stop_blocks_final = hooks_cfg.get("Stop", [])
+    if stop_blocks_final and isinstance(stop_blocks_final[-1], dict):
+        last_hooks = stop_blocks_final[-1].get("hooks", [])
+        if last_hooks and isinstance(last_hooks[-1], dict):
+            last_hooks[-1]["timeout"] = 30000
 
 if actions and not dry_run:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
