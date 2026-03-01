@@ -9,10 +9,10 @@ if [[ ! "${default_fp}" =~ ^[a-f0-9]{24}$ ]]; then
   exit 1
 fi
 
-json_out="$("${ROOT}/bin/lacp-session-fingerprint" --remote-host jarv --json)"
+json_out="$("${ROOT}/bin/lacp-session-fingerprint" --remote-host prod-server --json)"
 echo "${json_out}" | jq -e '.ok == true' >/dev/null
 echo "${json_out}" | jq -e '.kind == "session_fingerprint"' >/dev/null
-echo "${json_out}" | jq -e '.context.remote_host == "jarv"' >/dev/null
+echo "${json_out}" | jq -e '.context.remote_host == "prod-server"' >/dev/null
 echo "${json_out}" | jq -e '.fingerprint | test("^[a-f0-9]{24}$")' >/dev/null
 
 echo "[session-fingerprint-test] session fingerprint tests passed"

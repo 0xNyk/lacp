@@ -1,0 +1,59 @@
+{
+  "version": "1.0",
+  "description": "Developer workstation readiness policy for macOS/Apple Silicon.",
+  "thermal": {
+    "warn_states": ["fair"],
+    "fail_states": ["serious", "critical"]
+  },
+  "load": {
+    "max_load_per_cpu": 1.5,
+    "description": "Load average / CPU core count. Above 1.5 suggests contention."
+  },
+  "memory": {
+    "min_free_percent": 20,
+    "max_swap_mb": 512,
+    "description": "Memory pressure and swap thresholds for agent workloads."
+  },
+  "spotlight": {
+    "exclude_dirs": [
+      "~/.cargo",
+      "~/.rustup",
+      "~/.npm",
+      "~/.nvm",
+      "~/.bun",
+      "~/miniconda3",
+      "~/work"
+    ],
+    "description": "Directories containing build artifacts that should not be Spotlight-indexed."
+  },
+  "container_runtime": {
+    "preferred": "orbstack",
+    "warn_on": ["docker_desktop"],
+    "description": "OrbStack uses native Virtualization.framework with ~50MB idle RAM vs Docker Desktop ~3-4GB."
+  },
+  "rust_build": {
+    "require_cargo_config": true,
+    "require_sccache": true,
+    "require_incremental": true,
+    "description": "Cargo config with sccache wrapper and incremental builds for dev performance."
+  },
+  "ui_compositor": {
+    "check_reduce_motion": true,
+    "check_reduce_transparency": true,
+    "check_dock_animations": true,
+    "check_finder_animations": true,
+    "description": "Reduced compositing work lowers WindowServer CPU on Apple Silicon."
+  },
+  "background_processes": {
+    "denylist_patterns": [
+      "CleanMyMac",
+      "MacKeeper",
+      "MacBooster"
+    ],
+    "warn_agents_patterns": [
+      "com.google.keystone",
+      "com.google.GoogleUpdater"
+    ],
+    "description": "Known CPU-wasting background processes and launch agents."
+  }
+}
