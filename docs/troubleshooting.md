@@ -25,15 +25,15 @@ Symptoms:
 Checks:
 ```bash
 bin/lacp session-fingerprint
-bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json | jq
+bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=prod-server --json | jq
 ```
 
 Actions:
 - enforce context contract and fingerprint on mutating/remote-target runs:
 ```bash
 FP="$(bin/lacp session-fingerprint)"
-CTX="$(bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv)"
-bin/lacp run --task "remote guarded run" --repo-trust trusted --context-contract "${CTX}" --session-fingerprint "${FP}" -- ssh -G leads@jarv
+CTX="$(bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=prod-server)"
+bin/lacp run --task "remote guarded run" --repo-trust trusted --context-contract "${CTX}" --session-fingerprint "${FP}" -- ssh -G deploy@prod-server
 ```
 
 ## Homebrew install issues

@@ -70,6 +70,9 @@ Ops:
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
 
+System:
+  system-health      macOS/Apple Silicon workstation readiness checks
+
 Knowledge:
   knowledge-doctor   Validate knowledge graph/docs hygiene
 
@@ -107,6 +110,9 @@ case "${cmd}" in
     ;;
   doctor)
     exec "${ROOT}/bin/lacp-doctor" "$@"
+    ;;
+  system-health)
+    exec "${ROOT}/bin/lacp-system-health" "$@"
     ;;
   knowledge-doctor)
     exec "${ROOT}/bin/lacp-knowledge-doctor" "$@"

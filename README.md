@@ -120,7 +120,7 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 bin/lacp-sandbox-run \
   --task "create local venv" \
   --repo-trust trusted \
-  --context-contract '{"expected_host":"my-host","expected_cwd_prefix":"/Users/nyk/control"}' \
+  --context-contract '{"expected_host":"my-host","expected_cwd_prefix":"'"$HOME"'/control"}' \
   -- python3 -m venv .venv
 ```
 
@@ -144,6 +144,7 @@ Use this as the default day-to-day flow after install.
 ```bash
 cd ~/control/frameworks/lacp
 bin/lacp doctor --fix-hints
+bin/lacp system-health --fix-hints
 bin/lacp status --json | jq
 ```
 
@@ -401,6 +402,14 @@ Notes:
 - `bin/lacp-doctor`: structured diagnostics (`--json` supported)
   - runtime pressure diagnostics: `bin/lacp doctor --check-limits --json | jq`
   - actionable remediation commands: `bin/lacp doctor --check-limits --fix-hints --json | jq '.remediation_hints'`
+  - macOS system health (thermal, memory, Spotlight, Docker, Rust, UI): `bin/lacp doctor --system --json | jq`
+- `bin/lacp-system-health`: macOS/Apple Silicon workstation readiness checks (`--json`, `--fix-hints`, `--fix`)
+  - thermal state, CPU load, memory pressure, swap usage
+  - Spotlight indexing exclusions for dev directories
+  - container runtime detection (OrbStack vs Docker Desktop)
+  - Rust build config audit (sccache, incremental builds, cargo config)
+  - UI compositor overhead (reduce motion/transparency, Dock/Finder animations)
+  - background process audit (known CPU-wasting agents)
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
@@ -532,6 +541,7 @@ cd ~/control/frameworks/lacp
 ./scripts/ci/test-knowledge-doctor.sh
 ./scripts/ci/test-ops-commands.sh
 ./scripts/ci/test-install.sh
+./scripts/ci/test-system-health.sh
 ./scripts/ci/smoke.sh
 ```
 
@@ -575,7 +585,7 @@ bin/lacp loop --task "trusted smoke" --repo-trust trusted --dry-run --json -- /b
 # render reusable context contracts
 bin/lacp context-profile list --json | jq
 bin/lacp context-profile render --profile local-dev --json | jq
-bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=jarv --json | jq
+bin/lacp context-profile render --profile ssh-prod --var REMOTE_HOST=prod-server --json | jq
 
 # render reusable loop + credential profiles
 bin/lacp loop-profile list --json | jq

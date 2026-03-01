@@ -8,10 +8,12 @@ source "${ROOT}/scripts/lacp-lib.sh"
 usage() {
   cat <<'EOF'
 Usage: lacp-doctor [--json] [--fix] [--fix-hints] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
-                  [--check-limits]
+                  [--check-limits] [--system]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
 Exits non-zero if required checks fail.
+
+  --system       Also run macOS system health checks (thermal, memory, Spotlight, Docker, Rust build, UI)
 EOF
 }
 
@@ -22,6 +24,7 @@ FIX_DEPS=0
 AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
 CHECK_LIMITS=0
+CHECK_SYSTEM=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,6 +55,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check-limits)
       CHECK_LIMITS=1
+      shift
+      ;;
+    --system)
+      CHECK_SYSTEM=1
       shift
       ;;
     -h|--help)
@@ -592,6 +599,43 @@ if command -v claude >/dev/null 2>&1; then
   fi
 else
   add_check "hooks:claude_posture" "PASS" "skipped (claude not installed)"
+fi
+
+if [[ "${CHECK_SYSTEM}" -eq 1 && -x "${LACP_ROOT}/bin/lacp-system-health" ]]; then
+  sys_args=()
+  [[ "${AS_JSON}" -eq 1 ]] && sys_args+=(--json)
+  [[ "${FIX_HINTS}" -eq 1 ]] && sys_args+=(--fix-hints)
+  [[ "${FIX}" -eq 1 ]] && sys_args+=(--fix)
+  sys_output="$("${LACP_ROOT}/bin/lacp-system-health" "${sys_args[@]}" 2>/dev/null || true)"
+  if [[ "${AS_JSON}" -eq 1 && -n "${sys_output}" ]]; then
+    # Merge system health checks into our checks_tmp
+    python3 - <<'PY' "${sys_output}" "${checks_tmp}" "${hints_tmp}"
+import json
+import sys
+from pathlib import Path
+
+raw = sys.argv[1]
+checks_path = Path(sys.argv[2])
+hints_path = Path(sys.argv[3])
+
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(0)
+
+with open(checks_path, "a") as f:
+    for c in data.get("checks", []):
+        f.write(f"{c['status']}\t{c['name']}\t{c['detail']}\n")
+
+with open(hints_path, "a") as f:
+    for h in data.get("remediation_hints", []):
+        f.write(f"{h}\n")
+PY
+  elif [[ -z "${AS_JSON}" || "${AS_JSON}" -eq 0 ]] && [[ -n "${sys_output}" ]]; then
+    # In text mode, system-health already printed its own output; merge into counts
+    echo
+    echo "${sys_output}"
+  fi
 fi
 
 fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
