@@ -32,8 +32,8 @@ if [[ "${rc}" -eq 0 ]]; then
   exit 1
 fi
 
-ssh_render="$("${ROOT}/bin/lacp-context-profile" render --profile ssh-prod --var REMOTE_HOST=jarv --json)"
-echo "${ssh_render}" | jq -e '.context_contract.expected_remote_host == "jarv"' >/dev/null
+ssh_render="$("${ROOT}/bin/lacp-context-profile" render --profile ssh-prod --var REMOTE_HOST=prod-server --json)"
+echo "${ssh_render}" | jq -e '.context_contract.expected_remote_host == "prod-server"' >/dev/null
 
 # Loop integration: context-profile should satisfy context gate for mutating command.
 loop_json="$("${ROOT}/bin/lacp-loop" --task "context profile pass" --repo-trust trusted --context-profile local-dev --json -- /bin/mkdir -p "${TMP}/ctx-profile-pass")"

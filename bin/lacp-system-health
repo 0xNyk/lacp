@@ -1,0 +1,375 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-system-health [--json] [--fix-hints] [--fix]
+
+Developer workstation readiness checks for macOS/Apple Silicon.
+
+Checks:
+  - Thermal state and CPU load
+  - Memory pressure and swap usage
+  - Spotlight indexing exclusions for dev directories
+  - Container runtime (OrbStack vs Docker Desktop)
+  - Rust build config (sccache, incremental, cargo config)
+  - UI compositor overhead (reduce motion/transparency, Dock/Finder animations)
+  - Background process audit (known CPU-wasting agents)
+
+Options:
+  --json         Output structured JSON
+  --fix-hints    Show remediation commands
+  --fix          Apply safe auto-fixes (Spotlight exclusions only)
+  -h, --help     Show this help
+EOF
+}
+
+POLICY_FILE="${ROOT}/config/system-health-policy.json"
+AS_JSON=0
+FIX_HINTS=0
+FIX=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --fix-hints) FIX_HINTS=1; shift ;;
+    --fix) FIX=1; FIX_HINTS=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  log "system-health: macOS-only checks; skipping on $(uname -s)"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    echo '{"ok":true,"summary":{"pass":0,"warn":0,"fail":0},"checks":[],"skipped":"non-darwin"}'
+  fi
+  exit 0
+fi
+
+checks_tmp="$(mktemp)"
+hints_tmp="$(mktemp)"
+trap 'rm -f "${checks_tmp}" "${hints_tmp}"' EXIT
+
+add_check() {
+  local name="$1" status="$2" detail="$3"
+  printf '%s\t%s\t%s\n' "${status}" "${name}" "${detail}" >> "${checks_tmp}"
+}
+
+add_hint() {
+  local hint="$1"
+  [[ -n "${hint}" ]] || return 0
+  if ! grep -Fqx "${hint}" "${hints_tmp}" 2>/dev/null; then
+    printf '%s\n' "${hint}" >> "${hints_tmp}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 1. Thermal state
+# ---------------------------------------------------------------------------
+thermal_state="$(swift -e 'import Foundation; print(["nominal","fair","serious","critical"][ProcessInfo.processInfo.thermalState.rawValue])' 2>/dev/null || echo "unknown")"
+case "${thermal_state}" in
+  nominal)
+    add_check "system:thermal" "PASS" "thermal_state=${thermal_state}" ;;
+  fair)
+    add_check "system:thermal" "WARN" "thermal_state=${thermal_state} (elevated — check workload)"
+    add_hint "Thermal state is elevated. Close unused heavy apps or check fan/airflow." ;;
+  serious|critical)
+    add_check "system:thermal" "FAIL" "thermal_state=${thermal_state} (throttling likely)"
+    add_hint "Thermal state is ${thermal_state}. Reduce workload immediately to prevent throttling." ;;
+  *)
+    add_check "system:thermal" "WARN" "thermal_state=unknown" ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 2. CPU load
+# ---------------------------------------------------------------------------
+cpu_count="$(sysctl -n hw.ncpu 2>/dev/null || echo 10)"
+load1="$(sysctl -n vm.loadavg 2>/dev/null | awk '{gsub(/[{}]/,""); print $1}')"
+max_load_per_cpu="$(jq -r '.load.max_load_per_cpu // 1.5' "${POLICY_FILE}" 2>/dev/null || echo 1.5)"
+
+load_per_cpu="$(python3 -c "print(round(${load1} / max(${cpu_count}, 1), 2))")"
+if python3 -c "exit(0 if ${load_per_cpu} <= ${max_load_per_cpu} else 1)"; then
+  add_check "system:load" "PASS" "load1=${load1} cores=${cpu_count} load_per_cpu=${load_per_cpu} (threshold=${max_load_per_cpu})"
+else
+  add_check "system:load" "WARN" "load1=${load1} cores=${cpu_count} load_per_cpu=${load_per_cpu} (threshold=${max_load_per_cpu})"
+  add_hint "High CPU load. Check: top -l 1 -o cpu -n 10 | head -20"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Memory pressure
+# ---------------------------------------------------------------------------
+mem_free_pct="$(memory_pressure 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%' || echo "")"
+swap_used_raw="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used") print $(i+1)}')"
+swap_mb="$(python3 -c "
+raw='${swap_used_raw}'
+if not raw: print(0)
+elif raw.endswith('M'): print(float(raw[:-1]))
+elif raw.endswith('G'): print(float(raw[:-1]) * 1024)
+elif raw.endswith('K'): print(float(raw[:-1]) / 1024)
+else: print(0)
+" 2>/dev/null || echo 0)"
+
+min_free_pct="$(jq -r '.memory.min_free_percent // 20' "${POLICY_FILE}" 2>/dev/null || echo 20)"
+max_swap_mb="$(jq -r '.memory.max_swap_mb // 512' "${POLICY_FILE}" 2>/dev/null || echo 512)"
+
+if [[ -n "${mem_free_pct}" ]] && python3 -c "exit(0 if ${mem_free_pct} >= ${min_free_pct} else 1)"; then
+  add_check "system:memory_pressure" "PASS" "free=${mem_free_pct}% (threshold=${min_free_pct}%)"
+elif [[ -n "${mem_free_pct}" ]]; then
+  add_check "system:memory_pressure" "WARN" "free=${mem_free_pct}% (threshold=${min_free_pct}%)"
+  add_hint "Memory pressure high. Close unused apps or check: top -l 1 -o rsize -n 10 | head -20"
+else
+  add_check "system:memory_pressure" "WARN" "unable to read memory pressure"
+fi
+
+swap_int="$(printf '%.0f' "${swap_mb}" 2>/dev/null || echo 0)"
+if python3 -c "exit(0 if ${swap_int} <= ${max_swap_mb} else 1)"; then
+  add_check "system:swap" "PASS" "swap_used=${swap_int}MB (threshold=${max_swap_mb}MB)"
+else
+  add_check "system:swap" "WARN" "swap_used=${swap_int}MB (threshold=${max_swap_mb}MB)"
+  add_hint "Swap usage elevated. Free RAM by closing memory-heavy apps."
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Spotlight exclusions
+# ---------------------------------------------------------------------------
+spotlight_dirs_json="$(jq -r '.spotlight.exclude_dirs[]' "${POLICY_FILE}" 2>/dev/null || true)"
+current_exclusions="$(defaults read com.apple.Spotlight _SPExcludedPaths 2>/dev/null || echo "")"
+spotlight_missing=()
+
+while IFS= read -r dir_pattern; do
+  [[ -n "${dir_pattern}" ]] || continue
+  expanded="${dir_pattern/#\~/$HOME}"
+  if [[ ! -d "${expanded}" ]]; then
+    continue
+  fi
+  if echo "${current_exclusions}" | grep -qF "${expanded}"; then
+    add_check "spotlight:${dir_pattern}" "PASS" "excluded from indexing"
+  else
+    add_check "spotlight:${dir_pattern}" "WARN" "NOT excluded from Spotlight indexing"
+    spotlight_missing+=("${expanded}")
+    add_hint "Add Spotlight exclusion: System Settings > Siri & Spotlight > Privacy > add ${expanded}"
+  fi
+done <<< "${spotlight_dirs_json}"
+
+if [[ "${FIX}" -eq 1 && "${#spotlight_missing[@]}" -gt 0 ]]; then
+  existing=()
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    path="$(echo "${path}" | sed 's/^[[:space:]]*"//;s/"[,]*$//')"
+    [[ -n "${path}" && "${path}" == /* ]] && existing+=("${path}")
+  done <<< "$(defaults read com.apple.Spotlight _SPExcludedPaths 2>/dev/null | grep '/' || true)"
+  merged=("${existing[@]}" "${spotlight_missing[@]}")
+  # Build defaults write array args
+  args=()
+  for p in "${merged[@]}"; do args+=("${p}"); done
+  defaults write com.apple.Spotlight _SPExcludedPaths -array "${args[@]}" 2>/dev/null && \
+    log "system-health: added ${#spotlight_missing[@]} Spotlight exclusion(s)" || \
+    log "system-health: failed to write Spotlight exclusions (may need System Settings)"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Container runtime
+# ---------------------------------------------------------------------------
+docker_context="$(docker context show 2>/dev/null || echo "")"
+has_orbstack=0
+has_docker_desktop=0
+
+if command -v orbctl >/dev/null 2>&1 || [[ "${docker_context}" == "orbstack" ]]; then
+  has_orbstack=1
+fi
+if [[ -d "/Applications/Docker.app" ]] || [[ -d "${HOME}/Library/Containers/com.docker.docker" ]]; then
+  has_docker_desktop=1
+fi
+
+if [[ "${has_orbstack}" -eq 1 && "${has_docker_desktop}" -eq 0 ]]; then
+  add_check "container:runtime" "PASS" "OrbStack (context=${docker_context:-none})"
+elif [[ "${has_orbstack}" -eq 1 && "${has_docker_desktop}" -eq 1 ]]; then
+  add_check "container:runtime" "WARN" "OrbStack installed but Docker Desktop still present (~3-4GB idle RAM overhead)"
+  add_hint "Remove Docker Desktop: brew uninstall --cask docker && rm -rf ~/Library/Containers/com.docker.docker/Data"
+elif [[ "${has_docker_desktop}" -eq 1 ]]; then
+  add_check "container:runtime" "WARN" "Docker Desktop detected (high idle overhead). Consider OrbStack: brew install --cask orbstack"
+  add_hint "Install OrbStack: brew install --cask orbstack (10x faster file I/O, ~50MB idle RAM)"
+elif command -v docker >/dev/null 2>&1; then
+  add_check "container:runtime" "PASS" "docker available (context=${docker_context:-default})"
+else
+  add_check "container:runtime" "WARN" "no container runtime detected"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Rust build config
+# ---------------------------------------------------------------------------
+cargo_config="${HOME}/.cargo/config.toml"
+if [[ -f "${cargo_config}" ]]; then
+  add_check "rust:cargo_config" "PASS" "${cargo_config}"
+
+  if grep -q 'rustc-wrapper.*sccache' "${cargo_config}" 2>/dev/null; then
+    add_check "rust:sccache_configured" "PASS" "sccache wrapper in cargo config"
+  else
+    add_check "rust:sccache_configured" "WARN" "sccache not configured in ${cargo_config}"
+    add_hint "Add to ~/.cargo/config.toml [build] section: rustc-wrapper = \"sccache\""
+  fi
+
+  if grep -q 'incremental.*true' "${cargo_config}" 2>/dev/null; then
+    add_check "rust:incremental" "PASS" "incremental builds enabled"
+  else
+    add_check "rust:incremental" "WARN" "incremental builds not explicitly enabled"
+    add_hint "Add to ~/.cargo/config.toml [build] section: incremental = true"
+  fi
+else
+  add_check "rust:cargo_config" "WARN" "missing ${cargo_config}"
+  add_hint "Create ~/.cargo/config.toml with [build] jobs, incremental, rustc-wrapper = \"sccache\""
+fi
+
+if command -v sccache >/dev/null 2>&1; then
+  sccache_ver="$(sccache --version 2>/dev/null | awk '{print $2}')"
+  add_check "rust:sccache_installed" "PASS" "sccache ${sccache_ver}"
+else
+  add_check "rust:sccache_installed" "WARN" "sccache not installed"
+  add_hint "Install sccache: brew install sccache"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. UI compositor settings
+# ---------------------------------------------------------------------------
+dock_delay="$(defaults read com.apple.dock autohide-delay 2>/dev/null || echo "default")"
+dock_time="$(defaults read com.apple.dock autohide-time-modifier 2>/dev/null || echo "default")"
+finder_anim="$(defaults read com.apple.finder DisableAllAnimations 2>/dev/null || echo "0")"
+
+if [[ "${dock_delay}" != "default" ]] && python3 -c "exit(0 if float('${dock_delay}') <= 0.1 else 1)" 2>/dev/null; then
+  add_check "ui:dock_animations" "PASS" "autohide-delay=${dock_delay} autohide-time=${dock_time}"
+else
+  add_check "ui:dock_animations" "WARN" "Dock animations at default speed"
+  add_hint "Speed up Dock: defaults write com.apple.dock autohide-delay -float 0 && defaults write com.apple.dock autohide-time-modifier -float 0.4 && killall Dock"
+fi
+
+if [[ "${finder_anim}" == "1" ]]; then
+  add_check "ui:finder_animations" "PASS" "Finder animations disabled"
+else
+  add_check "ui:finder_animations" "WARN" "Finder animations at default"
+  add_hint "Disable Finder animations: defaults write com.apple.finder DisableAllAnimations -bool true && killall Finder"
+fi
+
+# Reduce Motion / Transparency are in System Settings (TCC-protected); advisory only
+reduce_motion="$(defaults read com.apple.universalaccess reduceMotion 2>/dev/null || echo "0")"
+reduce_transparency="$(defaults read com.apple.universalaccess reduceTransparency 2>/dev/null || echo "0")"
+
+if [[ "${reduce_motion}" == "1" ]]; then
+  add_check "ui:reduce_motion" "PASS" "Reduce Motion enabled"
+else
+  add_check "ui:reduce_motion" "WARN" "Reduce Motion not enabled (lowers WindowServer CPU)"
+  add_hint "Enable: System Settings > Accessibility > Display > Reduce Motion"
+fi
+
+if [[ "${reduce_transparency}" == "1" ]]; then
+  add_check "ui:reduce_transparency" "PASS" "Reduce Transparency enabled"
+else
+  add_check "ui:reduce_transparency" "WARN" "Reduce Transparency not enabled (lowers compositor work)"
+  add_hint "Enable: System Settings > Accessibility > Display > Reduce Transparency"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Background process audit
+# ---------------------------------------------------------------------------
+denylist_patterns="$(jq -r '.background_processes.denylist_patterns[]' "${POLICY_FILE}" 2>/dev/null || true)"
+warn_agent_patterns="$(jq -r '.background_processes.warn_agents_patterns[]' "${POLICY_FILE}" 2>/dev/null || true)"
+
+found_deny=0
+while IFS= read -r pattern; do
+  [[ -n "${pattern}" ]] || continue
+  if ps aux 2>/dev/null | grep -i "${pattern}" | grep -qv grep 2>/dev/null; then
+    add_check "background:${pattern}" "FAIL" "running (known CPU-wasting process)"
+    add_hint "Remove ${pattern}: check Activity Monitor and uninstall the app"
+    found_deny=1
+  fi
+  if launchctl list 2>/dev/null | grep -iq "${pattern}"; then
+    add_check "background:${pattern}_agent" "FAIL" "launch agent loaded"
+    add_hint "Unload ${pattern}: launchctl remove <service-label>"
+    found_deny=1
+  fi
+done <<< "${denylist_patterns}"
+
+while IFS= read -r pattern; do
+  [[ -n "${pattern}" ]] || continue
+  # Check for plist files (disabled agents may still have plists)
+  plist_count="$(find "${HOME}/Library/LaunchAgents" -maxdepth 1 -name "*${pattern}*" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${plist_count}" -gt 0 ]]; then
+    add_check "background:${pattern}" "WARN" "${plist_count} plist file(s) in ~/Library/LaunchAgents/"
+    add_hint "Remove leftover plists: rm -f ~/Library/LaunchAgents/*${pattern}*"
+  fi
+done <<< "${warn_agent_patterns}"
+
+if [[ "${found_deny}" -eq 0 ]]; then
+  add_check "background:denylist" "PASS" "no known CPU-wasting processes detected"
+fi
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
+warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
+pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  python3 - <<'PY' "${checks_tmp}" "${hints_tmp}" "${fail_count}" "${warn_count}" "${pass_count}" "${FIX_HINTS}"
+import json
+import sys
+from pathlib import Path
+
+checks_path = Path(sys.argv[1])
+hints_path = Path(sys.argv[2])
+fail_count = int(sys.argv[3])
+warn_count = int(sys.argv[4])
+pass_count = int(sys.argv[5])
+fix_hints = sys.argv[6] == "1"
+
+checks = []
+for line in checks_path.read_text().splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("\t", 2)
+    if len(parts) == 3:
+        checks.append({"status": parts[0], "name": parts[1], "detail": parts[2]})
+
+hints = [line.strip() for line in hints_path.read_text().splitlines() if line.strip()]
+
+payload = {
+    "schema_version": "1.0",
+    "kind": "system_health",
+    "ok": fail_count == 0,
+    "summary": {
+        "pass": pass_count,
+        "warn": warn_count,
+        "fail": fail_count,
+    },
+    "checks": checks,
+}
+if fix_hints:
+    payload["remediation_hints"] = hints
+print(json.dumps(payload, indent=2))
+PY
+else
+  log "System health: pass=${pass_count} warn=${warn_count} fail=${fail_count}"
+  while IFS=$'\t' read -r status name detail; do
+    printf '%-5s %-30s %s\n' "${status}" "${name}" "${detail}"
+  done < "${checks_tmp}"
+  if [[ "${FIX_HINTS}" -eq 1 ]]; then
+    hint_count="$(wc -l < "${hints_tmp}" | tr -d ' ')"
+    if [[ "${hint_count}" -gt 0 ]]; then
+      echo
+      echo "Remediation hints:"
+      sed 's/^/ - /' "${hints_tmp}"
+    else
+      echo
+      echo "Remediation hints: none needed"
+    fi
+  fi
+fi
+
+if [[ "${fail_count}" -gt 0 ]]; then
+  exit 1
+fi
