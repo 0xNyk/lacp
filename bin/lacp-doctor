@@ -90,6 +90,31 @@ if [[ "${FIX}" -eq 1 ]]; then
   if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && ! -f "${LACP_ROOT}/.env" && -f "${LACP_ROOT}/config/lacp.env.example" ]]; then
     cp "${LACP_ROOT}/config/lacp.env.example" "${LACP_ROOT}/.env"
   fi
+
+  # Process reaper: kill orphaned lacp-sandbox-run processes (parent PID 1)
+  orphan_pids="$(pgrep -f "lacp-sandbox-run" 2>/dev/null || true)"
+  orphan_count=0
+  if [[ -n "${orphan_pids}" ]]; then
+    while IFS= read -r pid; do
+      ppid="$(ps -o ppid= -p "${pid}" 2>/dev/null | tr -d ' ')" || continue
+      if [[ "${ppid}" == "1" ]]; then
+        kill "${pid}" 2>/dev/null && orphan_count=$((orphan_count + 1))
+      fi
+    done <<< "${orphan_pids}"
+  fi
+  if [[ "${orphan_count}" -gt 0 ]]; then
+    log "Reaped ${orphan_count} orphaned lacp-sandbox-run process(es)"
+  fi
+
+  # Sandbox-runs data cleanup: remove files older than 7 days
+  SANDBOX_RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+  if [[ -d "${SANDBOX_RUNS_DIR}" ]]; then
+    stale_runs="$(find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -mtime +7 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "${stale_runs}" -gt 0 ]]; then
+      find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -mtime +7 -delete 2>/dev/null
+      log "Cleaned ${stale_runs} sandbox-run files older than 7 days"
+    fi
+  fi
 fi
 
 checks_tmp="$(mktemp)"
@@ -561,6 +586,29 @@ fi
 
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json" "artifact:latest_sandbox_run_age" 72
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
+
+# Sandbox-runs file count check
+SANDBOX_RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+if [[ -d "${SANDBOX_RUNS_DIR}" ]]; then
+  sandbox_file_count="$(find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${sandbox_file_count}" -gt 10000 ]]; then
+    add_check "hygiene:sandbox_runs_count" "WARN" "${sandbox_file_count} files (>10000; run lacp doctor --fix to clean)"
+    add_hint "Clean sandbox-runs: lacp doctor --fix (removes files >7 days old)"
+  elif [[ "${sandbox_file_count}" -gt 1000 ]]; then
+    add_check "hygiene:sandbox_runs_count" "PASS" "${sandbox_file_count} files (consider cleanup)"
+  else
+    add_check "hygiene:sandbox_runs_count" "PASS" "${sandbox_file_count} files"
+  fi
+fi
+
+# Orphaned lacp-sandbox-run process check
+orphan_sandbox_procs="$(pgrep -f "lacp-sandbox-run" 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${orphan_sandbox_procs}" -gt 10 ]]; then
+  add_check "hygiene:orphan_sandbox_procs" "WARN" "${orphan_sandbox_procs} lacp-sandbox-run processes running (run lacp doctor --fix to reap)"
+  add_hint "Reap orphaned processes: lacp doctor --fix"
+else
+  add_check "hygiene:orphan_sandbox_procs" "PASS" "${orphan_sandbox_procs} lacp-sandbox-run processes"
+fi
 
 claude_wrapper_state="$(lacp_wrapper_managed_state claude)"
 codex_wrapper_state="$(lacp_wrapper_managed_state codex)"
