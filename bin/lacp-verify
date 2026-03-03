@@ -55,6 +55,51 @@ latest_snapshot="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-
 log "Step 3/3: benchmark trend refresh"
 bash "$(automation_script run_memory_benchmark_suite.sh)" "${LACP_BENCH_TOP_K}" "${LACP_BENCH_LOOKBACK}" >/dev/null
 
+log "Step 4/4: brain freshness checks"
+
+# QMD index freshness
+qmd_status_out="$(npx -y @tobilu/qmd status 2>/dev/null || true)"
+if [[ -n "${qmd_status_out}" ]]; then
+  qmd_updated="$(echo "${qmd_status_out}" | awk '/Updated:/{print $2, $3}' | head -1)"
+  log "  QMD index last updated: ${qmd_updated:-unknown}"
+fi
+
+# Session extraction freshness
+sessions_dir="${HOME}/control/sessions/claude"
+if [[ -d "${sessions_dir}" ]]; then
+  latest_session="$(find "${sessions_dir}" -name '*.md' -type f -exec stat -f '%m %N' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+  if [[ -n "${latest_session}" ]]; then
+    session_epoch="$(stat -f %m "${latest_session}" 2>/dev/null || echo 0)"
+    now_epoch="$(date -u +%s)"
+    session_age_h="$(((now_epoch - session_epoch) / 3600))"
+    if [[ "${session_age_h}" -gt 24 ]]; then
+      log "  WARNING: Latest session note is ${session_age_h}h old (>24h)"
+    else
+      log "  Session extraction: fresh (${session_age_h}h ago)"
+    fi
+  fi
+fi
+
+# Research materialization spool check
+spool_dir="${LACP_KNOWLEDGE_ROOT}/data/promotions/spool"
+if [[ -d "${spool_dir}" ]]; then
+  spool_count="$(find "${spool_dir}" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${spool_count}" -gt 0 ]]; then
+    oldest_spool="$(find "${spool_dir}" -type f -exec stat -f '%m %N' {} \; 2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)"
+    if [[ -n "${oldest_spool}" ]]; then
+      spool_epoch="$(stat -f %m "${oldest_spool}" 2>/dev/null || echo 0)"
+      spool_age_h="$((($(date -u +%s) - spool_epoch) / 3600))"
+      if [[ "${spool_age_h}" -gt 1 ]]; then
+        log "  WARNING: ${spool_count} items in materialization spool, oldest ${spool_age_h}h"
+      else
+        log "  Materialization spool: ${spool_count} items (recent)"
+      fi
+    fi
+  else
+    log "  Materialization spool: empty (OK)"
+  fi
+fi
+
 log "Verification complete"
 echo "latest_benchmark=${latest_bench:-<none>}"
 echo "latest_snapshot=${latest_snapshot:-<none>}"

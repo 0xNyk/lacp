@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `bin/lacp-system-health` macOS/Apple Silicon developer workstation readiness checks (`--json`, `--fix-hints`, `--fix`).
+  - thermal state, CPU load vs core count, memory pressure, swap usage
+  - Spotlight indexing exclusion audit for dev directories (`~/.cargo`, `~/.rustup`, `~/.npm`, `~/.nvm`, `~/.bun`, `~/work`, `~/miniconda3`)
+  - container runtime detection and recommendation (OrbStack vs Docker Desktop)
+  - Rust build config audit (sccache wrapper, incremental builds, `~/.cargo/config.toml`)
+  - UI compositor overhead checks (reduce motion/transparency, Dock/Finder animations)
+  - background process audit against configurable denylist (CleanMyMac, MacKeeper, Google Updater)
+  - `--fix` mode applies safe auto-fixes (Spotlight exclusions)
+- `config/system-health-policy.json` policy file with tunable thresholds for all system health checks.
+- `bin/lacp-doctor --system` flag to include system health checks in doctor output.
+- `bin/lacp` top-level dispatcher expanded with `system-health`.
+- CI coverage: `scripts/ci/test-system-health.sh`.
 - `bin/lacp-posture` one-shot local-first/no-external-ci posture report (`--strict`, `--json`).
 - `bin/lacp-claude-hooks` to audit/repair local Claude hook/plugin cache drift (including claude-mem version/install-path mismatch repair).
 - `bin/lacp-claude-hooks apply-profile/optimize` to apply safe local hook posture profiles (`minimal-stop`, `balanced`, `hardened-exec`) and run one-command repair+profile+audit optimization.
