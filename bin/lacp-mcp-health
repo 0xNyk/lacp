@@ -15,7 +15,7 @@ Reads server definitions from ~/.claude/settings.local.json.
 Checks:
   - memory: entities file exists and is valid JSON
   - smart-connections: server.py + venv present, OBSIDIAN_VAULT_PATH valid
-  - qmd: runs 'qmd status' to verify index health
+  - qmd: binary exists, index health (docs/vectors/collections), models downloaded
 EOF
 }
 
@@ -143,17 +143,50 @@ print(srv.get('command', ''))
 " 2>/dev/null || true)"
 
   if [[ -n "${qmd_cmd}" ]]; then
-    if command -v npx >/dev/null 2>&1; then
-      qmd_status="$(npx -y @tobilu/qmd status 2>&1 || echo "FAILED")"
+    # Check binary exists (supports both direct path and npx)
+    if [[ -x "${qmd_cmd}" ]]; then
+      add_check "mcp:qmd:binary" "PASS" "${qmd_cmd}"
+      QMD_BIN="${qmd_cmd}"
+    elif command -v "${qmd_cmd}" >/dev/null 2>&1; then
+      add_check "mcp:qmd:binary" "PASS" "${qmd_cmd} (via PATH)"
+      QMD_BIN="${qmd_cmd}"
+    elif [[ "${qmd_cmd}" == "npx" ]] && command -v npx >/dev/null 2>&1; then
+      add_check "mcp:qmd:binary" "WARN" "using npx (slow cold-start, prefer direct binary)"
+      QMD_BIN="npx -y @tobilu/qmd"
+    else
+      add_check "mcp:qmd:binary" "FAIL" "${qmd_cmd} not found"
+      QMD_BIN=""
+    fi
+
+    # Check index health
+    if [[ -n "${QMD_BIN}" ]]; then
+      qmd_status="$(${QMD_BIN} status 2>&1 || echo "FAILED")"
       if echo "${qmd_status}" | grep -q "QMD Status"; then
         doc_count="$(echo "${qmd_status}" | awk '/Total:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}')"
+        vec_count="$(echo "${qmd_status}" | awk '/Vectors:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}')"
+        col_count="$(echo "${qmd_status}" | grep -c 'Pattern:' || echo 0)"
         doc_count="${doc_count:-?}"
-        add_check "mcp:qmd:status" "PASS" "index healthy (${doc_count} docs)"
+        vec_count="${vec_count:-?}"
+        add_check "mcp:qmd:index" "PASS" "${doc_count} docs, ${vec_count} vectors, ${col_count} collections"
       else
-        add_check "mcp:qmd:status" "WARN" "qmd status check failed"
+        add_check "mcp:qmd:index" "WARN" "qmd status check failed"
+      fi
+    fi
+
+    # Check models downloaded
+    qmd_models_dir="${HOME}/.cache/qmd/models"
+    if [[ -d "${qmd_models_dir}" ]]; then
+      model_count="$(find "${qmd_models_dir}" -name '*.gguf' ! -name '*.ipull' 2>/dev/null | wc -l | tr -d ' ')"
+      partial_count="$(find "${qmd_models_dir}" -name '*.ipull' 2>/dev/null | wc -l | tr -d ' ')"
+      if [[ "${model_count}" -ge 3 && "${partial_count}" -eq 0 ]]; then
+        add_check "mcp:qmd:models" "PASS" "${model_count} models (embedding, reranker, expansion)"
+      elif [[ "${partial_count}" -gt 0 ]]; then
+        add_check "mcp:qmd:models" "WARN" "${model_count} complete, ${partial_count} downloading"
+      else
+        add_check "mcp:qmd:models" "WARN" "only ${model_count}/3 models downloaded"
       fi
     else
-      add_check "mcp:qmd:status" "WARN" "npx not available for qmd probe"
+      add_check "mcp:qmd:models" "WARN" "${qmd_models_dir} not found"
     fi
   else
     add_check "mcp:qmd:configured" "WARN" "qmd server not configured"
