@@ -86,6 +86,19 @@ if [[ -n "${LATEST_BENCH}" ]]; then
   BENCH_SUMMARY="$(jq -r '"hit@\(.summary.hit_rate_at_k // "n/a"), mrr@\(.summary.mrr_at_k // "n/a"), ndcg@\(.summary.ndcg_at_k // "n/a")"' "${LATEST_BENCH}" 2>/dev/null || echo "n/a")"
 fi
 
+# Brain health (optional, best-effort)
+BRAIN_OK="unknown"
+BRAIN_PASS=0
+BRAIN_WARN=0
+BRAIN_FAIL=0
+if [[ -x "${ROOT}/bin/lacp-brain-doctor" ]]; then
+  brain_json="$("${ROOT}/bin/lacp-brain-doctor" --json 2>/dev/null || echo '{"ok":null}')"
+  BRAIN_OK="$(echo "${brain_json}" | jq -r '.ok // "unknown"')"
+  BRAIN_PASS="$(echo "${brain_json}" | jq -r '.summary.pass // 0')"
+  BRAIN_WARN="$(echo "${brain_json}" | jq -r '.summary.warn // 0')"
+  BRAIN_FAIL="$(echo "${brain_json}" | jq -r '.summary.fail // 0')"
+fi
+
 REPORT_TIME_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 REPORT_FILE="${ROOT}/docs/system-status.md"
 
@@ -108,6 +121,10 @@ if [[ "${FORMAT}" == "json" ]]; then
     --arg latest_snapshot "${LATEST_SNAPSHOT}" \
     --arg latest_sandbox_run "${LATEST_SANDBOX_RUN}" \
     --arg latest_remote_smoke "${LATEST_REMOTE_SMOKE}" \
+    --arg brain_ok "${BRAIN_OK}" \
+    --argjson brain_pass "${BRAIN_PASS}" \
+    --argjson brain_warn "${BRAIN_WARN}" \
+    --argjson brain_fail "${BRAIN_FAIL}" \
     '{
       schema_version: "1",
       kind: "status",
@@ -133,6 +150,12 @@ if [[ "${FORMAT}" == "json" ]]; then
         pass: $pass_count,
         warn: $warn_count,
         fail: $fail_count
+      },
+      brain: {
+        ok: $brain_ok,
+        pass: $brain_pass,
+        warn: $brain_warn,
+        fail: $brain_fail
       },
       artifacts: {
         latest_benchmark: $latest_benchmark,
@@ -166,6 +189,13 @@ Generated (UTC): \`${REPORT_TIME_UTC}\`
 - Pass: \`${PASS_COUNT}\`
 - Warn: \`${WARN_COUNT}\`
 - Fail: \`${FAIL_COUNT}\`
+
+## Brain
+
+- Brain OK: \`${BRAIN_OK}\`
+- Pass: \`${BRAIN_PASS}\`
+- Warn: \`${BRAIN_WARN}\`
+- Fail: \`${BRAIN_FAIL}\`
 
 ## Artifacts
 
