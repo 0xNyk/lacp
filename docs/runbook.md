@@ -36,6 +36,10 @@ cd ~/control/frameworks/lacp
 bin/lacp doctor
 bin/lacp doctor --json
 bin/lacp doctor --fix
+bin/lacp mcp-health
+bin/lacp mcp-health --json
+bin/lacp brain-doctor
+bin/lacp brain-doctor --json
 bin/lacp knowledge-doctor
 bin/lacp knowledge-doctor --json
 bin/lacp report --hours 24
