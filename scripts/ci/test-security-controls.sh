@@ -41,7 +41,7 @@ ACTUAL_HOST="$(hostname -s 2>/dev/null || hostname)"
 PWD_PREFIX="$(pwd -P)"
 GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_cwd_prefix\":\"${PWD_PREFIX}\"}"
 BAD_CONTEXT_CONTRACT='{"expected_host":"definitely-not-this-host"}'
-SSH_GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"jarv\"}"
+SSH_GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"prod-server\"}"
 SSH_BAD_REMOTE_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"builderz\"}"
 
 # Keep context-contract checks deterministic regardless of caller env/.env defaults.
@@ -54,9 +54,9 @@ run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "prod wallet migration" --
 run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "context gate missing" --repo-trust trusted -- /bin/mkdir -p "${TMP}/ctx-missing"
 run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "context gate mismatch" --repo-trust trusted --context-contract "${BAD_CONTEXT_CONTRACT}" -- /bin/mkdir -p "${TMP}/ctx-bad"
 run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "context gate pass" --repo-trust trusted --context-contract "${GOOD_CONTEXT_CONTRACT}" -- /bin/mkdir -p "${TMP}/ctx-good"
-run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh context missing" --repo-trust trusted -- ssh -G leads@jarv
-run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote mismatch" --repo-trust trusted --context-contract "${SSH_BAD_REMOTE_CONTEXT_CONTRACT}" -- ssh -G leads@jarv
-run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote pass" --repo-trust trusted --context-contract "${SSH_GOOD_CONTEXT_CONTRACT}" -- ssh -G leads@jarv
+run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh context missing" --repo-trust trusted -- ssh -G deploy@prod-server
+run_expect_rc 12 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote mismatch" --repo-trust trusted --context-contract "${SSH_BAD_REMOTE_CONTEXT_CONTRACT}" -- ssh -G deploy@prod-server
+run_expect_rc 0 "${ROOT}/bin/lacp-sandbox-run" --task "ssh remote pass" --repo-trust trusted --context-contract "${SSH_GOOD_CONTEXT_CONTRACT}" -- ssh -G deploy@prod-server
 
 export LACP_REQUIRE_SESSION_FINGERPRINT="true"
 GOOD_SESSION_FP="$("${ROOT}/bin/lacp-session-fingerprint")"
