@@ -89,7 +89,8 @@ esac
 # 2. CPU load
 # ---------------------------------------------------------------------------
 cpu_count="$(sysctl -n hw.ncpu 2>/dev/null || echo 10)"
-load1="$(sysctl -n vm.loadavg 2>/dev/null | awk '{gsub(/[{}]/,""); print $1}')"
+load1="$(sysctl -n vm.loadavg 2>/dev/null | awk '{gsub(/[{}]/,""); print $1}' || true)"
+load1="${load1:-0}"
 max_load_per_cpu="$(jq -r '.load.max_load_per_cpu // 1.5' "${POLICY_FILE}" 2>/dev/null || echo 1.5)"
 
 load_per_cpu="$(python3 -c "print(round(${load1} / max(${cpu_count}, 1), 2))")"
@@ -103,8 +104,10 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Memory pressure
 # ---------------------------------------------------------------------------
-mem_free_pct="$(memory_pressure 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%' || echo "")"
-swap_used_raw="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used") print $(i+1)}')"
+mem_free_pct="$(memory_pressure 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%' || true)"
+mem_free_pct="${mem_free_pct:-}"
+swap_used_raw="$(sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used") print $(i+1)}' || true)"
+swap_used_raw="${swap_used_raw:-}"
 swap_mb="$(python3 -c "
 raw='${swap_used_raw}'
 if not raw: print(0)

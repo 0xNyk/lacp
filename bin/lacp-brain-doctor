@@ -191,10 +191,14 @@ fi
 # Check mlx_whisper in any venv
 whisper_venv="${HOME}/.venvs/whisper/bin/python"
 if [[ -f "${whisper_venv}" ]]; then
-  if "${whisper_venv}" -c "import mlx_whisper" 2>/dev/null; then
-    add_check "brain:voice:mlx_whisper" "PASS" "mlx_whisper available in whisper venv"
+  if "${whisper_venv}" - <<'PY' >/dev/null 2>&1
+import importlib.util
+raise SystemExit(0 if importlib.util.find_spec("mlx_whisper") else 1)
+PY
+  then
+    add_check "brain:voice:mlx_whisper" "PASS" "mlx_whisper package detected in whisper venv"
   else
-    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv exists but mlx_whisper not importable"
+    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv exists but mlx_whisper package not detected"
   fi
 else
   add_check "brain:voice:mlx_whisper" "WARN" "whisper venv not found at ${whisper_venv}"
