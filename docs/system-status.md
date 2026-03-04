@@ -23,3 +23,18 @@ Generated (UTC): `2026-02-20T10:17:37Z`
 - Latest snapshot: `~/control/automation/ai-dev-optimization/data/snapshots/snapshot-20260220T092138Z.json`
 - Latest sandbox run: `~/control/knowledge/knowledge-memory/data/sandbox-runs/run-20260220T100647Z-68284-18985.json`
 - Latest remote smoke: `~/control/knowledge/knowledge-memory/data/remote-smoke/smoke-20260220T100034Z-49777-22059.json`
+
+## MCP Servers
+
+- Memory: `@modelcontextprotocol/server-memory` (entities at `~/control/knowledge/knowledge-memory/memory/mcp-entities.json`)
+- Smart Connections: `~/.local/share/smart-connections-mcp/` (TaylorAI/bge-micro-v2 384-dim, vault: `~/obsidian/nyk`)
+- QMD: `~/.npm/_npx/.../qmd` (direct binary, 6 collections, 2342 docs, 4798 vectors, 3 local models)
+- Paper: HTTP transport at `127.0.0.1:29979/mcp`
+
+## Vault Automation
+
+- Inbox routing: `route_inbox.py` (taxonomy-based, 21 categories)
+- Weekly hygiene: `com.nyk.vault-hygiene` LaunchAgent (Sunday 8 AM)
+- Daily backup: `com.nyk.vault-backup` LaunchAgent (4 AM, GitHub push)
+- Knowledge sync: `sync_research_knowledge.py` (FSRS temporal decay, typed edges)
+- Consolidation: `consolidate_research.py` (cosine 0.70 threshold, Ollama insight generation)
