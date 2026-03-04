@@ -15,9 +15,10 @@ Runs the local Obsidian brain expansion loop:
   3) Sync research signals into knowledge graph nodes
   4) Sync local repo/codebase knowledge into graph notes
   5) Extract Obsidian Agent Daily progress into graph notes
-  6) Route + archive inbox notes
-  7) Refresh QMD index (optional)
-  8) Run brain + knowledge doctors
+  6) Weekly consolidation gate (canonical synthesis notes from promoted research)
+  7) Route + archive inbox notes
+  8) Refresh QMD index (optional)
+  9) Run brain + knowledge doctors
 
 Options:
   --days N      Lookback window for research sync (default: 7)
@@ -193,7 +194,18 @@ else
   log_step "WARN" "sync_agent_daily_knowledge" "missing ${SCRIPTS_DIR}/sync_agent_daily_knowledge.py"
 fi
 
-# 6) Route/archive inbox
+# 6) Weekly consolidation gate
+if [[ -f "${SCRIPTS_DIR}/consolidate_research.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/consolidate_research.py" --apply --weekly-gate --min-days-between-runs 6
+  else
+    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/consolidate_research.py" --dry-run
+  fi
+else
+  log_step "WARN" "consolidate_research" "missing ${SCRIPTS_DIR}/consolidate_research.py"
+fi
+
+# 7) Route/archive inbox
 if [[ -f "${SCRIPTS_DIR}/route_inbox.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
     run_step_soft "route_inbox" python3 "${SCRIPTS_DIR}/route_inbox.py" --apply
@@ -214,14 +226,14 @@ else
   log_step "WARN" "archive_inbox" "missing ${SCRIPTS_DIR}/archive_inbox.py"
 fi
 
-# 7) Update QMD collection index
+# 8) Update QMD collection index
 if [[ "${SKIP_QMD}" -eq 1 ]]; then
   log_step "WARN" "qmd_update" "skipped by --skip-qmd"
 else
   run_step_soft "qmd_update" npx -y @tobilu/qmd update
 fi
 
-# 8) Doctors (soft by default, strict only when requested)
+# 9) Doctors (soft by default, strict only when requested)
 run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 
