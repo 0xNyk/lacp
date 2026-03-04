@@ -44,7 +44,10 @@ done
 require_cmd jq
 
 MODE_JSON="$("${ROOT}/bin/lacp-mode" show --json)"
-DOCTOR_JSON="$("${ROOT}/bin/lacp-doctor" --json)"
+DOCTOR_JSON="$("${ROOT}/bin/lacp-doctor" --json 2>/dev/null || true)"
+if [[ -z "${DOCTOR_JSON}" ]]; then
+  DOCTOR_JSON='{"ok":false,"summary":{"pass":0,"warn":0,"fail":1}}'
+fi
 
 POLICY_PROVIDER="$(jq -r '.routing.remote_provider // "daytona"' "${LACP_SANDBOX_POLICY_FILE}")"
 ALLOW_REMOTE="$(echo "${MODE_JSON}" | jq -r '.allow_external_remote')"

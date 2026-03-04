@@ -76,6 +76,7 @@ System:
 Knowledge:
   knowledge-doctor   Validate knowledge graph/docs hygiene
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
+  brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
   mcp-health         Probe MCP server connectivity and latency
 
 Remote:
@@ -121,6 +122,9 @@ case "${cmd}" in
     ;;
   brain-doctor)
     exec "${ROOT}/bin/lacp-brain-doctor" "$@"
+    ;;
+  brain-expand)
+    exec "${ROOT}/bin/lacp-brain-expand" "$@"
     ;;
   mcp-health)
     exec "${ROOT}/bin/lacp-mcp-health" "$@"
