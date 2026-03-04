@@ -271,8 +271,11 @@ LACP is not for:
 
 `bin/lacp bootstrap-system --profile starter --with-verify`:
 - creates `.env` from template when missing
-- auto-detects and installs missing Homebrew dependencies on macOS (disable with `--no-auto-deps`)
-  - default toolchain: `jq ripgrep python@3.11 git tmux gh rust llvm z3`
+- auto-detects and installs missing dependencies on macOS (disable with `--no-auto-deps`)
+  - Homebrew formulas: `jq ripgrep python@3.11 git tmux gh rust llvm z3 node`
+  - Homebrew casks: `obsidian`
+  - npm globals: `@tobilu/qmd`
+- bootstraps Obsidian vault structure at `~/obsidian/nyk` with core LACP symlinks (disable with `--no-obsidian-setup`)
 - applies the `starter` policy pack defaults (starter profile)
 - ensures required root/data paths exist
 - scaffolds safe starter automation scripts when missing
@@ -340,7 +343,8 @@ Notes:
 - `bin/lacp-bootstrap-system`: one-command install + onboard + doctor flow
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify, and auto-optimize Claude hooks/profile by default
 - `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
-- `bin/lacp-install`: auto-detects/install missing macOS/Homebrew dependencies by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
+- `bin/lacp-install`: auto-detects/install macOS formulas/casks/npm globals by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
+- `bin/lacp-install`: bootstraps Obsidian vault/symlinks by default (`--no-obsidian-setup` to skip)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including `hardened-exec` execution guard profile
