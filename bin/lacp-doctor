@@ -602,8 +602,7 @@ if [[ -d "${SANDBOX_RUNS_DIR}" ]]; then
 fi
 
 # Orphaned lacp-sandbox-run process check
-orphan_sandbox_procs="$(pgrep -f "lacp-sandbox-run" 2>/dev/null || true)"
-orphan_sandbox_procs="$(printf '%s\n' "${orphan_sandbox_procs}" | wc -l | tr -d ' ')"
+orphan_sandbox_procs="$(pgrep -f "lacp-sandbox-run" 2>/dev/null | wc -l | tr -d ' ')"
 if [[ "${orphan_sandbox_procs}" -gt 10 ]]; then
   add_check "hygiene:orphan_sandbox_procs" "WARN" "${orphan_sandbox_procs} lacp-sandbox-run processes running (run lacp doctor --fix to reap)"
   add_hint "Reap orphaned processes: lacp doctor --fix"
