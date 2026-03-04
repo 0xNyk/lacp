@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-brain-doctor [--json] [--fix-hints]
+
+Validates the Obsidian brain ecosystem health:
+  - Vault symlinks (sessions, skills, knowledge, docs, automation-scripts)
+  - QMD collections (6 expected)
+  - MCP servers (memory, smart-connections, qmd)
+  - Today's daily note
+  - Voice pipeline (whisper venv, ffmpeg)
+  - Session extraction freshness
+  - Inbox size (warn if >200)
+  - Atlas MOCs (7 expected)
+  - MCP entities file
+  - Stale remote lock files
+
+Output matches lacp-doctor format (pass/warn/fail counts).
+EOF
+}
+
+AS_JSON=0
+FIX_HINTS=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --fix-hints) FIX_HINTS=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+VAULT_ROOT="${HOME}/obsidian/nyk"
+CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
+SESSIONS_ROOT="${HOME}/control/sessions"
+SESSIONS_DIR="${SESSIONS_ROOT}/claude"
+CODEX_SESSIONS_DIR="${SESSIONS_ROOT}/codex"
+DAILY_DIR="${VAULT_ROOT}/00-home/daily"
+ATLAS_DIR="${VAULT_ROOT}/atlas"
+INBOX_DIR="${VAULT_ROOT}/inbox"
+REAL_AUTOMATION_ROOT="${HOME}/control/automation/ai-dev-optimization"
+VOICE_SCRIPT="${REAL_AUTOMATION_ROOT}/scripts/voice_daily_note.py"
+SC_MCP_DIR="${HOME}/.local/share/smart-connections-mcp"
+
+checks_tmp="$(mktemp)"
+hints_tmp="$(mktemp)"
+trap 'rm -f "${checks_tmp}" "${hints_tmp}"' EXIT
+
+add_check() {
+  printf '%s\t%s\t%s\n' "$2" "$1" "$3" >> "${checks_tmp}"
+}
+
+add_hint() {
+  [[ -n "$1" ]] || return 0
+  grep -Fqx "$1" "${hints_tmp}" 2>/dev/null || printf '%s\n' "$1" >> "${hints_tmp}"
+}
+
+# --- 1. Vault symlinks ---
+expected_symlinks="sessions skills knowledge docs automation-scripts"
+for link in ${expected_symlinks}; do
+  target="${VAULT_ROOT}/${link}"
+  if [[ -L "${target}" ]]; then
+    resolved="$(readlink "${target}")"
+    if [[ -d "${target}" ]]; then
+      add_check "brain:symlink:${link}" "PASS" "${target} -> ${resolved}"
+    else
+      add_check "brain:symlink:${link}" "FAIL" "broken symlink: ${target} -> ${resolved}"
+      add_hint "Fix broken symlink: ln -sfn <correct_path> ${target}"
+    fi
+  elif [[ -d "${target}" ]]; then
+    add_check "brain:symlink:${link}" "WARN" "${target} exists but is not a symlink"
+  else
+    add_check "brain:symlink:${link}" "FAIL" "${target} missing"
+    add_hint "Create vault symlink: ln -s <source> ${target}"
+  fi
+done
+
+# --- 2. QMD health ---
+qmd_output="$(npx -y @tobilu/qmd collection list 2>/dev/null || echo "QMD_UNAVAILABLE")"
+if [[ "${qmd_output}" == "QMD_UNAVAILABLE" ]]; then
+  add_check "brain:qmd:available" "FAIL" "qmd CLI not available"
+  add_hint "Install QMD: npm install -g @tobilu/qmd"
+else
+  collection_count="$(echo "${qmd_output}" | grep -c '^[a-z]' || echo 0)"
+  if [[ "${collection_count}" -ge 6 ]]; then
+    add_check "brain:qmd:collections" "PASS" "${collection_count} collections"
+  elif [[ "${collection_count}" -ge 1 ]]; then
+    add_check "brain:qmd:collections" "WARN" "${collection_count}/6 collections (expected 6)"
+    add_hint "Add missing QMD collections: npx -y @tobilu/qmd collection add <path> --name <name> --mask '**/*.md'"
+  else
+    add_check "brain:qmd:collections" "FAIL" "no collections found"
+  fi
+fi
+
+# --- 3. MCP servers ---
+if [[ -f "${CLAUDE_SETTINGS}" ]]; then
+  mcp_servers="$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+servers = d.get('mcpServers', {})
+for name in servers:
+    print(name)
+" "${CLAUDE_SETTINGS}" 2>/dev/null || true)"
+
+  expected_mcp="memory smart-connections qmd"
+  for srv in ${expected_mcp}; do
+    if echo "${mcp_servers}" | grep -qx "${srv}"; then
+      add_check "brain:mcp:${srv}" "PASS" "configured in settings.local.json"
+    else
+      add_check "brain:mcp:${srv}" "WARN" "not configured in settings.local.json"
+      add_hint "Add MCP server '${srv}' to ~/.claude/settings.local.json"
+    fi
+  done
+else
+  add_check "brain:mcp:settings" "WARN" "${CLAUDE_SETTINGS} not found"
+fi
+
+# MCP probe: memory entities file
+MEMORY_FILE="$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+srv = d.get('mcpServers', {}).get('memory', {})
+print(srv.get('env', {}).get('MEMORY_FILE_PATH', ''))
+" "${CLAUDE_SETTINGS}" 2>/dev/null || true)"
+
+if [[ -n "${MEMORY_FILE}" && -f "${MEMORY_FILE}" ]]; then
+  if python3 -c "import json; json.load(open('${MEMORY_FILE}'))" 2>/dev/null; then
+    entities_count="$(python3 -c "
+import json
+with open('${MEMORY_FILE}') as f:
+    d = json.load(f)
+# MCP memory stores entities array or similar structure
+if isinstance(d, list):
+    print(len(d))
+elif isinstance(d, dict):
+    print(len(d.get('entities', d.get('relations', d))))
+else:
+    print(0)
+" 2>/dev/null || echo 0)"
+    add_check "brain:mcp:memory_entities" "PASS" "${MEMORY_FILE} (${entities_count} entries)"
+  else
+    add_check "brain:mcp:memory_entities" "WARN" "${MEMORY_FILE} exists but invalid JSON"
+  fi
+elif [[ -n "${MEMORY_FILE}" ]]; then
+  add_check "brain:mcp:memory_entities" "WARN" "${MEMORY_FILE} not yet created (will be created on first MCP memory use)"
+else
+  add_check "brain:mcp:memory_entities" "WARN" "MEMORY_FILE_PATH not configured"
+fi
+
+# MCP probe: smart-connections
+if [[ -f "${SC_MCP_DIR}/server.py" && -f "${SC_MCP_DIR}/.venv/bin/python" ]]; then
+  add_check "brain:mcp:sc_files" "PASS" "server.py + venv present"
+else
+  add_check "brain:mcp:sc_files" "WARN" "smart-connections MCP missing files"
+  add_hint "Setup smart-connections MCP: see ~/.local/share/smart-connections-mcp/"
+fi
+
+# --- 4. Daily note ---
+today="$(date +%Y-%m-%d)"
+daily_note="${DAILY_DIR}/${today}.md"
+if [[ -f "${daily_note}" ]]; then
+  add_check "brain:daily_note" "PASS" "${daily_note}"
+else
+  add_check "brain:daily_note" "WARN" "today's daily note missing: ${daily_note}"
+  add_hint "Create daily note: /daily skill or manually create ${daily_note}"
+fi
+
+# --- 5. Voice pipeline ---
+if [[ -f "${VOICE_SCRIPT}" ]]; then
+  add_check "brain:voice:script" "PASS" "${VOICE_SCRIPT}"
+else
+  add_check "brain:voice:script" "FAIL" "${VOICE_SCRIPT} missing"
+fi
+
+if command -v ffmpeg >/dev/null 2>&1; then
+  add_check "brain:voice:ffmpeg" "PASS" "$(command -v ffmpeg)"
+else
+  add_check "brain:voice:ffmpeg" "FAIL" "ffmpeg not found"
+  add_hint "Install ffmpeg: brew install ffmpeg"
+fi
+
+# Check mlx_whisper in any venv
+whisper_venv="${HOME}/.venvs/whisper/bin/python"
+if [[ -f "${whisper_venv}" ]]; then
+  if "${whisper_venv}" -c "import mlx_whisper" 2>/dev/null; then
+    add_check "brain:voice:mlx_whisper" "PASS" "mlx_whisper available in whisper venv"
+  else
+    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv exists but mlx_whisper not importable"
+  fi
+else
+  add_check "brain:voice:mlx_whisper" "WARN" "whisper venv not found at ${whisper_venv}"
+fi
+
+# --- 6. Session extraction ---
+for agent_name in claude codex; do
+  agent_dir="${SESSIONS_ROOT}/${agent_name}"
+  if [[ -d "${agent_dir}" ]]; then
+    agent_count="$(find "${agent_dir}" -name '*.md' -type f 2>/dev/null | wc -l | tr -d ' ')"
+    latest="$(find "${agent_dir}" -name '*.md' -type f -exec stat -f '%m %N' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+    if [[ -n "${latest}" ]]; then
+      sess_epoch="$(stat -f %m "${latest}" 2>/dev/null || echo 0)"
+      now_epoch="$(date -u +%s)"
+      age_hours="$(((now_epoch - sess_epoch) / 3600))"
+      if [[ "${age_hours}" -le 48 ]]; then
+        add_check "brain:sessions:${agent_name}" "PASS" "${agent_count} sessions, latest ${age_hours}h ago"
+      else
+        add_check "brain:sessions:${agent_name}" "WARN" "${agent_count} sessions, latest ${age_hours}h ago (>48h)"
+        add_hint "Run session extraction: extract_sessions.py --agent ${agent_name} --since-days 7"
+      fi
+    else
+      add_check "brain:sessions:${agent_name}" "WARN" "no ${agent_name} session files found"
+    fi
+  else
+    add_check "brain:sessions:${agent_name}" "WARN" "${agent_dir} not found"
+  fi
+done
+
+# --- 7. Inbox size ---
+if [[ -d "${INBOX_DIR}" ]]; then
+  inbox_count="$(find "${INBOX_DIR}" -maxdepth 1 -name '*.md' -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${inbox_count}" -le 200 ]]; then
+    add_check "brain:inbox" "PASS" "${inbox_count} files"
+  else
+    add_check "brain:inbox" "WARN" "${inbox_count} files (>200, needs archival)"
+    add_hint "Archive old inbox items: python3 scripts/archive_inbox.py"
+  fi
+else
+  add_check "brain:inbox" "WARN" "${INBOX_DIR} not found"
+fi
+
+# --- 8. Atlas MOCs ---
+expected_mocs="index projects research writing sessions skills orphan-monitor"
+moc_pass=0
+moc_missing=""
+for moc in ${expected_mocs}; do
+  if [[ -f "${ATLAS_DIR}/${moc}.md" ]]; then
+    moc_pass=$((moc_pass + 1))
+  else
+    moc_missing="${moc_missing} ${moc}"
+  fi
+done
+
+if [[ "${moc_pass}" -eq 7 ]]; then
+  add_check "brain:atlas_mocs" "PASS" "all 7 MOCs present"
+else
+  add_check "brain:atlas_mocs" "WARN" "${moc_pass}/7 MOCs present (missing:${moc_missing})"
+fi
+
+# --- 9. Obsidian running ---
+if pgrep -q "Obsidian" 2>/dev/null; then
+  add_check "brain:obsidian_app" "PASS" "Obsidian.app running"
+else
+  add_check "brain:obsidian_app" "WARN" "Obsidian.app not running"
+fi
+
+# --- 10. Stale remote locks ---
+stale_locks=0
+lock_dir="${HOME}/.claude/hooks"
+now_epoch="$(date -u +%s)"
+for f in "${lock_dir}"/.remote_context.*.json; do
+  [[ -f "${f}" ]] || continue
+  lock_mtime="$(stat -f %m "${f}" 2>/dev/null || echo 0)"
+  lock_age_hours="$(((now_epoch - lock_mtime) / 3600))"
+  if [[ "${lock_age_hours}" -ge 12 ]]; then
+    stale_locks=$((stale_locks + 1))
+  fi
+done
+if [[ "${stale_locks}" -eq 0 ]]; then
+  add_check "brain:stale_locks" "PASS" "no stale remote context locks"
+else
+  add_check "brain:stale_locks" "WARN" "${stale_locks} stale lock(s) (>12h old) in ${lock_dir}"
+  add_hint "Clean stale locks: find ${lock_dir} -name '.remote_context.*.json' -mmin +720 -delete"
+fi
+
+# --- Summary ---
+fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
+warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
+pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
+hint_count="$(wc -l < "${hints_tmp}" | tr -d ' ')"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  python3 - <<'PY' "${checks_tmp}" "${hints_tmp}" "${fail_count}" "${warn_count}" "${pass_count}" "${FIX_HINTS}"
+import json, sys
+from pathlib import Path
+
+checks_path = Path(sys.argv[1])
+hints_path = Path(sys.argv[2])
+fail_count = int(sys.argv[3])
+warn_count = int(sys.argv[4])
+pass_count = int(sys.argv[5])
+fix_hints = sys.argv[6] == "1"
+
+checks = []
+for line in checks_path.read_text().splitlines():
+    parts = line.split("\t", 2)
+    if len(parts) == 3:
+        checks.append({"status": parts[0], "name": parts[1], "detail": parts[2]})
+
+hints = [l.strip() for l in hints_path.read_text().splitlines() if l.strip()]
+
+payload = {
+    "ok": fail_count == 0,
+    "summary": {"pass": pass_count, "warn": warn_count, "fail": fail_count},
+    "checks": checks,
+}
+if fix_hints:
+    payload["remediation_hints"] = hints
+print(json.dumps(payload, indent=2))
+PY
+else
+  log "Brain doctor summary: pass=${pass_count} warn=${warn_count} fail=${fail_count}"
+  while IFS=$'\t' read -r status name detail; do
+    printf '%-5s %-34s %s\n' "${status}" "${name}" "${detail}"
+  done < "${checks_tmp}"
+  if [[ "${FIX_HINTS}" -eq 1 && "${hint_count}" -gt 0 ]]; then
+    echo
+    echo "Remediation hints:"
+    sed 's/^/ - /' "${hints_tmp}"
+  fi
+fi
+
+if [[ "${fail_count}" -gt 0 ]]; then
+  exit 1
+fi
