@@ -140,6 +140,11 @@ setup_obsidian_vault() {
   link_or_keep "${vault_root}/knowledge" "${LACP_KNOWLEDGE_ROOT}"
   link_or_keep "${vault_root}/docs" "${docs_root}"
   link_or_keep "${vault_root}/automation-scripts" "${automation_scripts}"
+
+  # Expose both agent-native skill trees inside the shared skills root.
+  mkdir -p "${skills_root}"
+  link_or_keep "${skills_root}/claude" "${HOME}/.agents/skills"
+  link_or_keep "${skills_root}/codex" "${HOME}/.codex/skills"
 }
 
 if [[ ! -f "${ROOT}/.env" ]]; then
