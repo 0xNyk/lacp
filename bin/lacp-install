@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize]
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--no-auto-hook-optimize]
 
 Bootstraps LACP for first-time users.
 
@@ -20,7 +20,8 @@ Notes:
   - Applies `starter` policy pack by default for starter profile when `.env` is managed.
   - Ensures root/data directories exist.
   - Runs lacp-onboard at the end (optionally with verify).
-  - On macOS, dependency auto-detection is enabled by default and can install missing Homebrew formulas for core toolchain dependencies.
+  - On macOS, dependency auto-detection is enabled by default and can install missing Homebrew formulas/casks plus npm global packages (including qmd).
+  - Obsidian vault bootstrap is enabled by default and creates/syncs core `~/obsidian/nyk` links used by brain tooling.
 EOF
 }
 
@@ -31,6 +32,7 @@ FORCE_SCAFFOLD=0
 AUTO_DEPS=1
 AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
+OBSIDIAN_SETUP=1
 AUTO_ADOPT=1
 AUTO_HOOK_OPTIMIZE=1
 
@@ -69,6 +71,14 @@ while [[ $# -gt 0 ]]; do
       AUTO_DEPS_FORCE=1
       shift
       ;;
+    --with-obsidian-setup)
+      OBSIDIAN_SETUP=1
+      shift
+      ;;
+    --no-obsidian-setup)
+      OBSIDIAN_SETUP=0
+      shift
+      ;;
     --no-auto-adopt)
       AUTO_ADOPT=0
       shift
@@ -96,6 +106,42 @@ if [[ "${AUTO_DEPS}" -eq 1 ]]; then
   lacp_auto_install_deps "$([[ "${AUTO_DEPS_DRY_RUN}" -eq 1 ]] && echo true || echo false)" "$([[ "${AUTO_DEPS_FORCE}" -eq 1 ]] && echo true || echo false)"
 fi
 
+setup_obsidian_vault() {
+  local vault_root="${HOME}/obsidian/nyk"
+  local docs_root="${HOME}/docs"
+  local sessions_root="${HOME}/control/sessions"
+  local skills_root="${HOME}/control/skills"
+  local automation_scripts="${LACP_AUTOMATION_ROOT}/scripts"
+
+  mkdir -p "${vault_root}"
+  mkdir -p "${vault_root}/.obsidian"
+  mkdir -p "${vault_root}/00-home/daily" "${vault_root}/atlas" "${vault_root}/inbox" "${vault_root}/voice-notes" "${vault_root}/_generated"
+
+  mkdir -p "${docs_root}" "${sessions_root}" "${skills_root}" "${automation_scripts}"
+
+  link_or_keep() {
+    local target="$1"
+    local source="$2"
+    if [[ -L "${target}" ]]; then
+      ln -sfn "${source}" "${target}"
+      log "Updated symlink: ${target} -> ${source}"
+      return 0
+    fi
+    if [[ -e "${target}" ]]; then
+      log "Keeping existing path (not symlink): ${target}"
+      return 0
+    fi
+    ln -s "${source}" "${target}"
+    log "Created symlink: ${target} -> ${source}"
+  }
+
+  link_or_keep "${vault_root}/sessions" "${sessions_root}"
+  link_or_keep "${vault_root}/skills" "${skills_root}"
+  link_or_keep "${vault_root}/knowledge" "${LACP_KNOWLEDGE_ROOT}"
+  link_or_keep "${vault_root}/docs" "${docs_root}"
+  link_or_keep "${vault_root}/automation-scripts" "${automation_scripts}"
+}
+
 if [[ ! -f "${ROOT}/.env" ]]; then
   if [[ "${LACP_SKIP_DOTENV:-0}" == "1" ]]; then
     log "Skipped .env creation because LACP_SKIP_DOTENV=1"
@@ -115,6 +161,10 @@ mkdir -p "${LACP_AUTOMATION_ROOT}/scripts"
 mkdir -p "${LACP_AUTOMATION_ROOT}/data/snapshots"
 mkdir -p "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 mkdir -p "${LACP_KNOWLEDGE_ROOT}/data"
+
+if [[ "${OBSIDIAN_SETUP}" -eq 1 ]]; then
+  setup_obsidian_vault
+fi
 
 write_stub_if_needed() {
   local path="$1"
