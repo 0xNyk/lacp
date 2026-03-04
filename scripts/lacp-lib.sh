@@ -39,7 +39,9 @@ export LACP_CANARY_MIN_MRR="${LACP_CANARY_MIN_MRR:-0.65}"
 export LACP_CANARY_MAX_TRIAGE_ISSUES="${LACP_CANARY_MAX_TRIAGE_ISSUES:-2}"
 export LACP_WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR:-$HOME/.local/bin}"
 export LACP_TIME_TRACKING_ROOT="${LACP_TIME_TRACKING_ROOT:-${LACP_KNOWLEDGE_ROOT}/data/time-tracking}"
-export LACP_AUTO_DEPS_FORMULAS="${LACP_AUTO_DEPS_FORMULAS:-jq ripgrep python@3.11 git tmux gh rust llvm z3}"
+export LACP_AUTO_DEPS_FORMULAS="${LACP_AUTO_DEPS_FORMULAS:-jq ripgrep python@3.11 git tmux gh rust llvm z3 node}"
+export LACP_AUTO_DEPS_CASKS="${LACP_AUTO_DEPS_CASKS:-obsidian}"
+export LACP_AUTO_DEPS_NPM_PACKAGES="${LACP_AUTO_DEPS_NPM_PACKAGES:-@tobilu/qmd}"
 export LACP_RUNTIME_MAX_LOAD_PER_CPU="${LACP_RUNTIME_MAX_LOAD_PER_CPU:-2.00}"
 export LACP_RUNTIME_MIN_FORK_HEADROOM="${LACP_RUNTIME_MIN_FORK_HEADROOM:-64}"
 export LACP_RUNTIME_BACKOFF_SEC="${LACP_RUNTIME_BACKOFF_SEC:-2}"
@@ -120,33 +122,92 @@ lacp_auto_install_deps() {
   fi
 
   local -a formulas=()
+  local -a casks=()
+  local -a npm_packages=()
   # shellcheck disable=SC2206
   formulas=(${LACP_AUTO_DEPS_FORMULAS})
+  # shellcheck disable=SC2206
+  casks=(${LACP_AUTO_DEPS_CASKS})
+  # shellcheck disable=SC2206
+  npm_packages=(${LACP_AUTO_DEPS_NPM_PACKAGES})
   if [[ "${#formulas[@]}" -eq 0 ]]; then
-    log "auto-deps skipped: no formulas configured"
-    return 0
+    log "auto-deps: no formulas configured"
   fi
 
   local -a missing=()
+  local -a missing_casks=()
   local formula
   for formula in "${formulas[@]}"; do
+    [[ -n "${formula}" ]] || continue
     if ! brew list --formula "${formula}" >/dev/null 2>&1; then
       missing+=("${formula}")
     fi
   done
 
-  if [[ "${#missing[@]}" -eq 0 ]]; then
-    log "auto-deps: all configured formulas already installed"
-    return 0
-  fi
+  local cask
+  for cask in "${casks[@]}"; do
+    [[ -n "${cask}" ]] || continue
+    if ! brew list --cask "${cask}" >/dev/null 2>&1; then
+      missing_casks+=("${cask}")
+    fi
+  done
 
   if [[ "${dry_run}" == "true" ]]; then
-    log "auto-deps dry-run: would install formulas: ${missing[*]}"
+    if [[ "${#missing[@]}" -gt 0 ]]; then
+      log "auto-deps dry-run: would install formulas: ${missing[*]}"
+    fi
+    if [[ "${#missing_casks[@]}" -gt 0 ]]; then
+      log "auto-deps dry-run: would install casks: ${missing_casks[*]}"
+    fi
+    if [[ "${#missing[@]}" -eq 0 && "${#missing_casks[@]}" -eq 0 ]]; then
+      log "auto-deps dry-run: all configured formulas/casks already installed"
+    fi
+    if [[ "${#npm_packages[@]}" -gt 0 ]]; then
+      log "auto-deps dry-run: would ensure npm global packages: ${npm_packages[*]}"
+    fi
     return 0
   fi
 
-  log "auto-deps: installing formulas: ${missing[*]}"
-  brew install "${missing[@]}"
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    log "auto-deps: installing formulas: ${missing[*]}"
+    brew install "${missing[@]}"
+  fi
+
+  if [[ "${#missing_casks[@]}" -gt 0 ]]; then
+    log "auto-deps: installing casks: ${missing_casks[*]}"
+    brew install --cask "${missing_casks[@]}"
+  fi
+
+  if [[ "${#missing[@]}" -eq 0 && "${#missing_casks[@]}" -eq 0 ]]; then
+    log "auto-deps: all configured formulas/casks already installed"
+  fi
+
+  if [[ "${#npm_packages[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    if [[ "${force}" == "true" ]]; then
+      die "npm is required to install LACP_AUTO_DEPS_NPM_PACKAGES"
+    fi
+    log "auto-deps skipped npm packages: npm not found"
+    return 0
+  fi
+
+  local pkg
+  for pkg in "${npm_packages[@]}"; do
+    [[ -n "${pkg}" ]] || continue
+    if npm list -g --depth=0 "${pkg}" >/dev/null 2>&1; then
+      continue
+    fi
+    log "auto-deps: installing npm global package: ${pkg}"
+    if ! npm install -g "${pkg}" >/dev/null 2>&1; then
+      if [[ "${force}" == "true" ]]; then
+        die "Failed to install npm package: ${pkg}"
+      fi
+      log "auto-deps warning: failed to install npm package ${pkg}"
+    fi
+  done
 }
 
 lacp_wrapper_managed_state() {
