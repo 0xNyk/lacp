@@ -28,7 +28,7 @@ export LACP_DRAFTS_ROOT="${DRAFTS_ROOT}"
 export LACP_KNOWLEDGE_GRAPH_ROOT="${KNOWLEDGE_ROOT}"
 export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
 
-"${ROOT}/bin/lacp-install" --profile starter --with-verify --hours 1
+"${ROOT}/bin/lacp-install" --profile starter --with-verify --hours 1 --no-obsidian-setup
 
 assert_file "${AUTOMATION_ROOT}/scripts/run_shared_memory.sh" "stub.run_shared_memory"
 assert_file "${AUTOMATION_ROOT}/scripts/run_memory_pipeline.sh" "stub.run_memory_pipeline"

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-bootstrap-system [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--fresh-check] [--skip-fresh-check] [--json]
+Usage: lacp-bootstrap-system [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--fresh-check] [--skip-fresh-check] [--json]
 
 Runs a full first-run bootstrap flow:
   1) install/onboard flow
@@ -22,6 +22,7 @@ AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
 NO_AUTO_DEPS=0
 NO_AUTO_ADOPT=0
+OBSIDIAN_SETUP=1
 FRESH_CHECK=1
 JSON=0
 
@@ -61,6 +62,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-adopt)
       NO_AUTO_ADOPT=1
+      shift
+      ;;
+    --with-obsidian-setup)
+      OBSIDIAN_SETUP=1
+      shift
+      ;;
+    --no-obsidian-setup)
+      OBSIDIAN_SETUP=0
       shift
       ;;
     --fresh-check)
@@ -117,6 +126,11 @@ if [[ "${AUTO_DEPS_FORCE}" -eq 1 ]]; then
 fi
 if [[ "${NO_AUTO_ADOPT}" -eq 1 ]]; then
   INSTALL_ARGS+=(--no-auto-adopt)
+fi
+if [[ "${OBSIDIAN_SETUP}" -eq 1 ]]; then
+  INSTALL_ARGS+=(--with-obsidian-setup)
+else
+  INSTALL_ARGS+=(--no-obsidian-setup)
 fi
 
 "${ROOT}/bin/lacp-install" "${INSTALL_ARGS[@]}"
