@@ -8,57 +8,18 @@ class Lacp < Formula
   depends_on "jq"
   depends_on "python@3.11"
   depends_on "ripgrep"
-  depends_on "rust"
-  depends_on "llvm"
-  depends_on "z3"
-
   def install
     libexec.install Dir["*"]
 
+    # Install all lacp-* scripts from bin/
+    Dir[libexec/"bin/lacp-*"].each do |script|
+      cmd = File.basename(script)
+      (bin/cmd).write_env_script(libexec/"bin/#{cmd}", {})
+    end
+
+    # Install the main router
     %w[
       lacp
-      lacp-install
-      lacp-bootstrap-system
-      lacp-onboard
-      lacp-bootstrap
-      lacp-verify
-      lacp-doctor
-      lacp-knowledge-doctor
-      lacp-mode
-      lacp-status-report
-      lacp-route
-      lacp-sandbox-run
-      lacp-remote-setup
-      lacp-remote-smoke
-      lacp-report
-      lacp-canary
-      lacp-canary-optimize
-      lacp-auto-rollback
-      lacp-schedule-health
-      lacp-policy-pack
-      lacp-release-prepare
-      lacp-release-publish
-      lacp-release-verify
-      lacp-vendor-watch
-      lacp-automations-tui
-      lacp-cache-audit
-      lacp-cache-guard
-      lacp-skill-audit
-      lacp-skill-factory
-      lacp-adopt-local
-      lacp-unadopt-local
-      lacp-release-gate
-      lacp-pr-preflight
-      lacp-harness-validate
-      lacp-harness-run
-      lacp-browser-evidence-validate
-      lacp-orchestrate
-      lacp-worktree
-      lacp-swarm
-      lacp-migrate
-      lacp-incident-drill
-      lacp-workflow-run
-      lacp-test
     ].each do |cmd|
       (bin/cmd).write_env_script(libexec/"bin/#{cmd}", {})
     end

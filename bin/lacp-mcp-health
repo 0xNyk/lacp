@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-mcp-health [--json]
+
+Probes all configured MCP servers for health status.
+Reads server definitions from ~/.claude/settings.local.json.
+
+Checks:
+  - memory: entities file exists and is valid JSON
+  - smart-connections: server.py + venv present, OBSIDIAN_VAULT_PATH valid
+  - qmd: binary exists, index health (docs/vectors/collections), models downloaded
+EOF
+}
+
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
+
+checks_tmp="$(mktemp)"
+trap 'rm -f "${checks_tmp}"' EXIT
+
+add_check() {
+  printf '%s\t%s\t%s\n' "$2" "$1" "$3" >> "${checks_tmp}"
+}
+
+if [[ ! -f "${CLAUDE_SETTINGS}" ]]; then
+  add_check "mcp:settings" "FAIL" "${CLAUDE_SETTINGS} not found"
+else
+  add_check "mcp:settings" "PASS" "${CLAUDE_SETTINGS}"
+
+  # Parse server configs
+  servers_json="$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+print(json.dumps(d.get('mcpServers', {})))
+" "${CLAUDE_SETTINGS}" 2>/dev/null || echo "{}")"
+
+  server_count="$(echo "${servers_json}" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)"
+  add_check "mcp:server_count" "PASS" "${server_count} servers configured"
+
+  # --- memory server ---
+  memory_file="$(echo "${servers_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+srv = d.get('memory', {})
+print(srv.get('env', {}).get('MEMORY_FILE_PATH', ''))
+" 2>/dev/null || true)"
+
+  memory_cmd="$(echo "${servers_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+srv = d.get('memory', {})
+print(srv.get('command', ''))
+" 2>/dev/null || true)"
+
+  if [[ -n "${memory_cmd}" ]]; then
+    if command -v "${memory_cmd}" >/dev/null 2>&1; then
+      add_check "mcp:memory:command" "PASS" "${memory_cmd} available"
+    else
+      add_check "mcp:memory:command" "WARN" "${memory_cmd} not found in PATH"
+    fi
+
+    if [[ -n "${memory_file}" ]]; then
+      if [[ -f "${memory_file}" ]]; then
+        if python3 -c "import json; json.load(open('${memory_file}'))" 2>/dev/null; then
+          add_check "mcp:memory:data" "PASS" "${memory_file} valid JSON"
+        else
+          add_check "mcp:memory:data" "WARN" "${memory_file} exists but invalid JSON"
+        fi
+      else
+        add_check "mcp:memory:data" "WARN" "${memory_file} not yet created"
+      fi
+    else
+      add_check "mcp:memory:data" "WARN" "MEMORY_FILE_PATH not configured"
+    fi
+  else
+    add_check "mcp:memory:configured" "WARN" "memory server not configured"
+  fi
+
+  # --- smart-connections server ---
+  sc_cmd="$(echo "${servers_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+srv = d.get('smart-connections', {})
+print(srv.get('command', ''))
+" 2>/dev/null || true)"
+
+  sc_vault="$(echo "${servers_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+srv = d.get('smart-connections', {})
+print(srv.get('env', {}).get('OBSIDIAN_VAULT_PATH', ''))
+" 2>/dev/null || true)"
+
+  if [[ -n "${sc_cmd}" ]]; then
+    if [[ -f "${sc_cmd}" ]]; then
+      add_check "mcp:sc:command" "PASS" "${sc_cmd} exists"
+    else
+      add_check "mcp:sc:command" "FAIL" "${sc_cmd} not found"
+    fi
+
+    if [[ -n "${sc_vault}" && -d "${sc_vault}" ]]; then
+      add_check "mcp:sc:vault" "PASS" "${sc_vault}"
+    elif [[ -n "${sc_vault}" ]]; then
+      add_check "mcp:sc:vault" "FAIL" "${sc_vault} not a directory"
+    else
+      add_check "mcp:sc:vault" "WARN" "OBSIDIAN_VAULT_PATH not set"
+    fi
+
+    # Check for the Smart Connections data
+    sc_data="${sc_vault}/.smart-env"
+    if [[ -d "${sc_data}" ]]; then
+      add_check "mcp:sc:data" "PASS" "${sc_data} exists"
+    else
+      add_check "mcp:sc:data" "WARN" "${sc_data} not found (no embeddings yet)"
+    fi
+  else
+    add_check "mcp:sc:configured" "WARN" "smart-connections server not configured"
+  fi
+
+  # --- qmd server ---
+  qmd_cmd="$(echo "${servers_json}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+srv = d.get('qmd', {})
+print(srv.get('command', ''))
+" 2>/dev/null || true)"
+
+  if [[ -n "${qmd_cmd}" ]]; then
+    # Check binary exists (supports both direct path and npx)
+    if [[ -x "${qmd_cmd}" ]]; then
+      add_check "mcp:qmd:binary" "PASS" "${qmd_cmd}"
+      QMD_BIN="${qmd_cmd}"
+    elif command -v "${qmd_cmd}" >/dev/null 2>&1; then
+      add_check "mcp:qmd:binary" "PASS" "${qmd_cmd} (via PATH)"
+      QMD_BIN="${qmd_cmd}"
+    elif [[ "${qmd_cmd}" == "npx" ]] && command -v npx >/dev/null 2>&1; then
+      add_check "mcp:qmd:binary" "WARN" "using npx (slow cold-start, prefer direct binary)"
+      QMD_BIN="npx -y @tobilu/qmd"
+    else
+      add_check "mcp:qmd:binary" "FAIL" "${qmd_cmd} not found"
+      QMD_BIN=""
+    fi
+
+    # Check index health
+    if [[ -n "${QMD_BIN}" ]]; then
+      qmd_status="$(${QMD_BIN} status 2>&1 || echo "FAILED")"
+      if echo "${qmd_status}" | grep -q "QMD Status"; then
+        doc_count="$(echo "${qmd_status}" | awk '/Total:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}')"
+        vec_count="$(echo "${qmd_status}" | awk '/Vectors:/{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}')"
+        col_count="$(echo "${qmd_status}" | grep -c 'Pattern:' || echo 0)"
+        doc_count="${doc_count:-?}"
+        vec_count="${vec_count:-?}"
+        add_check "mcp:qmd:index" "PASS" "${doc_count} docs, ${vec_count} vectors, ${col_count} collections"
+      else
+        add_check "mcp:qmd:index" "WARN" "qmd status check failed"
+      fi
+    fi
+
+    # Check models downloaded
+    qmd_models_dir="${HOME}/.cache/qmd/models"
+    if [[ -d "${qmd_models_dir}" ]]; then
+      model_count="$(find "${qmd_models_dir}" -name '*.gguf' ! -name '*.ipull' 2>/dev/null | wc -l | tr -d ' ')"
+      partial_count="$(find "${qmd_models_dir}" -name '*.ipull' 2>/dev/null | wc -l | tr -d ' ')"
+      if [[ "${model_count}" -ge 3 && "${partial_count}" -eq 0 ]]; then
+        add_check "mcp:qmd:models" "PASS" "${model_count} models (embedding, reranker, expansion)"
+      elif [[ "${partial_count}" -gt 0 ]]; then
+        add_check "mcp:qmd:models" "WARN" "${model_count} complete, ${partial_count} downloading"
+      else
+        add_check "mcp:qmd:models" "WARN" "only ${model_count}/3 models downloaded"
+      fi
+    else
+      add_check "mcp:qmd:models" "WARN" "${qmd_models_dir} not found"
+    fi
+  else
+    add_check "mcp:qmd:configured" "WARN" "qmd server not configured"
+  fi
+fi
+
+# --- Summary ---
+fail_count="$(awk -F'\t' '$1=="FAIL"{c++} END{print c+0}' "${checks_tmp}")"
+warn_count="$(awk -F'\t' '$1=="WARN"{c++} END{print c+0}' "${checks_tmp}")"
+pass_count="$(awk -F'\t' '$1=="PASS"{c++} END{print c+0}' "${checks_tmp}")"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  python3 - <<'PY' "${checks_tmp}" "${fail_count}" "${warn_count}" "${pass_count}"
+import json, sys
+from pathlib import Path
+
+checks_path = Path(sys.argv[1])
+fail_count = int(sys.argv[2])
+warn_count = int(sys.argv[3])
+pass_count = int(sys.argv[4])
+
+checks = []
+for line in checks_path.read_text().splitlines():
+    parts = line.split("\t", 2)
+    if len(parts) == 3:
+        checks.append({"status": parts[0], "name": parts[1], "detail": parts[2]})
+
+print(json.dumps({
+    "ok": fail_count == 0,
+    "summary": {"pass": pass_count, "warn": warn_count, "fail": fail_count},
+    "checks": checks,
+}, indent=2))
+PY
+else
+  log "MCP health summary: pass=${pass_count} warn=${warn_count} fail=${fail_count}"
+  while IFS=$'\t' read -r status name detail; do
+    printf '%-5s %-28s %s\n' "${status}" "${name}" "${detail}"
+  done < "${checks_tmp}"
+fi
+
+if [[ "${fail_count}" -gt 0 ]]; then
+  exit 1
+fi
