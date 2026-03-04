@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Recursion guard: if we're already inside a sandbox-run, exec the command directly
 if [[ "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
+  shift_past_opts=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --) shift; break ;;
