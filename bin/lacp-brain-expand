@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: lacp-brain-expand [--days N] [--apply] [--strict] [--json] [--skip-qmd]
+
+Runs the local Obsidian brain expansion loop:
+  1) Sync Claude/Codex sessions into vault notes
+  2) Materialize captured web research into inbox notes
+  3) Sync research signals into knowledge graph nodes
+  4) Sync local repo/codebase knowledge into graph notes
+  5) Extract Obsidian Agent Daily progress into graph notes
+  6) Route + archive inbox notes
+  7) Refresh QMD index (optional)
+  8) Run brain + knowledge doctors
+
+Options:
+  --days N      Lookback window for research sync (default: 7)
+  --apply       Apply writes for scripts supporting dry-run/apply modes
+  --strict      Return non-zero if any step fails
+  --json        Emit machine-readable JSON summary
+  --skip-qmd    Skip `qmd update`
+USAGE
+}
+
+DAYS=7
+APPLY=0
+STRICT=0
+AS_JSON=0
+SKIP_QMD=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)
+      DAYS="$2"
+      shift 2
+      ;;
+    --apply)
+      APPLY=1
+      shift
+      ;;
+    --strict)
+      STRICT=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    --skip-qmd)
+      SKIP_QMD=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if ! [[ "${DAYS}" =~ ^[0-9]+$ ]]; then
+  die "--days must be a non-negative integer"
+fi
+
+REAL_AUTOMATION_ROOT="${HOME}/control/automation/ai-dev-optimization"
+REAL_KNOWLEDGE_ROOT="${HOME}/control/knowledge/knowledge-memory"
+
+SCRIPTS_DIR="${LACP_AUTOMATION_ROOT}/scripts"
+if [[ ! -d "${SCRIPTS_DIR}" ]]; then
+  SCRIPTS_DIR="${REAL_AUTOMATION_ROOT}/scripts"
+fi
+
+WORKFLOW_BASE="${LACP_KNOWLEDGE_ROOT}"
+if [[ ! -d "${WORKFLOW_BASE}" ]]; then
+  WORKFLOW_BASE="${REAL_KNOWLEDGE_ROOT}"
+fi
+WORKFLOW_DIR="${WORKFLOW_BASE}/data/workflows/brain-expand"
+mkdir -p "${WORKFLOW_DIR}"
+
+KNOWLEDGE_DOCTOR_ROOT="${LACP_KNOWLEDGE_GRAPH_ROOT}"
+if [[ ! -d "${KNOWLEDGE_DOCTOR_ROOT}" || "${KNOWLEDGE_DOCTOR_ROOT}" == /tmp/lacp-sentinel/* ]]; then
+  KNOWLEDGE_DOCTOR_ROOT="${REAL_KNOWLEDGE_ROOT}"
+fi
+
+RUN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_FILE="${WORKFLOW_DIR}/brain-expand-${RUN_TS}.log"
+STEPS_FILE="$(mktemp)"
+trap 'rm -f "${STEPS_FILE}"' EXIT
+
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+
+log_step() {
+  local status="$1"
+  local name="$2"
+  local detail="$3"
+  printf '%s\t%s\t%s\n' "${status}" "${name}" "${detail}" >> "${STEPS_FILE}"
+
+  case "${status}" in
+    PASS) PASS_COUNT=$((PASS_COUNT + 1)) ;;
+    WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+    FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+  esac
+}
+
+run_step() {
+  local name="$1"
+  shift
+
+  {
+    echo "[$(date -u +%H:%M:%S)] STEP ${name}"
+    "$@"
+  } >> "${LOG_FILE}" 2>&1
+
+  if [[ "$?" -eq 0 ]]; then
+    log_step "PASS" "${name}" "ok"
+  else
+    log_step "FAIL" "${name}" "see ${LOG_FILE}"
+  fi
+}
+
+run_step_soft() {
+  local name="$1"
+  shift
+
+  {
+    echo "[$(date -u +%H:%M:%S)] STEP ${name}"
+    "$@"
+  } >> "${LOG_FILE}" 2>&1 || {
+    log_step "WARN" "${name}" "non-zero exit (see ${LOG_FILE})"
+    return 0
+  }
+  log_step "PASS" "${name}" "ok"
+}
+
+# 1) Session sync
+if [[ -x "${SCRIPTS_DIR}/run_session_sync.sh" ]]; then
+  run_step "session_sync" /bin/bash "${SCRIPTS_DIR}/run_session_sync.sh"
+else
+  log_step "WARN" "session_sync" "missing ${SCRIPTS_DIR}/run_session_sync.sh"
+fi
+
+# 2) Materialize web research capture
+if [[ -f "${SCRIPTS_DIR}/materialize_research_inbox.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step "materialize_research_inbox" python3 "${SCRIPTS_DIR}/materialize_research_inbox.py" --apply
+  else
+    run_step "materialize_research_inbox" python3 "${SCRIPTS_DIR}/materialize_research_inbox.py"
+  fi
+else
+  log_step "WARN" "materialize_research_inbox" "missing ${SCRIPTS_DIR}/materialize_research_inbox.py"
+fi
+
+# 3) Sync research graph nodes
+if [[ -f "${SCRIPTS_DIR}/sync_research_knowledge.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step "sync_research_knowledge" python3 "${SCRIPTS_DIR}/sync_research_knowledge.py" --days "${DAYS}" --apply
+  else
+    run_step "sync_research_knowledge" python3 "${SCRIPTS_DIR}/sync_research_knowledge.py" --days "${DAYS}"
+  fi
+else
+  log_step "WARN" "sync_research_knowledge" "missing ${SCRIPTS_DIR}/sync_research_knowledge.py"
+fi
+
+# 4) Sync repo/codebase graph nodes
+if [[ -f "${SCRIPTS_DIR}/sync_repo_knowledge.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step "sync_repo_knowledge" python3 "${SCRIPTS_DIR}/sync_repo_knowledge.py" --apply --json
+  else
+    run_step "sync_repo_knowledge" python3 "${SCRIPTS_DIR}/sync_repo_knowledge.py" --json
+  fi
+else
+  log_step "WARN" "sync_repo_knowledge" "missing ${SCRIPTS_DIR}/sync_repo_knowledge.py"
+fi
+
+# 5) Extract Obsidian Agent Daily into graph notes
+if [[ -f "${SCRIPTS_DIR}/sync_agent_daily_knowledge.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step "sync_agent_daily_knowledge" python3 "${SCRIPTS_DIR}/sync_agent_daily_knowledge.py" --days "${DAYS}" --apply --json
+  else
+    run_step "sync_agent_daily_knowledge" python3 "${SCRIPTS_DIR}/sync_agent_daily_knowledge.py" --days "${DAYS}" --json
+  fi
+else
+  log_step "WARN" "sync_agent_daily_knowledge" "missing ${SCRIPTS_DIR}/sync_agent_daily_knowledge.py"
+fi
+
+# 6) Route/archive inbox
+if [[ -f "${SCRIPTS_DIR}/route_inbox.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "route_inbox" python3 "${SCRIPTS_DIR}/route_inbox.py" --apply
+  else
+    run_step_soft "route_inbox" python3 "${SCRIPTS_DIR}/route_inbox.py"
+  fi
+else
+  log_step "WARN" "route_inbox" "missing ${SCRIPTS_DIR}/route_inbox.py"
+fi
+
+if [[ -f "${SCRIPTS_DIR}/archive_inbox.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "archive_inbox" python3 "${SCRIPTS_DIR}/archive_inbox.py" --days 30 --apply
+  else
+    run_step_soft "archive_inbox" python3 "${SCRIPTS_DIR}/archive_inbox.py" --days 30
+  fi
+else
+  log_step "WARN" "archive_inbox" "missing ${SCRIPTS_DIR}/archive_inbox.py"
+fi
+
+# 7) Update QMD collection index
+if [[ "${SKIP_QMD}" -eq 1 ]]; then
+  log_step "WARN" "qmd_update" "skipped by --skip-qmd"
+else
+  run_step_soft "qmd_update" npx -y @tobilu/qmd update
+fi
+
+# 8) Doctors (soft by default, strict only when requested)
+run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
+run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  python3 - <<'PY' "${STEPS_FILE}" "${LOG_FILE}" "${RUN_TS}" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${DAYS}" "${APPLY}" "${STRICT}"
+import json
+import sys
+from pathlib import Path
+
+steps_file = Path(sys.argv[1])
+log_file = sys.argv[2]
+run_ts = sys.argv[3]
+pass_count = int(sys.argv[4])
+warn_count = int(sys.argv[5])
+fail_count = int(sys.argv[6])
+days = int(sys.argv[7])
+apply = sys.argv[8] == "1"
+strict = sys.argv[9] == "1"
+
+steps = []
+for line in steps_file.read_text().splitlines():
+    if not line.strip():
+        continue
+    status, name, detail = line.split("\t", 2)
+    steps.append({"status": status, "name": name, "detail": detail})
+
+payload = {
+    "schema_version": "1",
+    "kind": "brain_expand",
+    "run_ts_utc": run_ts,
+    "ok": fail_count == 0,
+    "strict": strict,
+    "apply": apply,
+    "days": days,
+    "summary": {"pass": pass_count, "warn": warn_count, "fail": fail_count},
+    "log_file": log_file,
+    "steps": steps,
+}
+print(json.dumps(payload, indent=2))
+PY
+else
+  log "brain-expand summary: pass=${PASS_COUNT} warn=${WARN_COUNT} fail=${FAIL_COUNT} log=${LOG_FILE}"
+  while IFS=$'\t' read -r status name detail; do
+    printf '%-5s %-28s %s\n' "${status}" "${name}" "${detail}"
+  done < "${STEPS_FILE}"
+fi
+
+if [[ "${STRICT}" -eq 1 && "${FAIL_COUNT}" -gt 0 ]]; then
+  exit 1
+fi
+
+exit 0
