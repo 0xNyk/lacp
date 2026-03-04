@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Recursion guard: if we're already inside a sandbox-run, exec the command directly
+if [[ "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
+  shift_past_opts=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --) shift; break ;;
+      --task|--repo-trust|--internet|--external-code|--sensitive-data|--cpu-heavy|--long-run|--remote-provider|--estimated-cost-usd|--input-contract|--context-contract|--session-fingerprint)
+        shift 2 ;;
+      --confirm-critical|--confirm-budget)
+        shift 2 ;;
+      --dry-run|--json|-h|--help)
+        shift ;;
+      *) shift ;;
+    esac
+  done
+  exec "$@"
+fi
+export LACP_SANDBOX_DEPTH=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/lacp-lib.sh"

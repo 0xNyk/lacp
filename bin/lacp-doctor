@@ -8,12 +8,13 @@ source "${ROOT}/scripts/lacp-lib.sh"
 usage() {
   cat <<'EOF'
 Usage: lacp-doctor [--json] [--fix] [--fix-hints] [--fix-deps] [--auto-deps-dry-run] [--auto-deps-force]
-                  [--check-limits] [--system]
+                  [--check-limits] [--system] [--brain]
 
 Runs path and health diagnostics for LACP dependencies and recent artifacts.
 Exits non-zero if required checks fail.
 
   --system       Also run macOS system health checks (thermal, memory, Spotlight, Docker, Rust build, UI)
+  --brain        Also run Obsidian brain ecosystem health checks (vault, QMD, MCP, voice, sessions)
 EOF
 }
 
@@ -25,6 +26,7 @@ AUTO_DEPS_DRY_RUN=0
 AUTO_DEPS_FORCE=0
 CHECK_LIMITS=0
 CHECK_SYSTEM=0
+CHECK_BRAIN=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       CHECK_SYSTEM=1
       shift
       ;;
+    --brain)
+      CHECK_BRAIN=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -83,6 +89,31 @@ if [[ "${FIX}" -eq 1 ]]; then
 
   if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && ! -f "${LACP_ROOT}/.env" && -f "${LACP_ROOT}/config/lacp.env.example" ]]; then
     cp "${LACP_ROOT}/config/lacp.env.example" "${LACP_ROOT}/.env"
+  fi
+
+  # Process reaper: kill orphaned lacp-sandbox-run processes (parent PID 1)
+  orphan_pids="$(pgrep -f "lacp-sandbox-run" 2>/dev/null || true)"
+  orphan_count=0
+  if [[ -n "${orphan_pids}" ]]; then
+    while IFS= read -r pid; do
+      ppid="$(ps -o ppid= -p "${pid}" 2>/dev/null | tr -d ' ')" || continue
+      if [[ "${ppid}" == "1" ]]; then
+        kill "${pid}" 2>/dev/null && orphan_count=$((orphan_count + 1))
+      fi
+    done <<< "${orphan_pids}"
+  fi
+  if [[ "${orphan_count}" -gt 0 ]]; then
+    log "Reaped ${orphan_count} orphaned lacp-sandbox-run process(es)"
+  fi
+
+  # Sandbox-runs data cleanup: remove files older than 7 days
+  SANDBOX_RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+  if [[ -d "${SANDBOX_RUNS_DIR}" ]]; then
+    stale_runs="$(find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -mtime +7 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "${stale_runs}" -gt 0 ]]; then
+      find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -mtime +7 -delete 2>/dev/null
+      log "Cleaned ${stale_runs} sandbox-run files older than 7 days"
+    fi
   fi
 fi
 
@@ -556,6 +587,29 @@ fi
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json" "artifact:latest_sandbox_run_age" 72
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
 
+# Sandbox-runs file count check
+SANDBOX_RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"
+if [[ -d "${SANDBOX_RUNS_DIR}" ]]; then
+  sandbox_file_count="$(find "${SANDBOX_RUNS_DIR}" -name 'run-*.json' -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${sandbox_file_count}" -gt 10000 ]]; then
+    add_check "hygiene:sandbox_runs_count" "WARN" "${sandbox_file_count} files (>10000; run lacp doctor --fix to clean)"
+    add_hint "Clean sandbox-runs: lacp doctor --fix (removes files >7 days old)"
+  elif [[ "${sandbox_file_count}" -gt 1000 ]]; then
+    add_check "hygiene:sandbox_runs_count" "PASS" "${sandbox_file_count} files (consider cleanup)"
+  else
+    add_check "hygiene:sandbox_runs_count" "PASS" "${sandbox_file_count} files"
+  fi
+fi
+
+# Orphaned lacp-sandbox-run process check
+orphan_sandbox_procs="$(pgrep -f "lacp-sandbox-run" 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${orphan_sandbox_procs}" -gt 10 ]]; then
+  add_check "hygiene:orphan_sandbox_procs" "WARN" "${orphan_sandbox_procs} lacp-sandbox-run processes running (run lacp doctor --fix to reap)"
+  add_hint "Reap orphaned processes: lacp doctor --fix"
+else
+  add_check "hygiene:orphan_sandbox_procs" "PASS" "${orphan_sandbox_procs} lacp-sandbox-run processes"
+fi
+
 claude_wrapper_state="$(lacp_wrapper_managed_state claude)"
 codex_wrapper_state="$(lacp_wrapper_managed_state codex)"
 case "${claude_wrapper_state}" in
@@ -601,6 +655,25 @@ else
   add_check "hooks:claude_posture" "PASS" "skipped (claude not installed)"
 fi
 
+# Stale remote lock detection
+stale_lock_count=0
+lock_search_dir="${HOME}/.claude/hooks"
+now_epoch_locks="$(date -u +%s)"
+for lockf in "${lock_search_dir}"/.remote_context.*.json; do
+  [[ -f "${lockf}" ]] || continue
+  lock_mtime="$(stat -f %m "${lockf}" 2>/dev/null || echo 0)"
+  lock_age_h="$(((now_epoch_locks - lock_mtime) / 3600))"
+  if [[ "${lock_age_h}" -ge 12 ]]; then
+    stale_lock_count=$((stale_lock_count + 1))
+  fi
+done
+if [[ "${stale_lock_count}" -eq 0 ]]; then
+  add_check "hooks:stale_remote_locks" "PASS" "no stale remote context locks"
+else
+  add_check "hooks:stale_remote_locks" "WARN" "${stale_lock_count} stale lock(s) (>12h) in ${lock_search_dir}"
+  add_hint "Clean stale locks: find ${lock_search_dir} -name '.remote_context.*.json' -mmin +720 -delete"
+fi
+
 if [[ "${CHECK_SYSTEM}" -eq 1 && -x "${LACP_ROOT}/bin/lacp-system-health" ]]; then
   sys_args=()
   [[ "${AS_JSON}" -eq 1 ]] && sys_args+=(--json)
@@ -635,6 +708,36 @@ PY
     # In text mode, system-health already printed its own output; merge into counts
     echo
     echo "${sys_output}"
+  fi
+fi
+
+if [[ "${CHECK_BRAIN}" -eq 1 && -x "${LACP_ROOT}/bin/lacp-brain-doctor" ]]; then
+  brain_args=(--json)
+  [[ "${FIX_HINTS}" -eq 1 ]] && brain_args+=(--fix-hints)
+  brain_output="$("${LACP_ROOT}/bin/lacp-brain-doctor" "${brain_args[@]}" 2>/dev/null || true)"
+  if [[ -n "${brain_output}" ]]; then
+    python3 - <<'PY' "${brain_output}" "${checks_tmp}" "${hints_tmp}"
+import json
+import sys
+from pathlib import Path
+
+raw = sys.argv[1]
+checks_path = Path(sys.argv[2])
+hints_path = Path(sys.argv[3])
+
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(0)
+
+with open(checks_path, "a") as f:
+    for c in data.get("checks", []):
+        f.write(f"{c['status']}\t{c['name']}\t{c['detail']}\n")
+
+with open(hints_path, "a") as f:
+    for h in data.get("remediation_hints", []):
+        f.write(f"{h}\n")
+PY
   fi
 fi
 

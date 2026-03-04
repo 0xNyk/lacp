@@ -75,6 +75,8 @@ System:
 
 Knowledge:
   knowledge-doctor   Validate knowledge graph/docs hygiene
+  brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
+  mcp-health         Probe MCP server connectivity and latency
 
 Remote:
   remote-setup  Configure remote provider prerequisites
@@ -116,6 +118,12 @@ case "${cmd}" in
     ;;
   knowledge-doctor)
     exec "${ROOT}/bin/lacp-knowledge-doctor" "$@"
+    ;;
+  brain-doctor)
+    exec "${ROOT}/bin/lacp-brain-doctor" "$@"
+    ;;
+  mcp-health)
+    exec "${ROOT}/bin/lacp-mcp-health" "$@"
     ;;
   status)
     exec "${ROOT}/bin/lacp-status-report" "$@"
