@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path.home()
@@ -217,7 +217,7 @@ def build_index(docs: list[RepoResearchDoc], generated_at: str) -> str:
 
 
 def sync_repo_research(scan_roots: list[Path], apply: bool) -> dict[str, object]:
-    generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     repos = discover_git_repos(scan_roots)
     repo_slug_map = load_repo_slug_map()
     docs = discover_repo_research(repos, repo_slug_map)
