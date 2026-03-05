@@ -10,6 +10,7 @@ usage() {
 Usage: lacp-brain-expand [--days N] [--apply] [--strict] [--json] [--skip-qmd]
 
 Runs the local Obsidian brain expansion loop:
+  0) Guard Obsidian graph/app config + stable symlinks
   1) Sync Claude/Codex sessions into vault notes
   2) Materialize captured web research into inbox notes
   3) Sync research signals into knowledge graph nodes
@@ -142,6 +143,21 @@ run_step_soft() {
   }
   log_step "PASS" "${name}" "ok"
 }
+
+# 1) Session sync
+GRAPH_GUARD_SCRIPT="${SCRIPTS_DIR}/ensure_obsidian_graph_health.py"
+if [[ ! -f "${GRAPH_GUARD_SCRIPT}" && -f "${REAL_AUTOMATION_ROOT}/scripts/ensure_obsidian_graph_health.py" ]]; then
+  GRAPH_GUARD_SCRIPT="${REAL_AUTOMATION_ROOT}/scripts/ensure_obsidian_graph_health.py"
+fi
+if [[ -f "${GRAPH_GUARD_SCRIPT}" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "obsidian_graph_guard" python3 "${GRAPH_GUARD_SCRIPT}" --apply
+  else
+    run_step_soft "obsidian_graph_guard" python3 "${GRAPH_GUARD_SCRIPT}"
+  fi
+else
+  log_step "WARN" "obsidian_graph_guard" "missing ensure_obsidian_graph_health.py"
+fi
 
 # 1) Session sync
 if [[ -x "${SCRIPTS_DIR}/run_session_sync.sh" ]]; then
