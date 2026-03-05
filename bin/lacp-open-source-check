@@ -97,13 +97,13 @@ if [[ "${SKIP_BOOTSTRAP}" -eq 1 ]]; then
   add_check "bootstrap:sanity" "WARN" "skipped by flag"
 else
   set +e
-  bootstrap_json="$("${ROOT}/bin/lacp-bootstrap-system" --profile existing --skip-verify --skip-fresh-check --no-auto-deps --no-auto-adopt --json 2>/dev/null)"
+  bootstrap_json="$("${ROOT}/bin/lacp-install" --profile existing --no-auto-deps --no-auto-adopt --no-obsidian-setup 2>/dev/null)"
   rc=$?
   set -e
   if [[ "${rc}" -eq 0 ]]; then
-    add_check "bootstrap:sanity" "PASS" "bootstrap-system existing profile succeeded"
+    add_check "bootstrap:sanity" "PASS" "lacp-install existing profile succeeded"
   else
-    add_check "bootstrap:sanity" "FAIL" "bootstrap-system failed rc=${rc}"
+    add_check "bootstrap:sanity" "FAIL" "lacp-install failed rc=${rc}"
   fi
 fi
 
