@@ -29,6 +29,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Install Options](#install-options)
 - [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
+- [Obsidian Brain Bundle](#obsidian-brain-bundle)
 - [5 Minute Smoke Test](#5-minute-smoke-test)
 - [Brand Assets](#brand-assets)
 - [Remote Setup](#remote-setup)
@@ -282,6 +283,35 @@ LACP is not for:
 - runs onboarding preflight checks
 - runs verification and produces baseline artifacts
 - runs fresh-machine confidence checks (`lacp-test --quick --isolated` + core command probes)
+
+## Obsidian Brain Bundle
+
+LACP includes a first-class Obsidian brain workflow out of the box:
+- vault bootstrap at `~/obsidian/nyk` during install (`--no-obsidian-setup` to skip)
+- QMD indexing package (`@tobilu/qmd`) installed by default
+- brain health checks: `bin/lacp brain-doctor --json | jq`
+- brain expansion loop: `bin/lacp brain-expand --apply --json | jq`
+- repository research mirroring into graph:
+  - `bin/lacp repo-research-sync --apply --json | jq`
+  - writes to `~/control/knowledge/knowledge-memory/graph/repo-research/`
+
+Recommended automation profiles:
+- every 30 minutes (repo research sync): `com.lacp.repo-research-sync`
+- every 6 hours (full brain-expand): `com.lacp.brain-expand-6h`
+
+Example manual load (user launchd domain):
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.lacp.repo-research-sync.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.lacp.brain-expand-6h.plist
+```
+
+Example status checks:
+
+```bash
+launchctl print gui/$(id -u)/com.lacp.repo-research-sync
+launchctl print gui/$(id -u)/com.lacp.brain-expand-6h
+```
 
 ## 5 Minute Smoke Test
 
