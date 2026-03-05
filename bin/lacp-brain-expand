@@ -15,11 +15,12 @@ Runs the local Obsidian brain expansion loop:
   2) Materialize captured web research into inbox notes
   3) Sync research signals into knowledge graph nodes
   4) Sync local repo/codebase knowledge into graph notes
-  5) Extract Obsidian Agent Daily progress into graph notes
-  6) Weekly consolidation gate (canonical synthesis notes from promoted research)
-  7) Route + archive inbox notes
-  8) Refresh QMD index (optional)
-  9) Run brain + knowledge doctors
+  5) Mirror repo docs/research notes into Obsidian graph nodes
+  6) Extract Obsidian Agent Daily progress into graph notes
+  7) Weekly consolidation gate (canonical synthesis notes from promoted research)
+  8) Route + archive inbox notes
+  9) Refresh QMD index (optional)
+ 10) Run brain + knowledge doctors
 
 Options:
   --days N      Lookback window for research sync (default: 7)
@@ -118,12 +119,10 @@ run_step() {
   local name="$1"
   shift
 
-  {
+  if {
     echo "[$(date -u +%H:%M:%S)] STEP ${name}"
     "$@"
-  } >> "${LOG_FILE}" 2>&1
-
-  if [[ "$?" -eq 0 ]]; then
+  } >> "${LOG_FILE}" 2>&1; then
     log_step "PASS" "${name}" "ok"
   else
     log_step "FAIL" "${name}" "see ${LOG_FILE}"
@@ -199,7 +198,18 @@ else
   log_step "WARN" "sync_repo_knowledge" "missing ${SCRIPTS_DIR}/sync_repo_knowledge.py"
 fi
 
-# 5) Extract Obsidian Agent Daily into graph notes
+# 5) Mirror repo docs/research notes into graph nodes
+if [[ -x "${ROOT}/bin/lacp-repo-research-sync" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step "sync_repo_research" "${ROOT}/bin/lacp-repo-research-sync" --apply --json
+  else
+    run_step "sync_repo_research" "${ROOT}/bin/lacp-repo-research-sync" --json
+  fi
+else
+  log_step "WARN" "sync_repo_research" "missing ${ROOT}/bin/lacp-repo-research-sync"
+fi
+
+# 6) Extract Obsidian Agent Daily into graph notes
 if [[ -f "${SCRIPTS_DIR}/sync_agent_daily_knowledge.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
     run_step "sync_agent_daily_knowledge" python3 "${SCRIPTS_DIR}/sync_agent_daily_knowledge.py" --days "${DAYS}" --apply --json
@@ -210,7 +220,7 @@ else
   log_step "WARN" "sync_agent_daily_knowledge" "missing ${SCRIPTS_DIR}/sync_agent_daily_knowledge.py"
 fi
 
-# 6) Weekly consolidation gate
+# 7) Weekly consolidation gate
 if [[ -f "${SCRIPTS_DIR}/consolidate_research.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
     run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/consolidate_research.py" --apply --weekly-gate --min-days-between-runs 6
@@ -221,7 +231,7 @@ else
   log_step "WARN" "consolidate_research" "missing ${SCRIPTS_DIR}/consolidate_research.py"
 fi
 
-# 7) Route/archive inbox
+# 8) Route/archive inbox
 if [[ -f "${SCRIPTS_DIR}/route_inbox.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
     run_step_soft "route_inbox" python3 "${SCRIPTS_DIR}/route_inbox.py" --apply
@@ -242,14 +252,14 @@ else
   log_step "WARN" "archive_inbox" "missing ${SCRIPTS_DIR}/archive_inbox.py"
 fi
 
-# 8) Update QMD collection index
+# 9) Update QMD collection index
 if [[ "${SKIP_QMD}" -eq 1 ]]; then
   log_step "WARN" "qmd_update" "skipped by --skip-qmd"
 else
   run_step_soft "qmd_update" npx -y @tobilu/qmd update
 fi
 
-# 9) Doctors (soft by default, strict only when requested)
+# 10) Doctors (soft by default, strict only when requested)
 run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 

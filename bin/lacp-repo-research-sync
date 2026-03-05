@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+HOME = Path.home()
+KNOWLEDGE_ROOT = HOME / "control" / "knowledge" / "knowledge-memory"
+REPO_RESEARCH_DIR = KNOWLEDGE_ROOT / "graph" / "repo-research"
+REPO_RESEARCH_INDEX = REPO_RESEARCH_DIR / "index.md"
+REPO_INDEX = KNOWLEDGE_ROOT / "graph" / "repositories" / "index.md"
+DEFAULT_SCAN_ROOTS = [
+    HOME / "repos",
+    HOME / "work",
+    HOME / "control" / "frameworks",
+]
+SEARCH_PATTERNS = ("docs/research/**/*.md",)
+
+REPO_INDEX_LINE_RE = re.compile(r"^- \[\[(repo-[^|\]]+)\|[^\]]+\]\] \u2014 `([^`]+)`$")
+HEADING_RE = re.compile(r"^#\s+(.+?)\s*$")
+
+
+@dataclass
+class RepoResearchDoc:
+    repo_path: Path
+    repo_rel: str
+    source_path: Path
+    source_rel: str
+    title: str
+    category: str
+    note_slug: str
+    repo_note_slug: str | None
+
+
+def slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "note"
+
+
+def discover_git_repos(scan_roots: list[Path]) -> list[Path]:
+    repos: set[Path] = set()
+    for root in scan_roots:
+        if not root.exists():
+            continue
+        for git_dir in root.rglob(".git"):
+            if git_dir.is_dir():
+                repos.add(git_dir.parent.resolve())
+    return sorted(repos, key=lambda p: str(p).lower())
+
+
+def run_git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def load_repo_slug_map() -> dict[str, str]:
+    if not REPO_INDEX.exists():
+        return {}
+    mapping: dict[str, str] = {}
+    for line in REPO_INDEX.read_text(encoding="utf-8", errors="ignore").splitlines():
+        m = REPO_INDEX_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        mapping[m.group(2)] = m.group(1)
+    return mapping
+
+
+def extract_title(source: Path) -> str:
+    text = source.read_text(encoding="utf-8", errors="ignore")
+    for line in text.splitlines():
+        m = HEADING_RE.match(line.strip())
+        if m:
+            return m.group(1).strip()
+    return source.stem.replace("-", " ").strip().title() or source.stem
+
+
+def infer_category(source_rel: str) -> str:
+    p = Path(source_rel)
+    parts = p.parts
+    if len(parts) >= 4 and parts[0] == "docs" and parts[1] == "research":
+        return slugify(parts[2])
+    return "general-research"
+
+
+def make_slug(repo_rel: str, source_rel: str) -> str:
+    digest = hashlib.sha1(f"{repo_rel}:{source_rel}".encode("utf-8")).hexdigest()[:12]
+    return f"repo-research-{digest}"
+
+
+def discover_repo_research(repo_paths: list[Path], repo_slug_map: dict[str, str]) -> list[RepoResearchDoc]:
+    out: list[RepoResearchDoc] = []
+    seen_keys: set[str] = set()
+    for repo in repo_paths:
+        repo_rel = str(repo).replace(str(HOME), "~")
+        origin = run_git(repo, "config", "--get", "remote.origin.url")
+        for pattern in SEARCH_PATTERNS:
+            for src in repo.glob(pattern):
+                if not src.is_file():
+                    continue
+                source_rel = str(src.relative_to(repo)).replace("\\", "/")
+                dedupe_root = origin or repo_rel
+                dedupe_key = f"{dedupe_root}::{source_rel}"
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                doc = RepoResearchDoc(
+                    repo_path=repo,
+                    repo_rel=repo_rel,
+                    source_path=src,
+                    source_rel=source_rel,
+                    title=extract_title(src),
+                    category=infer_category(source_rel),
+                    note_slug=make_slug(repo_rel, source_rel),
+                    repo_note_slug=repo_slug_map.get(repo_rel),
+                )
+                out.append(doc)
+    out.sort(key=lambda d: (d.repo_rel.lower(), d.source_rel.lower()))
+    return out
+
+
+def build_note(doc: RepoResearchDoc, generated_at: str) -> str:
+    repo_tag = slugify(doc.repo_path.name)
+    repo_link = (
+        f"[[{doc.repo_note_slug}|{doc.repo_path.name}]]"
+        if doc.repo_note_slug
+        else "[[repo-knowledge-index|Repository Index]]"
+    )
+    source_excerpt = doc.source_path.read_text(encoding="utf-8", errors="ignore").strip()
+    source_excerpt = "\n".join(source_excerpt.splitlines()[:220]).strip()
+
+    lines = [
+        "---",
+        f"id: {doc.note_slug}",
+        "type: repo-research",
+        f"tags: [research, repo-research, repo-{repo_tag}, category-{doc.category}]",
+        f"description: Mirrored repository research note from {doc.repo_rel}/{doc.source_rel}.",
+        f"source_repo: {doc.repo_rel}",
+        f"source_file: {doc.source_rel}",
+        f"generated_at_utc: {generated_at}",
+        "---",
+        "",
+        f"# {doc.title}",
+        "",
+        "## Metadata",
+        "",
+        f"- Repo: `{doc.repo_rel}`",
+        f"- Source: `{doc.source_rel}`",
+        f"- Category: `{doc.category}`",
+        "",
+        "## Connections",
+        "",
+        f"- {repo_link}",
+        "- [[research-index]]",
+        "- [[atlas/research|Atlas: Research]]",
+        "",
+        "## Source Extract",
+        "",
+        "```markdown",
+        source_excerpt or "(empty)",
+        "```",
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_index(docs: list[RepoResearchDoc], generated_at: str) -> str:
+    grouped: dict[str, list[RepoResearchDoc]] = {}
+    for doc in docs:
+        grouped.setdefault(doc.repo_rel, []).append(doc)
+
+    lines = [
+        "---",
+        "id: repo-research-index",
+        "type: knowledge-index",
+        "tags: [research, repo-research, index]",
+        "description: Auto-managed index of repository research documents mirrored into Obsidian knowledge.",
+        f"generated_at_utc: {generated_at}",
+        "---",
+        "",
+        "# Repository Research Index",
+        "",
+        f"- Total mirrored notes: {len(docs)}",
+        f"- Repositories represented: {len(grouped)}",
+        "",
+        "## Repositories",
+        "",
+    ]
+
+    for repo_rel in sorted(grouped.keys(), key=str.lower):
+        repo_docs = grouped[repo_rel]
+        lines.append(f"### `{repo_rel}`")
+        for doc in repo_docs:
+            lines.append(f"- [[{doc.note_slug}|{doc.title}]]")
+        lines.append("")
+
+    lines.extend([
+        "## Links",
+        "",
+        "- [[repo-knowledge-index]]",
+        "- [[research-index]]",
+        "- [[knowledge/index]]",
+        "",
+    ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def sync_repo_research(scan_roots: list[Path], apply: bool) -> dict[str, object]:
+    generated_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    repos = discover_git_repos(scan_roots)
+    repo_slug_map = load_repo_slug_map()
+    docs = discover_repo_research(repos, repo_slug_map)
+
+    outputs: list[tuple[Path, str]] = []
+    outputs.append((REPO_RESEARCH_INDEX, build_index(docs, generated_at)))
+    for doc in docs:
+        outputs.append((REPO_RESEARCH_DIR / f"{doc.note_slug}.md", build_note(doc, generated_at)))
+
+    changed = 0
+    unchanged = 0
+    if apply:
+        REPO_RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+        keep = {path.name for path, _ in outputs}
+        for existing in REPO_RESEARCH_DIR.glob("*.md"):
+            if existing.name not in keep:
+                existing.unlink(missing_ok=True)
+
+        for path, content in outputs:
+            if path.exists() and path.read_text(encoding="utf-8") == content:
+                unchanged += 1
+                continue
+            path.write_text(content, encoding="utf-8")
+            changed += 1
+    else:
+        for path, content in outputs:
+            if path.exists() and path.read_text(encoding="utf-8") == content:
+                unchanged += 1
+            else:
+                changed += 1
+
+    return {
+        "ok": True,
+        "mode": "apply" if apply else "dry-run",
+        "scan_roots": [str(r) for r in scan_roots],
+        "repos_found": len(repos),
+        "repo_research_docs": len(docs),
+        "notes_targeted": len(outputs),
+        "notes_changed": changed,
+        "notes_unchanged": unchanged,
+        "output_dir": str(REPO_RESEARCH_DIR),
+        "index_note": str(REPO_RESEARCH_INDEX),
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Mirror repository docs/research markdown into Obsidian knowledge graph notes.")
+    parser.add_argument("--apply", action="store_true", help="Write notes (default dry-run)")
+    parser.add_argument("--json", action="store_true", help="Emit JSON result")
+    parser.add_argument("--scan-root", action="append", default=[], help="Additional root to scan for git repositories")
+    return parser.parse_args()
+
+
+def _self_test() -> None:
+    assert slugify("Repo Name!") == "repo-name"
+    assert infer_category("docs/research/design/ui-patterns.md") == "design"
+    assert infer_category("docs/elsewhere/readme.md") == "general-research"
+    slug = make_slug("~/repos/demo", "docs/research/a.md")
+    assert slug.startswith("repo-research-")
+
+
+def main() -> None:
+    _self_test()
+    args = parse_args()
+
+    roots = list(DEFAULT_SCAN_ROOTS)
+    for root in args.scan_root:
+        roots.append(Path(os.path.expanduser(root)).resolve())
+
+    result = sync_repo_research(roots, apply=args.apply)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        for key, value in result.items():
+            print(f"{key}: {value}")
+
+
+if __name__ == "__main__":
+    main()

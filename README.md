@@ -416,7 +416,8 @@ Notes:
   - background process audit (known CPU-wasting agents)
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
-- `bin/lacp-brain-expand`: automated brain expansion loop (session sync + research materialization + thresholded research graph promotion + weekly consolidation into canonical synthesis notes + repo/agent-daily graph sync + inbox hygiene + doctor checks)
+- `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
+- `bin/lacp-brain-expand`: automated brain expansion loop (session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + agent-daily sync + inbox hygiene + doctor checks)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
 - `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`)
