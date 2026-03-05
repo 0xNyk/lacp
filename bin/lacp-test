@@ -119,7 +119,10 @@ fi
 
 log "Running full test suite"
 for f in "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh; do
-  bash -n "$f"
+  [[ -f "${f}" ]] || continue
+  if head -n 1 "${f}" | grep -Eq '^#!.*\b(bash|sh)\b'; then
+    bash -n "${f}"
+  fi
 done
 
 "/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
@@ -178,7 +181,16 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
 
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh
+  shellcheck_targets=()
+  for f in "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "${ROOT}"/scripts/ci/*.sh; do
+    [[ -f "${f}" ]] || continue
+    if head -n 1 "${f}" | grep -Eq '^#!.*\b(bash|sh)\b'; then
+      shellcheck_targets+=("${f}")
+    fi
+  done
+  if [[ "${#shellcheck_targets[@]}" -gt 0 ]]; then
+    shellcheck "${shellcheck_targets[@]}"
+  fi
 fi
 
 if [[ "${ISOLATED}" -eq 1 ]]; then
