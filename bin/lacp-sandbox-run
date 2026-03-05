@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Recursion guard: if we're already inside a sandbox-run, exec the command directly
-if [[ "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
+# Recursion guard: only bypass when both depth and explicit guard flag are set by
+# a parent lacp-sandbox-run process. This prevents accidental env leakage from
+# disabling policy gates.
+if [[ "${LACP_SANDBOX_RECURSION_GUARD:-0}" == "1" && "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
   shift_past_opts=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -19,6 +21,7 @@ if [[ "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
   exec "$@"
 fi
 export LACP_SANDBOX_DEPTH=1
+export LACP_SANDBOX_RECURSION_GUARD=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
