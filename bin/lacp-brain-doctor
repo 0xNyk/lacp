@@ -191,10 +191,13 @@ fi
 # Check mlx_whisper in any venv
 whisper_venv="${HOME}/.venvs/whisper/bin/python"
 if [[ -f "${whisper_venv}" ]]; then
-  if "${whisper_venv}" -c "import mlx_whisper" 2>/dev/null; then
+  whisper_py_minor="$("${whisper_venv}" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)"
+  if [[ "${whisper_py_minor}" == "3.12" ]]; then
+    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv is Python 3.12 (MLX import probe skipped due known crash risk)"
+  elif "${whisper_venv}" -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('mlx_whisper') else 1)" 2>/dev/null; then
     add_check "brain:voice:mlx_whisper" "PASS" "mlx_whisper available in whisper venv"
   else
-    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv exists but mlx_whisper not importable"
+    add_check "brain:voice:mlx_whisper" "WARN" "whisper venv exists but mlx_whisper module spec not found"
   fi
 else
   add_check "brain:voice:mlx_whisper" "WARN" "whisper venv not found at ${whisper_venv}"
