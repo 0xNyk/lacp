@@ -131,7 +131,13 @@ setup_obsidian_vault() {
       log "Keeping existing path (not symlink): ${target}"
       return 0
     fi
-    ln -s "${source}" "${target}"
+    ln -s "${source}" "${target}" 2>/dev/null || {
+      if [[ -e "${target}" || -L "${target}" ]]; then
+        log "Detected concurrent link creation, keeping existing path: ${target}"
+        return 0
+      fi
+      return 1
+    }
     log "Created symlink: ${target} -> ${source}"
   }
 
