@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-skill-sync-anthropic [options]
+
+Sync official Anthropic skills into local Claude/Codex skill paths.
+
+Options:
+  --skill <name>        Skill name under anthropics/skills (default: skill-creator)
+  --repo <url>          Upstream repo URL (default: https://github.com/anthropics/skills.git)
+  --ref <ref>           Git ref/branch/tag (default: main)
+  --target <path>       Claude skill target directory (default: ~/.agents/skills/<skill>)
+  --apply               Apply changes (default: dry-run)
+  --json                Emit JSON result
+  -h, --help            Show help
+EOF
+}
+
+SKILL_NAME="skill-creator"
+UPSTREAM_REPO="https://github.com/anthropics/skills.git"
+UPSTREAM_REF="main"
+TARGET_DIR=""
+APPLY=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skill)
+      SKILL_NAME="$2"
+      shift 2
+      ;;
+    --repo)
+      UPSTREAM_REPO="$2"
+      shift 2
+      ;;
+    --ref)
+      UPSTREAM_REF="$2"
+      shift 2
+      ;;
+    --target)
+      TARGET_DIR="$2"
+      shift 2
+      ;;
+    --apply)
+      APPLY=1
+      shift
+      ;;
+    --json)
+      AS_JSON=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+require_cmd git
+require_cmd rsync
+
+if [[ -z "${TARGET_DIR}" ]]; then
+  TARGET_DIR="${HOME}/.agents/skills/${SKILL_NAME}"
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+clone_dir="${tmp_dir}/skills"
+git clone --depth 1 --filter=blob:none --sparse --branch "${UPSTREAM_REF}" "${UPSTREAM_REPO}" "${clone_dir}" >/dev/null 2>&1
+(cd "${clone_dir}" && git sparse-checkout set "skills/${SKILL_NAME}" >/dev/null 2>&1)
+
+upstream_dir="${clone_dir}/skills/${SKILL_NAME}"
+[[ -d "${upstream_dir}" ]] || die "Skill not found upstream: skills/${SKILL_NAME}"
+
+upstream_commit="$(git -C "${clone_dir}" rev-parse HEAD)"
+
+target_exists=false
+if [[ -d "${TARGET_DIR}" ]]; then
+  target_exists=true
+fi
+
+if [[ "${APPLY}" -eq 1 ]]; then
+  mkdir -p "${TARGET_DIR}"
+  rsync -a --delete "${upstream_dir}/" "${TARGET_DIR}/"
+
+  codex_skills_dir="${HOME}/.codex/skills"
+  codex_link="${codex_skills_dir}/${SKILL_NAME}"
+  mkdir -p "${codex_skills_dir}"
+  if [[ -L "${codex_link}" || ! -e "${codex_link}" ]]; then
+    ln -sfn "../../.agents/skills/${SKILL_NAME}" "${codex_link}"
+  fi
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  jq -n \
+    --arg schema_version "1" \
+    --arg kind "skill_sync_anthropic" \
+    --arg skill "${SKILL_NAME}" \
+    --arg repo "${UPSTREAM_REPO}" \
+    --arg ref "${UPSTREAM_REF}" \
+    --arg upstream_commit "${upstream_commit}" \
+    --arg target "${TARGET_DIR}" \
+    --argjson applied "$([[ "${APPLY}" -eq 1 ]] && echo true || echo false)" \
+    --argjson target_exists "$([[ "${target_exists}" == "true" ]] && echo true || echo false)" \
+    '{
+      schema_version: $schema_version,
+      kind: $kind,
+      ok: true,
+      skill: $skill,
+      upstream_repo: $repo,
+      upstream_ref: $ref,
+      upstream_commit: $upstream_commit,
+      target: $target,
+      target_preexisting: $target_exists,
+      applied: $applied
+    }'
+else
+  mode="dry-run"
+  if [[ "${APPLY}" -eq 1 ]]; then
+    mode="apply"
+  fi
+  log "skill-sync ${mode} skill=${SKILL_NAME} target=${TARGET_DIR} upstream_commit=${upstream_commit}"
+fi
