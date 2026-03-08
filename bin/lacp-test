@@ -177,6 +177,8 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-release-verify.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-open-source-check.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-brain-expand.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-session-orient.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-write-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-bootstrap-system.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"
