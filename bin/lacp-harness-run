@@ -465,7 +465,7 @@ def main() -> int:
     profiles_map = profiles_payload.get("profiles", {})
     verification_map = verification_payload.get("policies", {})
 
-    knowledge_root = Path(os.environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / "control/knowledge/knowledge-memory")))
+    knowledge_root = Path(os.environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / ".lacp/knowledge")))
     run_dir = knowledge_root / "data" / "harness-runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 

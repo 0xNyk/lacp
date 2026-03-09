@@ -21,7 +21,8 @@ Notes:
   - Ensures root/data directories exist.
   - Runs lacp-onboard at the end (optionally with verify).
   - On macOS, dependency auto-detection is enabled by default and can install missing Homebrew formulas/casks plus npm global packages (including qmd).
-  - Obsidian vault bootstrap is enabled by default and creates/syncs core `~/obsidian/nyk` links used by brain tooling.
+  - Obsidian vault bootstrap is enabled by default and creates/syncs core vault links used by brain tooling.
+  - Set LACP_OBSIDIAN_VAULT to override the vault path (default: ~/obsidian/vault).
 EOF
 }
 
@@ -107,7 +108,7 @@ if [[ "${AUTO_DEPS}" -eq 1 ]]; then
 fi
 
 setup_obsidian_vault() {
-  local vault_root="${HOME}/obsidian/nyk"
+  local vault_root="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
   local docs_root="${HOME}/docs"
   local sessions_root="${HOME}/control/sessions"
   local skills_root="${HOME}/control/skills"
@@ -201,7 +202,7 @@ echo "[lacp-stub] run_shared_memory.sh noop"
 set -euo pipefail
 HOURS="${1:-24}"
 K="${4:-8}"
-KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.lacp/knowledge}"
 mkdir -p "${KNOWLEDGE_ROOT}/data/benchmarks"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="${KNOWLEDGE_ROOT}/data/benchmarks/benchmark-${TS}.json"
@@ -227,7 +228,7 @@ echo "[lacp-stub] wrote benchmark: ${OUT}"
   # shellcheck disable=SC2016
   write_stub_if_needed "$(automation_script run_memory_benchmark_suite.sh)" "755" '#!/usr/bin/env bash
 set -euo pipefail
-KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.lacp/knowledge}"
 mkdir -p "${KNOWLEDGE_ROOT}/data"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [lacp-stub] benchmark suite refresh" >> "${KNOWLEDGE_ROOT}/data/benchmark.log"
 echo "[lacp-stub] benchmark log updated"
@@ -245,7 +246,7 @@ parser.add_argument("--hours", default="24")
 parser.add_argument("--timing-runs", default="3")
 args = parser.parse_args()
 
-automation_root = Path(os.environ.get("LACP_AUTOMATION_ROOT", str(Path.home() / "control/automation/ai-dev-optimization")))
+automation_root = Path(os.environ.get("LACP_AUTOMATION_ROOT", str(Path.home() / ".lacp/automation")))
 snapshots = automation_root / "data" / "snapshots"
 snapshots.mkdir(parents=True, exist_ok=True)
 ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

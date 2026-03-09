@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-VAULT_ROOT="${HOME}/obsidian/nyk"
+VAULT_ROOT="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 SESSIONS_ROOT="${HOME}/control/sessions"
 SESSIONS_DIR="${SESSIONS_ROOT}/claude"
@@ -45,7 +45,7 @@ CODEX_SESSIONS_DIR="${SESSIONS_ROOT}/codex"
 DAILY_DIR="${VAULT_ROOT}/00-home/daily"
 ATLAS_DIR="${VAULT_ROOT}/atlas"
 INBOX_DIR="${VAULT_ROOT}/inbox"
-REAL_AUTOMATION_ROOT="${HOME}/control/automation/ai-dev-optimization"
+REAL_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT}"
 VOICE_SCRIPT="${REAL_AUTOMATION_ROOT}/scripts/voice_daily_note.py"
 SC_MCP_DIR="${HOME}/.local/share/smart-connections-mcp"
 

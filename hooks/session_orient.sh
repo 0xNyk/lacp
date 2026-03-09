@@ -9,7 +9,7 @@ set -euo pipefail
 # Falls back gracefully if paths don't exist (new installs).
 
 LACP_ROOT="${LACP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/control/knowledge/knowledge-memory}"
+KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.lacp/knowledge}"
 BRAIN_EXPAND_LOGS="${KNOWLEDGE_ROOT}/data/workflows/brain-expand"
 GAP_DETECTION_DIR="${KNOWLEDGE_ROOT}/data/gap-detection"
 REVIEW_QUEUE_DIR="${KNOWLEDGE_ROOT}/data/review-queue"

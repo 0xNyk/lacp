@@ -20,18 +20,18 @@ from pathlib import Path
 # Configurable knowledge paths (colon-separated)
 KNOWLEDGE_PATHS_ENV = os.environ.get(
     "LACP_WRITE_VALIDATE_PATHS",
-    os.path.expanduser("~/obsidian/nyk")
+    os.environ.get("LACP_OBSIDIAN_VAULT", os.path.expanduser("~/obsidian/vault"))
     + ":"
     + os.environ.get(
         "LACP_KNOWLEDGE_ROOT",
-        os.path.expanduser("~/control/knowledge/knowledge-memory"),
+        os.path.expanduser("~/.lacp/knowledge"),
     ),
 )
 
 TAXONOMY_PATH = os.environ.get(
     "LACP_TAXONOMY_PATH",
     os.path.expanduser(
-        "~/control/knowledge/knowledge-memory/data/research/taxonomy.json"
+        "~/.lacp/knowledge/data/research/taxonomy.json"
     ),
 )
 

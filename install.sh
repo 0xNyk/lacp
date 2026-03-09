@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_SLUG="${LACP_REPO_SLUG:-0xNyk/lacp}"
 REF="${LACP_REF:-main}"
-INSTALL_DIR="${LACP_INSTALL_DIR:-$HOME/control/frameworks/lacp}"
+INSTALL_DIR="${LACP_INSTALL_DIR:-$HOME/.lacp}"
 WITH_VERIFY="${LACP_WITH_VERIFY:-1}"
 PROFILE="${LACP_INSTALL_PROFILE:-starter}"
 
