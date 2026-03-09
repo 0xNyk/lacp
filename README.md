@@ -128,7 +128,7 @@ bin/lacp-sandbox-run \
 ## Quick Start
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp bootstrap-system --profile starter --with-verify
 bin/lacp-mode show
 bin/lacp-mode remote-enabled --ttl-min 30
@@ -143,7 +143,7 @@ Use this as the default day-to-day flow after install.
 ### 1. Start session health checks
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp doctor --fix-hints
 bin/lacp system-health --fix-hints
 bin/lacp status --json | jq
@@ -273,10 +273,10 @@ LACP is not for:
 `bin/lacp bootstrap-system --profile starter --with-verify`:
 - creates `.env` from template when missing
 - auto-detects and installs missing dependencies on macOS (disable with `--no-auto-deps`)
-  - Homebrew formulas: `jq ripgrep python@3.11 git tmux gh rust llvm z3 node`
+  - Homebrew formulas: `jq ripgrep python@3.11 git tmux gh node`
   - Homebrew casks: `obsidian`
   - npm globals: `@tobilu/qmd`
-- bootstraps Obsidian vault structure at `~/obsidian/nyk` with core LACP symlinks (disable with `--no-obsidian-setup`)
+- bootstraps Obsidian vault structure at `$LACP_OBSIDIAN_VAULT` (default: `~/obsidian/vault`) with core LACP symlinks (disable with `--no-obsidian-setup`)
 - applies the `starter` policy pack defaults (starter profile)
 - ensures required root/data paths exist
 - scaffolds safe starter automation scripts when missing
@@ -287,13 +287,13 @@ LACP is not for:
 ## Obsidian Brain Bundle
 
 LACP includes a first-class Obsidian brain workflow out of the box:
-- vault bootstrap at `~/obsidian/nyk` during install (`--no-obsidian-setup` to skip)
+- vault bootstrap at `$LACP_OBSIDIAN_VAULT` (default: `~/obsidian/vault`) during install (`--no-obsidian-setup` to skip)
 - QMD indexing package (`@tobilu/qmd`) installed by default
 - brain health checks: `bin/lacp brain-doctor --json | jq`
 - brain expansion loop: `bin/lacp brain-expand --apply --json | jq`
 - repository research mirroring into graph:
   - `bin/lacp repo-research-sync --apply --json | jq`
-  - writes to `~/control/knowledge/knowledge-memory/graph/repo-research/`
+  - writes to `$LACP_KNOWLEDGE_ROOT/graph/repo-research/`
 - upstream Anthropic skill sync:
   - `bin/lacp skill-sync-anthropic --skill skill-creator --apply --json | jq`
 
@@ -318,7 +318,7 @@ launchctl print gui/$(id -u)/com.lacp.brain-expand-6h
 ## 5 Minute Smoke Test
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp install --profile starter --with-verify
 bin/lacp test --quick
 bin/lacp test --isolated
@@ -351,7 +351,7 @@ By default, LACP runs in **zero-external mode**:
 ### Daytona
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp-remote-setup --provider daytona
 daytona login
 bin/lacp-remote-smoke --provider daytona --json
@@ -360,7 +360,7 @@ bin/lacp-remote-smoke --provider daytona --json
 ### E2B
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp-remote-setup --provider e2b --e2b-sandbox-id "<running-sandbox-id>"
 bin/lacp-remote-smoke --provider e2b --json
 ```
@@ -484,7 +484,7 @@ This maps directly to:
 Validate a generated task plan:
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp harness-validate --tasks ./tasks.json --json | jq
 bin/lacp harness-run --tasks ./tasks.json --workdir . --json | jq
 bin/lacp harness-replay --run-id <run-id> --task-id <task-id> --workdir . --json | jq
@@ -567,15 +567,15 @@ See:
 
 ## Artifacts
 
-- benchmark reports: `~/control/knowledge/knowledge-memory/data/benchmarks/*.json`
-- snapshots: `~/control/automation/ai-dev-optimization/data/snapshots/*.json`
-- sandbox runs: `~/control/knowledge/knowledge-memory/data/sandbox-runs/*.json`
-- remote smoke runs: `~/control/knowledge/knowledge-memory/data/remote-smoke/*.json`
+- benchmark reports: `$LACP_KNOWLEDGE_ROOT/data/benchmarks/*.json`
+- snapshots: `$LACP_AUTOMATION_ROOT/data/snapshots/*.json`
+- sandbox runs: `$LACP_KNOWLEDGE_ROOT/data/sandbox-runs/*.json`
+- remote smoke runs: `$LACP_KNOWLEDGE_ROOT/data/remote-smoke/*.json`
 
 ## Testing
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 ./scripts/ci/test-route-policy.sh
 ./scripts/ci/test-mode-and-gates.sh
 ./scripts/ci/test-knowledge-doctor.sh

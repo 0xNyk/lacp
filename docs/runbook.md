@@ -3,7 +3,7 @@
 ## First-Time Setup
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp bootstrap-system --profile starter --with-verify
 ```
 
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
 ## Standard Verification Cycle
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp install --profile starter
 bin/lacp install --profile starter --no-auto-deps
 bin/lacp verify --hours 24
@@ -32,7 +32,7 @@ Expected outputs:
 ## Health Diagnostics
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp doctor
 bin/lacp doctor --json
 bin/lacp doctor --fix
@@ -88,14 +88,14 @@ Use these files as the source of truth for harness workflows:
 Validate locally:
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 ./scripts/ci/test-harness-contracts.sh
 ```
 
 ## Pre-Live Go/No-Go Gate
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp release-gate
 ```
 
@@ -115,7 +115,7 @@ Useful options:
 Recommended chained discipline:
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp canary --json | jq
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json | jq
 ```
@@ -125,7 +125,7 @@ bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --sin
 Use orchestration as an optional layer while keeping LACP as the gatekeeper:
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp orchestrate doctor --json | jq
 
 # dmux (default backend, safe dry-run)
@@ -193,7 +193,7 @@ bin/lacp unadopt-local --json | jq
 ## Operating Mode
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp-mode show
 bin/lacp-mode local-only
 bin/lacp-mode remote-enabled --ttl-min 30
@@ -203,7 +203,7 @@ bin/lacp-mode revoke-approval
 ## Sandbox Routing
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 
 # Trusted local example
 bin/lacp-route --task "run memory benchmark on internal repo" --repo-trust trusted
@@ -226,7 +226,7 @@ bin/lacp-route \
 ## Sandbox Execution Adapter
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 
 # Trusted local execution
 bin/lacp-sandbox-run \
@@ -257,7 +257,7 @@ bin/lacp-sandbox-run \
 ## Incident Drill
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp incident-drill --scenario retrieval-regression
 bin/lacp incident-drill --scenario sandbox-gate-bypass --execute
 ```
@@ -265,7 +265,7 @@ bin/lacp incident-drill --scenario sandbox-gate-bypass --execute
 ## Deterministic Team Workflow
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 run_id="$(bin/lacp workflow-run init --task 'Add OAuth auth' --project auth --json | jq -r '.run_id')"
 bin/lacp workflow-run advance --run-id "$run_id" --stage planner --actor planner
 bin/lacp workflow-run advance --run-id "$run_id" --stage developer --actor developer
@@ -280,7 +280,7 @@ bin/lacp workflow-run status --run-id "$run_id" --json | jq '.status,.current_st
 Default recommended mode:
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 echo 'LACP_ALLOW_EXTERNAL_REMOTE="false"' >> .env
 ```
 
@@ -294,7 +294,7 @@ Behavior:
 ## Daytona Runner (Remote Execution)
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp-remote-setup --provider daytona
 daytona login
 bin/lacp-remote-smoke --provider daytona --json
@@ -316,7 +316,7 @@ Default integration mode uses non-interactive lifecycle (`create -> exec -> kill
 Existing-sandbox mode remains available with `E2B_SANDBOX_ID`.
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 
 bin/lacp-remote-setup --provider e2b
 export E2B_API_KEY="<your-api-key>"
@@ -360,10 +360,10 @@ Confirm:
 
 Confirm:
 - benchmark script completed successfully
-- output directory exists: `~/control/knowledge/knowledge-memory/data/benchmarks`
+- output directory exists: `$LACP_KNOWLEDGE_ROOT/data/benchmarks`
 
 ### Snapshot missing
 
 Confirm:
 - `capture_snapshot.py` exists
-- output directory exists: `~/control/automation/ai-dev-optimization/data/snapshots`
+- output directory exists: `$LACP_AUTOMATION_ROOT/data/snapshots`

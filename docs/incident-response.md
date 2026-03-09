@@ -39,5 +39,5 @@ bin/lacp incident-drill --scenario memory-sync-drift --execute
 ```
 
 Artifacts are written to:
-- `~/control/knowledge/knowledge-memory/data/incidents/drills/*.json`
-- `~/control/knowledge/knowledge-memory/data/incidents/drills/*.md`
+- `$LACP_KNOWLEDGE_ROOT/data/incidents/drills/*.json`
+- `$LACP_KNOWLEDGE_ROOT/data/incidents/drills/*.md`

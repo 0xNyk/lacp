@@ -75,8 +75,8 @@ if ! [[ "${DAYS}" =~ ^[0-9]+$ ]]; then
   die "--days must be a non-negative integer"
 fi
 
-REAL_AUTOMATION_ROOT="${HOME}/control/automation/ai-dev-optimization"
-REAL_KNOWLEDGE_ROOT="${HOME}/control/knowledge/knowledge-memory"
+REAL_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT}"
+REAL_KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT}"
 
 SCRIPTS_DIR="${LACP_AUTOMATION_ROOT}/scripts"
 if [[ ! -d "${SCRIPTS_DIR}" ]]; then

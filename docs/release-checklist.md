@@ -5,7 +5,7 @@ Use this checklist before tagging any release.
 ## 1) Validate locally
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp-test --isolated
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
 bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
@@ -28,7 +28,7 @@ Pass criteria:
 ## 3) Commit release prep
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 git add .
 git commit -m "chore(release): prepare vX.Y.Z"
 git push origin main
@@ -37,7 +37,7 @@ git push origin main
 ## 4) Tag + push
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
@@ -45,7 +45,7 @@ git push origin vX.Y.Z
 ## 5) Publish assets from local machine (no Actions)
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp release-publish \
   --tag vX.Y.Z \
   --quick \
@@ -73,7 +73,7 @@ shasum -a 256 -c SHA256SUMS
 
 ```bash
 # In lacp repo
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 TAR_URL="https://github.com/0xNyk/lacp/releases/download/vX.Y.Z/lacp-X.Y.Z.tar.gz"
 SHA="$(curl -fsSL "$TAR_URL" | shasum -a 256 | awk '{print $1}')"
 echo "$SHA"
@@ -86,7 +86,7 @@ Update `homebrew-lacp/Formula/lacp.rb`:
 Then:
 
 ```bash
-cd ~/control/frameworks/homebrew-lacp
+cd /path/to/homebrew-lacp
 git add Formula/lacp.rb README.md
 git commit -m "chore(release): lacp vX.Y.Z"
 git push origin main
