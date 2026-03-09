@@ -49,6 +49,7 @@ Ops:
   cache-guard   Enforce cache effectiveness thresholds
   skill-audit   Audit local skills for supply-chain risk patterns
   skill-factory Manage auto-skill-factory capture/record/lifecycle workflows
+  skill-score   Confidence scoring, decay, pruning for skill workflows
   release-gate  Run strict pre-live go/no-go gates
   pr-preflight  Evaluate PR policy gates (risk tier/checks/review/evidence)
   harness-validate Validate tasks.json against harness contracts
@@ -238,6 +239,9 @@ case "${cmd}" in
     ;;
   skill-factory)
     exec "${ROOT}/bin/lacp-skill-factory" "$@"
+    ;;
+  skill-score)
+    exec "${ROOT}/bin/lacp-skill-score" "$@"
     ;;
   release-gate)
     exec "${ROOT}/bin/lacp-release-gate" "$@"

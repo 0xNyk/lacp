@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+SKILL_FACTORY_ROOT="${HOME}/.agents/skills/auto-skill-factory"
+LEDGER_PATH="${SKILL_FACTORY_ROOT}/state/workflow_ledger.json"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp skill-score <subcommand> [options]
+
+Subcommands:
+  recalc              Recompute confidence for all workflows
+  prune --below <N>   Archive workflows with confidence below threshold
+  report [--json]     Summary: total, by decay_class, by confidence bucket
+
+Options:
+  --ledger <path>     Override ledger path (default: auto-skill-factory state)
+  -h, --help          Show this help
+EOF
+}
+
+SUBCMD=""
+PRUNE_THRESHOLD=""
+JSON_OUTPUT=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    recalc|prune|report)
+      SUBCMD="$1"
+      shift
+      ;;
+    --below)
+      PRUNE_THRESHOLD="${2:-}"
+      shift 2
+      ;;
+    --json)
+      JSON_OUTPUT=1
+      shift
+      ;;
+    --ledger)
+      LEDGER_PATH="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if [[ -z "${SUBCMD}" ]]; then
+  usage
+  exit 1
+fi
+
+if [[ ! -f "${LEDGER_PATH}" ]]; then
+  die "Ledger not found: ${LEDGER_PATH}"
+fi
+
+require_cmd python3
+require_cmd jq
+
+case "${SUBCMD}" in
+  recalc)
+    python3 -c "
+import json, sys, datetime as dt
+
+CONFIDENCE_WEIGHT_SUCCESS = 0.35
+CONFIDENCE_WEIGHT_VALIDATION = 0.35
+CONFIDENCE_WEIGHT_RECENCY = 0.15
+CONFIDENCE_WEIGHT_OBSERVATION = 0.15
+VALID_DECAY_CLASSES = ('architecture', 'procedure', 'ephemeral')
+
+def compute_recency_boost(last_seen_iso):
+    try:
+        last_seen = dt.datetime.fromisoformat(last_seen_iso)
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=dt.timezone.utc)
+        now = dt.datetime.now(dt.timezone.utc)
+        days_ago = (now - last_seen).total_seconds() / 86400
+    except (ValueError, TypeError):
+        return 0.0
+    if days_ago < 7:
+        return 1.0
+    weeks_past_first = (days_ago - 7) / 7
+    return max(0.0, 1.0 - (0.1 * (1 + weeks_past_first)))
+
+ledger = json.load(open(sys.argv[1]))
+workflows = ledger.get('workflows', {})
+updated = 0
+for key, entry in workflows.items():
+    if not isinstance(entry, dict):
+        continue
+    count = int(entry.get('count', 0))
+    success_count = int(entry.get('success_count', 0))
+    validation_count = int(entry.get('validation_count', 0))
+    success_rate = (success_count / count) if count > 0 else 0.0
+    validation_rate = (validation_count / count) if count > 0 else 0.0
+    recency_boost = compute_recency_boost(str(entry.get('last_seen', '')))
+    observation_weight = min(count / 10.0, 1.0) if count > 0 else 0.0
+
+    decay_class = entry.get('decay_class', 'procedure')
+    if decay_class not in VALID_DECAY_CLASSES:
+        decay_class = 'procedure'
+    if decay_class == 'architecture':
+        recency_boost = 1.0
+
+    confidence = (
+        (success_rate * CONFIDENCE_WEIGHT_SUCCESS)
+        + (validation_rate * CONFIDENCE_WEIGHT_VALIDATION)
+        + (recency_boost * CONFIDENCE_WEIGHT_RECENCY)
+        + (observation_weight * CONFIDENCE_WEIGHT_OBSERVATION)
+    )
+    entry['confidence'] = round(confidence, 4)
+    entry['confidence_factors'] = {
+        'success_rate': round(success_rate, 4),
+        'validation_rate': round(validation_rate, 4),
+        'recency_boost': round(recency_boost, 4),
+        'observation_weight': round(observation_weight, 4),
+    }
+    entry['decay_class'] = decay_class
+    updated += 1
+
+ledger['updated_at'] = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+tmp = sys.argv[1] + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(ledger, f, indent=2, sort_keys=True)
+    f.write('\n')
+import os
+os.replace(tmp, sys.argv[1])
+print(json.dumps({'ok': True, 'updated': updated}))
+" "${LEDGER_PATH}"
+    ;;
+
+  prune)
+    if [[ -z "${PRUNE_THRESHOLD}" ]]; then
+      die "prune requires --below <threshold> (e.g. --below 0.2)"
+    fi
+    python3 -c "
+import json, sys, datetime as dt
+
+threshold = float(sys.argv[2])
+ledger = json.load(open(sys.argv[1]))
+workflows = ledger.get('workflows', {})
+archived = ledger.setdefault('archived_workflows', {})
+pruned_keys = []
+for key in list(workflows.keys()):
+    entry = workflows[key]
+    if not isinstance(entry, dict):
+        continue
+    confidence = float(entry.get('confidence', 0.0))
+    if confidence < threshold:
+        archived[key] = entry
+        archived[key]['archived_at'] = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+        archived[key]['archive_reason'] = f'confidence {confidence:.4f} below {threshold}'
+        del workflows[key]
+        pruned_keys.append(key)
+
+ledger['updated_at'] = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+tmp = sys.argv[1] + '.tmp'
+with open(tmp, 'w') as f:
+    json.dump(ledger, f, indent=2, sort_keys=True)
+    f.write('\n')
+import os
+os.replace(tmp, sys.argv[1])
+print(json.dumps({'ok': True, 'pruned': len(pruned_keys), 'pruned_keys': pruned_keys}))
+" "${LEDGER_PATH}" "${PRUNE_THRESHOLD}"
+    ;;
+
+  report)
+    result="$(python3 -c "
+import json, sys
+
+ledger = json.load(open(sys.argv[1]))
+workflows = ledger.get('workflows', {})
+total = 0
+by_class = {}
+buckets = {'high': 0, 'medium': 0, 'low': 0}
+with_sessions = 0
+total_sessions = 0
+
+for key, entry in workflows.items():
+    if not isinstance(entry, dict):
+        continue
+    total += 1
+    confidence = float(entry.get('confidence', 0.0))
+    decay_class = entry.get('decay_class', 'procedure')
+    by_class[decay_class] = by_class.get(decay_class, 0) + 1
+    if confidence >= 0.7:
+        buckets['high'] += 1
+    elif confidence >= 0.4:
+        buckets['medium'] += 1
+    else:
+        buckets['low'] += 1
+    sessions = entry.get('sessions', [])
+    if isinstance(sessions, list) and len(sessions) > 0:
+        with_sessions += 1
+        total_sessions += len(sessions)
+
+archived = ledger.get('archived_workflows', {})
+archived_count = len([k for k, v in archived.items() if isinstance(v, dict)])
+
+report = {
+    'total_workflows': total,
+    'by_decay_class': by_class,
+    'by_confidence': buckets,
+    'with_sessions': with_sessions,
+    'total_sessions': total_sessions,
+    'archived': archived_count,
+}
+print(json.dumps(report, indent=2))
+" "${LEDGER_PATH}")"
+
+    if [[ "${JSON_OUTPUT}" -eq 1 ]]; then
+      echo "${result}"
+    else
+      total="$(echo "${result}" | jq -r '.total_workflows')"
+      high="$(echo "${result}" | jq -r '.by_confidence.high')"
+      medium="$(echo "${result}" | jq -r '.by_confidence.medium')"
+      low="$(echo "${result}" | jq -r '.by_confidence.low')"
+      with_sessions="$(echo "${result}" | jq -r '.with_sessions')"
+      total_sessions="$(echo "${result}" | jq -r '.total_sessions')"
+      archived="$(echo "${result}" | jq -r '.archived')"
+
+      echo "── Skill Score Report ───────────────────────────"
+      echo "Total workflows: ${total}"
+      echo "Confidence: ${high} high | ${medium} medium | ${low} low"
+      echo "Decay classes: $(echo "${result}" | jq -r '.by_decay_class | to_entries | map("\(.key)=\(.value)") | join(", ")')"
+      echo "Sessions: ${with_sessions} workflows with attribution (${total_sessions} total)"
+      echo "Archived: ${archived}"
+      echo "─────────────────────────────────────────────────"
+    fi
+    ;;
+esac
