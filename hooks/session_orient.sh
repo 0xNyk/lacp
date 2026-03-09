@@ -110,4 +110,93 @@ if [[ -f "${REVIEW_QUEUE_DIR}/review-queue.md" ]]; then
 fi
 
 echo "Active gaps: ${gap_count} | Review queue: ${review_count} items"
+
+# Skill-aware hints: surface top 3 matching workflows from the ledger
+SKILL_LEDGER="${HOME}/.agents/skills/auto-skill-factory/state/workflow_ledger.json"
+if [[ -f "${SKILL_LEDGER}" ]]; then
+  skill_hints="$(python3 -c "
+import json, sys, os
+
+ledger_path = sys.argv[1]
+project_dir = os.environ.get('PROJECT_DIR', os.getcwd())
+project_name = os.path.basename(project_dir).lower()
+git_branch = ''
+try:
+    import subprocess
+    result = subprocess.run(['git', '-C', project_dir, 'rev-parse', '--abbrev-ref', 'HEAD'],
+                          capture_output=True, text=True, timeout=5)
+    if result.returncode == 0:
+        git_branch = result.stdout.strip().lower()
+except Exception:
+    pass
+
+try:
+    ledger = json.load(open(ledger_path))
+except Exception:
+    sys.exit(0)
+
+workflows = ledger.get('workflows', {})
+if len(workflows) < 5:
+    sys.exit(0)
+
+scored = []
+for key, entry in workflows.items():
+    if not isinstance(entry, dict):
+        continue
+    confidence = float(entry.get('confidence', 0.0))
+    if confidence < 0.4:
+        continue
+
+    # Relevance boost: check if project/branch matches session history
+    relevance = 0.0
+    purpose = str(entry.get('purpose', '')).lower()
+    signature = str(entry.get('signature', '')).lower()
+    text = purpose + ' ' + signature
+
+    if project_name and project_name in text:
+        relevance += 0.3
+    if git_branch:
+        for session in entry.get('sessions', []):
+            if isinstance(session, dict):
+                if session.get('branch', '').lower() == git_branch:
+                    relevance += 0.2
+                    break
+                if session.get('project', '').lower() == project_name:
+                    relevance += 0.1
+                    break
+
+    count = int(entry.get('count', 0))
+    success_count = int(entry.get('success_count', 0))
+    success_rate = (success_count / count) if count > 0 else 0.0
+    final_score = confidence + relevance
+
+    scored.append({
+        'signature': str(entry.get('signature', '')),
+        'count': count,
+        'success_pct': int(success_rate * 100),
+        'score': final_score,
+        'confidence': confidence,
+    })
+
+scored.sort(key=lambda x: x['score'], reverse=True)
+top = scored[:3]
+if not top:
+    sys.exit(0)
+
+lines = []
+for item in top:
+    sig = item['signature'][:50]
+    lines.append(f'  - \"{sig}\" ({item[\"count\"]} runs, {item[\"success_pct\"]}% success)')
+
+print('Proven workflows:')
+for line in lines:
+    print(line)
+" "${SKILL_LEDGER}" 2>/dev/null || true)"
+
+  if [[ -n "${skill_hints}" ]]; then
+    echo ""
+    echo "${skill_hints}"
+  fi
+fi
+
 echo "─────────────────────────────────────────────────"

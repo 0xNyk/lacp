@@ -178,6 +178,8 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-open-source-check.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-brain-expand.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-session-orient.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-skill-score.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-skill-orient.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-write-validate.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-bootstrap-system.sh"
