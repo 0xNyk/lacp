@@ -55,9 +55,10 @@ Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate`, `orient`,
 
 All configurable via env or `.env` file. Key ones:
 
-- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `~/control/automation/ai-dev-optimization`)
-- `LACP_KNOWLEDGE_ROOT` — knowledge graph root (default: `~/control/knowledge/knowledge-memory`)
-- `LACP_DRAFTS_ROOT` — article drafts root (default: `~/docs/content/drafts`)
+- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `~/.lacp/automation`)
+- `LACP_KNOWLEDGE_ROOT` — knowledge graph root (default: `~/.lacp/knowledge`)
+- `LACP_DRAFTS_ROOT` — article drafts root (default: `~/.lacp/drafts`)
+- `LACP_OBSIDIAN_VAULT` — Obsidian vault path (default: `~/obsidian/vault`)
 - `LACP_WRITE_VALIDATE_PATHS` — colon-separated paths for write validation
 - `LACP_TAXONOMY_PATH` — taxonomy.json location for category validation
 

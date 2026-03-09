@@ -5,7 +5,7 @@ This is the recommended daily loop for improving LACP safely on real workloads.
 ## 1) Bootstrap once
 
 ```bash
-cd ~/control/frameworks/lacp
+cd /path/to/lacp
 bin/lacp bootstrap-system --profile starter --with-verify
 ```
 

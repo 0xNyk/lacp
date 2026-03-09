@@ -76,7 +76,7 @@ def main() -> int:
         return fail("pass either --run-id or --run-dir")
 
     knowledge_root = Path(
-        __import__("os").environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / "control/knowledge/knowledge-memory"))
+        __import__("os").environ.get("LACP_KNOWLEDGE_ROOT", str(Path.home() / ".lacp/knowledge"))
     )
 
     if args.run_dir:
