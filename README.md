@@ -289,6 +289,10 @@ LACP is not for:
 LACP includes a first-class Obsidian brain workflow out of the box:
 - vault bootstrap at `$LACP_OBSIDIAN_VAULT` (default: `~/obsidian/vault`) during install (`--no-obsidian-setup` to skip)
 - QMD indexing package (`@tobilu/qmd`) installed by default
+- source ingestion entrypoint for local text/audio/video files and web links:
+  - `bin/lacp brain-ingest ./notes.md --apply --json | jq`
+  - `bin/lacp brain-ingest ./clip.mp4 --apply --json | jq`
+  - `bin/lacp brain-ingest https://example.com/article --apply --json | jq`
 - brain health checks: `bin/lacp brain-doctor --json | jq`
 - brain expansion loop: `bin/lacp brain-expand --apply --json | jq`
 - repository research mirroring into graph:
@@ -447,6 +451,9 @@ Notes:
   - UI compositor overhead (reduce motion/transparency, Dock/Finder animations)
   - background process audit (known CPU-wasting agents)
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
+- `bin/lacp-brain-ingest`: ingest local text/audio/video sources and web links into the Obsidian inbox
+  - delegates media/transcript extraction to the existing automation ingest pipeline when available
+  - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths

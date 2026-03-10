@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+
+REAL_AUTOMATION_ROOT = Path.home() / "control" / "automation" / "ai-dev-optimization"
+TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".rst"}
+MEDIA_EXTENSIONS = {
+    ".mp3",
+    ".m4a",
+    ".wav",
+    ".aac",
+    ".ogg",
+    ".opus",
+    ".flac",
+    ".mp4",
+    ".m4v",
+    ".mov",
+    ".mkv",
+    ".avi",
+    ".webm",
+}
+VIDEO_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "youtu.be",
+    "m.youtube.com",
+    "vimeo.com",
+    "www.vimeo.com",
+    "loom.com",
+    "www.loom.com",
+    "tiktok.com",
+    "www.tiktok.com",
+}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Ingest text/audio/video sources and links into the Obsidian brain."
+    )
+    parser.add_argument("input", nargs="?", help="Source path or URL")
+    parser.add_argument("--apply", action="store_true", help="Write note output instead of dry-run")
+    parser.add_argument("--title", help="Override the detected title")
+    parser.add_argument("--transcript", help="Use an existing transcript file")
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON")
+    parser.add_argument(
+        "--automation-root",
+        help="Override automation root containing scripts/brain-ingest.sh",
+    )
+    return parser
+
+
+def is_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:60] or "link"
+
+
+def detect_title_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    fallback = parsed.netloc
+    path_bits = [bit for bit in parsed.path.split("/") if bit]
+    if path_bits:
+        fallback = f"{fallback} {' '.join(path_bits[-2:])}".strip()
+
+    try:
+        req = Request(
+            url,
+            headers={"User-Agent": "lacp-brain-ingest/0.1"},
+            method="GET",
+        )
+        with urlopen(req, timeout=10) as response:
+            body = response.read(65536).decode("utf-8", errors="ignore")
+        match = re.search(r"<title[^>]*>(.*?)</title>", body, re.IGNORECASE | re.DOTALL)
+        if match:
+            title = re.sub(r"\s+", " ", match.group(1)).strip()
+            if title:
+                return title
+    except Exception:
+        pass
+
+    return fallback or url
+
+
+def render_link_note(url: str, title: str) -> tuple[str, str]:
+    parsed = urlparse(url)
+    created = datetime.now(UTC).strftime("%Y-%m-%d")
+    note_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+    safe_title = title.strip() or parsed.netloc or "Captured Link"
+    filename = f"link-{slugify(safe_title)}-{note_hash}.md"
+    note = "\n".join(
+        [
+            "---",
+            f"id: link-{note_hash}",
+            f"created: {created}",
+            "type: research",
+            "status: inbox",
+            "source: link-ingest",
+            "tags: [web-link, inbox]",
+            f'description: "Captured link for later triage -- {safe_title}"',
+            f'url: "{url}"',
+            "---",
+            "",
+            f"# {safe_title}",
+            "",
+            "## Source",
+            f"- URL: {url}",
+            f"- Domain: {parsed.netloc or 'unknown'}",
+            f"- Captured: {created}",
+            "",
+            "## Notes",
+            "",
+            "- Captured via `bin/lacp brain-ingest`.",
+            "- Review, classify, and promote through the normal inbox workflow.",
+            "",
+        ]
+    )
+    return filename, note
+
+
+def ensure_inbox_root() -> Path:
+    vault_root = Path(os.environ.get("LACP_OBSIDIAN_VAULT", str(Path.home() / "obsidian" / "nyk")))
+    inbox_root = vault_root / "inbox"
+    inbox_root.mkdir(parents=True, exist_ok=True)
+    return inbox_root
+
+
+def input_kind(source: str) -> str:
+    if is_url(source):
+        parsed = urlparse(source)
+        if parsed.netloc.lower() in VIDEO_HOSTS:
+            return "video_url"
+        if Path(parsed.path).suffix.lower() in MEDIA_EXTENSIONS:
+            return "media_url"
+        return "link"
+
+    path = Path(source)
+    suffix = path.suffix.lower()
+    if suffix in TEXT_EXTENSIONS:
+        return "text"
+    if suffix in MEDIA_EXTENSIONS:
+        return "media_file"
+    return "unknown"
+
+
+def resolve_automation_script(override: str | None) -> Path:
+    roots: list[Path] = []
+    if override:
+        roots.append(Path(override))
+    env_root = os.environ.get("LACP_AUTOMATION_ROOT")
+    if env_root:
+        roots.append(Path(env_root))
+    roots.append(REAL_AUTOMATION_ROOT)
+
+    for root in roots:
+        script = root / "scripts" / "brain-ingest.sh"
+        if script.is_file():
+            return script
+    checked = ", ".join(str(root / "scripts" / "brain-ingest.sh") for root in roots)
+    raise FileNotFoundError(f"Missing automation ingest script. Checked: {checked}")
+
+
+def delegate_args(args: argparse.Namespace, passthrough: list[str]) -> tuple[list[str], str]:
+    script = resolve_automation_script(args.automation_root)
+
+    if args.transcript:
+        cmd = [str(script), "--transcript", args.transcript]
+        if args.title:
+            cmd.extend(["--title", args.title])
+        if args.apply:
+            cmd.append("--apply")
+        cmd.extend(passthrough)
+        return cmd, "text"
+
+    if not args.input:
+        raise ValueError("Provide a source path/URL or --transcript")
+
+    kind = input_kind(args.input)
+    if kind == "text":
+        cmd = [str(script), "--transcript", args.input]
+        title = args.title or Path(args.input).stem.replace("-", " ").replace("_", " ").title()
+        if title:
+            cmd.extend(["--title", title])
+        if args.apply:
+            cmd.append("--apply")
+        cmd.extend(passthrough)
+        return cmd, kind
+
+    cmd = [str(script), args.input]
+    if args.title:
+        cmd.extend(["--title", args.title])
+    if args.apply:
+        cmd.append("--apply")
+    cmd.extend(passthrough)
+    return cmd, kind
+
+
+def run_delegate(cmd: list[str], *, as_json: bool, kind: str) -> int:
+    if not as_json:
+        os.execv(cmd[0], cmd)
+        return 0
+
+    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    payload: dict[str, Any] = {
+        "ok": completed.returncode == 0,
+        "kind": "brain_ingest",
+        "mode": "delegate",
+        "input_kind": kind,
+        "command": cmd,
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+    print(json.dumps(payload, indent=2))
+    return completed.returncode
+
+
+def run_link_capture(args: argparse.Namespace) -> int:
+    assert args.input is not None
+    title = args.title or detect_title_from_url(args.input)
+    filename, note = render_link_note(args.input, title)
+    inbox_root = ensure_inbox_root()
+    note_path = inbox_root / filename
+
+    if args.apply:
+        note_path.write_text(note, encoding="utf-8")
+
+    if args.json:
+        payload = {
+            "ok": True,
+            "kind": "brain_ingest",
+            "mode": "link_note",
+            "input_kind": "link",
+            "title": title,
+            "apply": args.apply,
+            "note_path": str(note_path),
+            "preview": note,
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        if args.apply:
+            print(f"[lacp] wrote {note_path}")
+        else:
+            print(note)
+    return 0
+
+
+def main() -> int:
+    parser = build_parser()
+    args, passthrough = parser.parse_known_args()
+
+    if args.transcript and args.input:
+        parser.error("Pass either a positional source or --transcript, not both")
+
+    source = args.transcript or args.input
+    if not source:
+        parser.error("Provide a source path/URL or --transcript")
+
+    if args.input and input_kind(args.input) == "link":
+        return run_link_capture(args)
+
+    try:
+        cmd, kind = delegate_args(args, passthrough)
+    except (FileNotFoundError, ValueError) as exc:
+        if args.json:
+            print(
+                json.dumps(
+                    {"ok": False, "kind": "brain_ingest", "error": str(exc)},
+                    indent=2,
+                )
+            )
+            return 1
+        print(f"[lacp] ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    return run_delegate(cmd, as_json=args.json, kind=kind)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
