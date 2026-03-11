@@ -62,6 +62,8 @@ assert_eq "$(echo "${report_json}" | jq -r '.window_hours')" "24" "report.window
 assert_eq "$(echo "${report_json}" | jq -r '.runs.total >= 0')" "true" "report.runs.total"
 assert_eq "$(echo "${report_json}" | jq -r '.observability.wrappers.bin_dir | length > 0')" "true" "report.wrappers.bin_dir"
 assert_eq "$(echo "${report_json}" | jq -r '.observability.wrapper_routed_runs.total >= 0')" "true" "report.wrapper_runs.total"
+assert_eq "$(echo "${report_json}" | jq -r '.runs.intervention_rate_per_100 >= 0')" "true" "report.intervention_rate.current"
+assert_eq "$(echo "${report_json}" | jq -r '.intervention_rate.formula')" "(intervened_runs / total_runs) * 100" "report.intervention_rate.formula"
 assert_eq "$(echo "${report_json}" | jq -r '.schema_version')" "1" "report.schema_version"
 assert_eq "$(echo "${report_json}" | jq -r '.kind')" "report" "report.kind"
 assert_eq "$(echo "${status_json}" | jq -r '.schema_version')" "1" "status.schema_version"

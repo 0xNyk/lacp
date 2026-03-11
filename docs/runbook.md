@@ -43,6 +43,7 @@ bin/lacp brain-doctor --json
 bin/lacp knowledge-doctor
 bin/lacp knowledge-doctor --json
 bin/lacp report --hours 24
+bin/lacp report --hours 24 --baseline-hours 24 --baseline-offset-hours 24 --json | jq '.intervention_rate'
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp canary --json

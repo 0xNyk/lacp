@@ -7,22 +7,33 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-report [--hours N] [--json]
+Usage: lacp-report [--hours N] [--baseline-hours N] [--baseline-offset-hours N] [--json]
 
 Build a compact operational summary from local artifacts:
 - recent sandbox run outcomes
 - block reasons (review/critical/budget)
+- intervention pressure metric (intervention_rate_per_100)
 - latest benchmark and snapshot paths
 EOF
 }
 
 HOURS="${LACP_VERIFY_HOURS}"
+BASELINE_HOURS=""
+BASELINE_OFFSET_HOURS=""
 AS_JSON=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hours)
       HOURS="$2"
+      shift 2
+      ;;
+    --baseline-hours)
+      BASELINE_HOURS="$2"
+      shift 2
+      ;;
+    --baseline-offset-hours)
+      BASELINE_OFFSET_HOURS="$2"
       shift 2
       ;;
     --json)
@@ -47,7 +58,14 @@ LATEST_BENCH="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.
 LATEST_SNAPSHOT="$(latest_file "${LACP_AUTOMATION_ROOT}/data/snapshots/snapshot-*.json" || true)"
 WRAPPER_BIN_DIR="${LACP_WRAPPER_BIN_DIR}"
 
-report_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${LATEST_BENCH}" "${LATEST_SNAPSHOT}" "${WRAPPER_BIN_DIR}"
+if [[ -z "${BASELINE_HOURS}" ]]; then
+  BASELINE_HOURS="${HOURS}"
+fi
+if [[ -z "${BASELINE_OFFSET_HOURS}" ]]; then
+  BASELINE_OFFSET_HOURS="${HOURS}"
+fi
+
+report_json="$(python3 - <<'PY' "${RUNS_DIR}" "${HOURS}" "${BASELINE_HOURS}" "${BASELINE_OFFSET_HOURS}" "${LATEST_BENCH}" "${LATEST_SNAPSHOT}" "${WRAPPER_BIN_DIR}"
 import datetime as dt
 import glob
 import json
@@ -57,12 +75,49 @@ import sys
 
 runs_dir = pathlib.Path(sys.argv[1])
 hours = int(sys.argv[2])
-latest_bench = sys.argv[3]
-latest_snapshot = sys.argv[4]
-wrapper_bin_dir = pathlib.Path(sys.argv[5]).expanduser()
+baseline_hours = int(sys.argv[3])
+baseline_offset_hours = int(sys.argv[4])
+latest_bench = sys.argv[5]
+latest_snapshot = sys.argv[6]
+wrapper_bin_dir = pathlib.Path(sys.argv[7]).expanduser()
 time_sessions_file = pathlib.Path(sys.argv[1]).parent / "time-tracking" / "sessions.jsonl"
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
+baseline_end = now - dt.timedelta(hours=baseline_offset_hours)
+baseline_start = baseline_end - dt.timedelta(hours=baseline_hours)
+intervention_exit_codes = {8, 9, 10}
+
+def safe_exit_code(run):
+    try:
+        return int(run.get("exit_code", 1))
+    except Exception:
+        return 1
+
+def intervention_rate(intervened_runs, total_runs):
+    if total_runs <= 0:
+        return 0.0
+    return round((intervened_runs / total_runs) * 100.0, 4)
+
+def summarize_runs(window_runs):
+    total_runs = len(window_runs)
+    executed_runs = sum(1 for r in window_runs if r.get("executed") is True)
+    success_runs = sum(1 for r in window_runs if r.get("executed") is True and safe_exit_code(r) == 0)
+    success_all_runs = sum(1 for r in window_runs if safe_exit_code(r) == 0)
+    blocked_review_runs = sum(1 for r in window_runs if safe_exit_code(r) == 8)
+    blocked_critical_runs = sum(1 for r in window_runs if safe_exit_code(r) == 9)
+    blocked_budget_runs = sum(1 for r in window_runs if safe_exit_code(r) == 10)
+    intervened_runs = sum(1 for r in window_runs if safe_exit_code(r) in intervention_exit_codes)
+    return {
+        "total": total_runs,
+        "executed": executed_runs,
+        "success": success_runs,
+        "success_all": success_all_runs,
+        "blocked_review": blocked_review_runs,
+        "blocked_critical": blocked_critical_runs,
+        "blocked_budget": blocked_budget_runs,
+        "intervened_runs": intervened_runs,
+        "intervention_rate_per_100": intervention_rate(intervened_runs, total_runs),
+    }
 
 runs = []
 if runs_dir.exists():
@@ -73,25 +128,35 @@ if runs_dir.exists():
             if not ts:
                 continue
             started = dt.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
-            if started >= cutoff:
-                runs.append(payload)
+            runs.append((started, payload))
         except Exception:
             continue
 
-total = len(runs)
-executed = sum(1 for r in runs if r.get("executed") is True)
-success = sum(1 for r in runs if r.get("executed") is True and int(r.get("exit_code", 1)) == 0)
-success_all = sum(1 for r in runs if int(r.get("exit_code", 1)) == 0)
-blocked_review = sum(1 for r in runs if int(r.get("exit_code", 0)) == 8)
-blocked_critical = sum(1 for r in runs if int(r.get("exit_code", 0)) == 9)
-blocked_budget = sum(1 for r in runs if int(r.get("exit_code", 0)) == 10)
+current_runs = [payload for (started, payload) in runs if started >= cutoff]
+baseline_runs = [payload for (started, payload) in runs if baseline_start <= started < baseline_end]
+
+run_stats = summarize_runs(current_runs)
+baseline_run_stats = summarize_runs(baseline_runs)
+intervention_delta_absolute = round(run_stats["intervention_rate_per_100"] - baseline_run_stats["intervention_rate_per_100"], 4)
+if baseline_run_stats["intervention_rate_per_100"] == 0:
+    intervention_delta_percent = None
+else:
+    intervention_delta_percent = round((intervention_delta_absolute / baseline_run_stats["intervention_rate_per_100"]) * 100.0, 4)
+
+total = run_stats["total"]
+executed = run_stats["executed"]
+success = run_stats["success"]
+success_all = run_stats["success_all"]
+blocked_review = run_stats["blocked_review"]
+blocked_critical = run_stats["blocked_critical"]
+blocked_budget = run_stats["blocked_budget"]
 
 wrapper_tasks = {
     "interactive claude session": 0,
     "interactive codex session": 0,
 }
 wrapper_routed_runs = {"claude": 0, "codex": 0}
-for r in runs:
+for r in current_runs:
     task = str(r.get("task", ""))
     if task in wrapper_tasks:
         wrapper_tasks[task] += 1
@@ -205,6 +270,8 @@ payload = {
         "runs_success": success,
         "blocked_total": blocked_review + blocked_critical + blocked_budget,
         "benchmark_gate_ok": benchmark.get("gate_ok"),
+        "intervened_runs": run_stats["intervened_runs"],
+        "intervention_rate_per_100": run_stats["intervention_rate_per_100"],
     },
     "runs": {
         "total": total,
@@ -214,6 +281,34 @@ payload = {
         "blocked_review": blocked_review,
         "blocked_critical": blocked_critical,
         "blocked_budget": blocked_budget,
+        "intervened_runs": run_stats["intervened_runs"],
+        "intervention_rate_per_100": run_stats["intervention_rate_per_100"],
+    },
+    "intervention_rate": {
+        "formula": "(intervened_runs / total_runs) * 100",
+        "unit": "per_100_runs",
+        "intervened_exit_codes": [8, 9, 10],
+        "current_window": {
+            "hours": hours,
+            "window_start_utc": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "window_end_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "total_runs": run_stats["total"],
+            "intervened_runs": run_stats["intervened_runs"],
+            "intervention_rate_per_100": run_stats["intervention_rate_per_100"],
+        },
+        "baseline_window": {
+            "hours": baseline_hours,
+            "offset_hours": baseline_offset_hours,
+            "window_start_utc": baseline_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "window_end_utc": baseline_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "total_runs": baseline_run_stats["total"],
+            "intervened_runs": baseline_run_stats["intervened_runs"],
+            "intervention_rate_per_100": baseline_run_stats["intervention_rate_per_100"],
+        },
+        "delta": {
+            "absolute": intervention_delta_absolute,
+            "percent": intervention_delta_percent,
+        },
     },
     "artifacts": {
         "latest_benchmark": benchmark,
@@ -279,6 +374,9 @@ else
     "  window_hours=\(.window_hours)",
     "  runs.total=\(.runs.total) runs.executed=\(.runs.executed) runs.success=\(.runs.success) runs.success_all=\(.runs.success_all)",
     "  blocked.review=\(.runs.blocked_review) blocked.critical=\(.runs.blocked_critical) blocked.budget=\(.runs.blocked_budget)",
+    "  intervention.current=\(.intervention_rate.current_window.intervened_runs)/\(.intervention_rate.current_window.total_runs) rate=\(.intervention_rate.current_window.intervention_rate_per_100)",
+    "  intervention.baseline=\(.intervention_rate.baseline_window.intervened_runs)/\(.intervention_rate.baseline_window.total_runs) rate=\(.intervention_rate.baseline_window.intervention_rate_per_100)",
+    "  intervention.delta.absolute=\(.intervention_rate.delta.absolute) intervention.delta.percent=\(.intervention_rate.delta.percent // "n/a")",
     "  wrappers.bin_dir=\(.observability.wrappers.bin_dir)",
     "  wrappers.claude.managed=\(.observability.wrappers.claude.managed) wrappers.codex.managed=\(.observability.wrappers.codex.managed)",
     "  wrapper_runs.total=\(.observability.wrapper_routed_runs.total) wrapper_tasks.total=\(.observability.wrapper_task_runs.total)",
