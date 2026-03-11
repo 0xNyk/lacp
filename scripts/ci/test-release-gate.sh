@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 wf_tmp="${ROOT}/.github/workflows/.ci-policy-test.yml"
+mkdir -p "$(dirname "${wf_tmp}")"
 cleanup() {
   rm -rf "${TMP}"
   rm -f "${wf_tmp}"

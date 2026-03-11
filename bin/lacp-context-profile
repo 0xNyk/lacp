@@ -70,7 +70,12 @@ render_cmd() {
   git_worktree="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 
   local rendered
-  rendered="$(python3 - <<'PY' "${PROFILES_FILE}" "${profile}" "${host_short}" "${cwd}" "${git_branch}" "${git_worktree}" "${as_json}" "${vars[@]}"
+  local -a py_args
+  py_args=("${PROFILES_FILE}" "${profile}" "${host_short}" "${cwd}" "${git_branch}" "${git_worktree}" "${as_json}")
+  if [[ ${#vars[@]} -gt 0 ]]; then
+    py_args+=("${vars[@]}")
+  fi
+  rendered="$(python3 - <<'PY' "${py_args[@]}"
 import json
 import re
 import sys

@@ -132,32 +132,32 @@ case "${cmd}" in
   record)
     require_skill_factory
     require_script record_workflow.py
-    exec python3 "$(script_path record_workflow.py)" "${args[@]}"
+    exec python3 "$(script_path record_workflow.py)" "${args[@]-}"
     ;;
   capture)
     require_skill_factory
     require_script capture_validation.py
-    exec python3 "$(script_path capture_validation.py)" "${args[@]}"
+    exec python3 "$(script_path capture_validation.py)" "${args[@]-}"
     ;;
   lifecycle)
     require_skill_factory
     require_script manage_lifecycle.py
-    exec python3 "$(script_path manage_lifecycle.py)" "${args[@]}"
+    exec python3 "$(script_path manage_lifecycle.py)" "${args[@]-}"
     ;;
   recluster)
     require_skill_factory
     require_script recluster_workflows.py
-    exec python3 "$(script_path recluster_workflows.py)" "${args[@]}"
+    exec python3 "$(script_path recluster_workflows.py)" "${args[@]-}"
     ;;
   revalidate)
     require_skill_factory
     require_script revalidate_autogen_skills.py
-    exec python3 "$(script_path revalidate_autogen_skills.py)" "${args[@]}"
+    exec python3 "$(script_path revalidate_autogen_skills.py)" "${args[@]-}"
     ;;
   migrate-bundles)
     require_skill_factory
     require_script migrate_category_bundles.py
-    exec python3 "$(script_path migrate_category_bundles.py)" "${args[@]}"
+    exec python3 "$(script_path migrate_category_bundles.py)" "${args[@]-}"
     ;;
   summary)
     require_skill_factory

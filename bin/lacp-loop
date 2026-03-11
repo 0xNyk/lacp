@@ -217,7 +217,7 @@ if [[ -n "${CREDENTIAL_PROFILE}" ]]; then
 fi
 if [[ -n "${CONTEXT_PROFILE}" ]]; then
   profile_cmd=("${ROOT}/bin/lacp-context-profile" render --profile "${CONTEXT_PROFILE}")
-  for kv in "${CONTEXT_PROFILE_VARS[@]}"; do
+  for kv in ${CONTEXT_PROFILE_VARS+"${CONTEXT_PROFILE_VARS[@]}"}; do
     profile_cmd+=(--var "${kv}")
   done
   profile_cmd+=(--json)

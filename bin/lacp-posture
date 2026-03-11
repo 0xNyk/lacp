@@ -116,7 +116,7 @@ if [[ "${LACP_ALLOW_EXTERNAL_REMOTE}" == "false" ]]; then
   remote_default_ok=true
 fi
 
-workflow_count="$(find "${ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')"
+workflow_count="$(if [[ -d "${ROOT}/.github/workflows" ]]; then find "${ROOT}/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \); fi | wc -l | tr -d ' ')"
 if [[ "${workflow_count}" =~ ^[0-9]+$ ]]; then
   if [[ "${no_external_ci_ok}" == "true" && "${workflow_count}" -gt 0 ]]; then
     workflows_ok=false

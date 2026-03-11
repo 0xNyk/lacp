@@ -79,6 +79,8 @@ Knowledge:
   brain-ingest       Ingest text/audio/video sources and links into the Obsidian inbox
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
   brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
+  brain-ingest       Ingest transcripts/urls/files into structured Obsidian notes
+  brain-stack        Bootstrap official 3-layer memory stack (MCP + memory scaffolding)
   repo-research-sync Mirror repo docs/research notes into Obsidian knowledge graph
   skill-sync-anthropic Sync official Anthropic skills into local Claude/Codex skill paths
   mcp-health         Probe MCP server connectivity and latency
@@ -132,6 +134,12 @@ case "${cmd}" in
     ;;
   brain-expand)
     exec "${ROOT}/bin/lacp-brain-expand" "$@"
+    ;;
+  brain-ingest)
+    exec "${ROOT}/bin/lacp-brain-ingest" "$@"
+    ;;
+  brain-stack)
+    exec "${ROOT}/bin/lacp-brain-stack" "$@"
     ;;
   repo-research-sync)
     exec "${ROOT}/bin/lacp-repo-research-sync" "$@"

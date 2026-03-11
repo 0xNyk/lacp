@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-brain-stack status [--json]
+  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--dry-run] [--json]
+
+Official LACP memory stack bootstrap:
+  Layer 1: session memory scaffolding
+  Layer 2: Obsidian knowledge graph MCP wiring
+  Layer 3: ingestion pipeline command availability
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+VAULT_ROOT="${LACP_OBSIDIAN_VAULT}"
+CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
+AS_JSON=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vault) VAULT_ROOT="$2"; shift 2 ;;
+    --claude-settings) CLAUDE_SETTINGS="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+project_hash() {
+  local seed
+  seed="$(pwd)"
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "${seed}" | shasum | awk '{print $1}' | cut -c1-12
+  else
+    printf '%s' "${seed}" | md5 | awk '{print $NF}' | cut -c1-12
+  fi
+}
+
+status_cmd() {
+  local phash mem_root
+  phash="$(project_hash)"
+  mem_root="${HOME}/.claude/projects/${phash}/memory"
+
+  payload="$(jq -n \
+    --arg schema_version "1" \
+    --arg kind "brain_stack_status" \
+    --arg vault_root "${VAULT_ROOT}" \
+    --arg claude_settings "${CLAUDE_SETTINGS}" \
+    --arg memory_root "${mem_root}" \
+    --argjson vault_exists "$([[ -d "${VAULT_ROOT}" ]] && echo true || echo false)" \
+    --argjson settings_exists "$([[ -f "${CLAUDE_SETTINGS}" ]] && echo true || echo false)" \
+    --argjson memory_exists "$([[ -d "${mem_root}" ]] && echo true || echo false)" \
+    --argjson brain_ingest_exists "$([[ -x "${ROOT}/bin/lacp-brain-ingest" ]] && echo true || echo false)" \
+    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists}}')"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${payload}" | jq .
+  else
+    echo "brain-stack status"
+    echo "  vault: ${VAULT_ROOT}"
+    echo "  claude settings: ${CLAUDE_SETTINGS}"
+    echo "  memory root: ${mem_root}"
+  fi
+}
+
+init_cmd() {
+  local phash mem_root memory_file
+  phash="$(project_hash)"
+  mem_root="${HOME}/.claude/projects/${phash}/memory"
+  memory_file="${LACP_KNOWLEDGE_ROOT}/data/mcp-memory/entities.json"
+
+  tmp_json="$(mktemp)"
+  trap 'rm -f "${tmp_json}"' EXIT
+
+  mkdir -p "$(dirname "${CLAUDE_SETTINGS}")"
+  if [[ -f "${CLAUDE_SETTINGS}" ]]; then
+    cp "${CLAUDE_SETTINGS}" "${tmp_json}"
+  else
+    printf '{"mcpServers":{}}\n' > "${tmp_json}"
+  fi
+
+  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}"
+import json, pathlib, sys
+settings_path = pathlib.Path(sys.argv[1])
+vault = pathlib.Path(sys.argv[2]).expanduser()
+memory_file = pathlib.Path(sys.argv[3]).expanduser()
+
+payload = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+servers = payload.setdefault('mcpServers', {})
+
+sc_root = pathlib.Path('~/.local/share/smart-connections-mcp').expanduser()
+sc_python = str((sc_root / '.venv' / 'bin' / 'python').resolve())
+sc_server = str((sc_root / 'server.py').resolve())
+
+servers['memory'] = {
+  'command': 'npx',
+  'args': ['-y', '@modelcontextprotocol/server-memory'],
+  'env': {'MEMORY_FILE_PATH': str(memory_file)}
+}
+servers['smart-connections'] = {
+  'command': sc_python,
+  'args': [sc_server],
+  'env': {'OBSIDIAN_VAULT_PATH': str(vault)}
+}
+servers['qmd'] = {
+  'command': 'qmd',
+  'args': ['mcp'],
+  'env': {'HOME': '~'}
+}
+servers['obsidian'] = {
+  'command': 'npx',
+  'args': ['-y', 'obsidian-mcp']
+}
+
+print(json.dumps(payload, indent=2) + '\n')
+PY
+)"
+
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    printf '%s' "${updated}" > "${CLAUDE_SETTINGS}"
+    mkdir -p "$(dirname "${memory_file}")" "${mem_root}" "${VAULT_ROOT}/inbox/queue-generated"
+
+    [[ -f "${memory_file}" ]] || printf '[]\n' > "${memory_file}"
+
+    for f in MEMORY.md debugging.md patterns.md architecture.md preferences.md; do
+      if [[ ! -f "${mem_root}/${f}" ]]; then
+        cat > "${mem_root}/${f}" <<EOF
+# ${f}
+
+- created_by: lacp-brain-stack
+- created_at_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+      fi
+    done
+  fi
+
+  payload="$(jq -n \
+    --arg schema_version "1" \
+    --arg kind "brain_stack_init" \
+    --arg vault_root "${VAULT_ROOT}" \
+    --arg claude_settings "${CLAUDE_SETTINGS}" \
+    --arg memory_file "${memory_file}" \
+    --arg memory_root "${mem_root}" \
+    --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+    '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,vault_root:$vault_root,claude_settings:$claude_settings,memory_file:$memory_file,memory_root:$memory_root}')"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${payload}" | jq .
+  else
+    echo "brain-stack init ok=true dry_run=${DRY_RUN}"
+    echo "  claude settings: ${CLAUDE_SETTINGS}"
+    echo "  memory root: ${mem_root}"
+    echo "  memory file: ${memory_file}"
+  fi
+}
+
+case "${sub}" in
+  status) status_cmd ;;
+  init) init_cmd ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

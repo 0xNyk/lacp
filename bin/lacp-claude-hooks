@@ -53,7 +53,9 @@ cmd_audit() {
   done
 
   local result
-  result="$(python3 - <<'PY' "${claude_dir}"
+  local result_tmp
+  result_tmp="$(mktemp)"
+  python3 - "${claude_dir}" <<'PY' >"${result_tmp}"
 import json
 import pathlib
 import re
@@ -249,17 +251,18 @@ payload = {
 }
 print(json.dumps(payload))
 PY
-)"
+  result="$(<"${result_tmp}")"
+  rm -f "${result_tmp}"
 
   if [[ "${as_json}" == "true" ]]; then
     printf '%s\n' "${result}" | jq .
   else
-    echo "${result}" | jq -r '"ok=\(.ok) total_stop_hooks=\(.summary.total_stop_hooks) missing_plugin_paths=\(.summary.missing_plugin_paths) missing_command_paths=\(.summary.missing_command_paths) drift=\(.summary.version_drift)"'
-    echo "${result}" | jq -r '.plugin_stop_contributors[]? | "STOP\t\(.plugin)\t\(.stop_hooks)"'
-    echo "${result}" | jq -r '.hints[] | "HINT\t\(.)"'
+    echo "${result}" | jq -r "\"ok=\\(.ok) total_stop_hooks=\\(.summary.total_stop_hooks) missing_plugin_paths=\\(.summary.missing_plugin_paths) missing_command_paths=\\(.summary.missing_command_paths) drift=\\(.summary.version_drift)\""
+    echo "${result}" | jq -r ".plugin_stop_contributors[]? | \"STOP\\t\\(.plugin)\\t\\(.stop_hooks)\""
+    echo "${result}" | jq -r ".hints[] | \"HINT\\t\\(.)\""
   fi
   if [[ "${strict}" == "true" ]]; then
-    [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+    jq -e ".ok == true" >/dev/null <<<"${result}"
   fi
 }
 
@@ -278,7 +281,7 @@ cmd_repair() {
   done
 
   local result
-  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}"
+  result="$(python3 - "${claude_dir}" "${dry_run}" <<'PY'
 import json
 import pathlib
 import shutil
@@ -377,10 +380,10 @@ PY
   if [[ "${as_json}" == "true" ]]; then
     printf '%s\n' "${result}" | jq .
   else
-    echo "${result}" | jq -r '"ok=\(.ok) dry_run=\(.dry_run) actions=\(.actions|length) backups=\(.backups|length)"'
-    echo "${result}" | jq -r '.actions[]? | "\(.status)\t\(.action)\t\(.plugin // .to // "")"'
+    echo "${result}" | jq -r "\"ok=\\(.ok) dry_run=\\(.dry_run) actions=\\(.actions|length) backups=\\(.backups|length)\""
+    echo "${result}" | jq -r ".actions[]? | [.status, .action, (.plugin // .to // empty)] | @tsv"
   fi
-  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+  jq -e ".ok == true" >/dev/null <<<"${result}"
 }
 
 cmd_apply_profile() {
@@ -405,7 +408,7 @@ cmd_apply_profile() {
   esac
 
   local result
-  result="$(python3 - <<'PY' "${claude_dir}" "${dry_run}" "${profile}" "${ROOT}"
+  result="$(python3 - "${claude_dir}" "${dry_run}" "${profile}" "${ROOT}" <<'PY'
 import json
 import pathlib
 import shutil
@@ -918,10 +921,10 @@ PY
   if [[ "${as_json}" == "true" ]]; then
     printf '%s\n' "${result}" | jq .
   else
-    echo "${result}" | jq -r '"ok=\(.ok) profile=\(.profile) dry_run=\(.dry_run) actions=\(.actions|length) backups=\(.backups|length)"'
-    echo "${result}" | jq -r '.actions[]? | "\(.status)\t\(.action)\t\(.plugin)"'
+    echo "${result}" | jq -r "\"ok=\\(.ok) profile=\\(.profile) dry_run=\\(.dry_run) actions=\\(.actions|length) backups=\\(.backups|length)\""
+    echo "${result}" | jq -r ".actions[]? | \"\\(.status)\\t\\(.action)\\t\\(.plugin)\""
   fi
-  [[ "$(echo "${result}" | jq -r '.ok')" == "true" ]]
+  jq -e ".ok == true" >/dev/null <<<"${result}"
 }
 
 cmd_optimize() {
@@ -946,8 +949,13 @@ cmd_optimize() {
   fi
 
   local repair_json profile_json audit_json
-  repair_json="$("${ROOT}/bin/lacp-claude-hooks" repair --claude-dir "${claude_dir}" "${extra_args[@]}" --json)"
-  profile_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${claude_dir}" --profile "${profile}" "${extra_args[@]}" --json)"
+  if [[ ${#extra_args[@]} -gt 0 ]]; then
+    repair_json="$("${ROOT}/bin/lacp-claude-hooks" repair --claude-dir "${claude_dir}" "${extra_args[@]}" --json)"
+    profile_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${claude_dir}" --profile "${profile}" "${extra_args[@]}" --json)"
+  else
+    repair_json="$("${ROOT}/bin/lacp-claude-hooks" repair --claude-dir "${claude_dir}" --json)"
+    profile_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${claude_dir}" --profile "${profile}" --json)"
+  fi
   audit_json="$("${ROOT}/bin/lacp-claude-hooks" audit --claude-dir "${claude_dir}" --json)"
 
   local payload
@@ -955,15 +963,15 @@ cmd_optimize() {
     --argjson repair "${repair_json}" \
     --argjson profile "${profile_json}" \
     --argjson audit "${audit_json}" \
-    '{ok: ($repair.ok and $profile.ok and $audit.ok), kind:"claude_hooks_optimize", repair:$repair, profile:$profile, audit:$audit}')"
+    "{ok: (\$repair.ok and \$profile.ok and \$audit.ok), kind:\"claude_hooks_optimize\", repair:\$repair, profile:\$profile, audit:\$audit}")"
 
   if [[ "${as_json}" == "true" ]]; then
     printf '%s\n' "${payload}" | jq .
   else
-    echo "${payload}" | jq -r '"ok=\(.ok) total_stop_hooks=\(.audit.summary.total_stop_hooks) missing_plugin_paths=\(.audit.summary.missing_plugin_paths) missing_command_paths=\(.audit.summary.missing_command_paths) drift=\(.audit.summary.version_drift)"'
-    echo "${payload}" | jq -r '.audit.hints[] | "HINT\t\(.)"'
+    echo "${payload}" | jq -r "\"ok=\\(.ok) total_stop_hooks=\\(.audit.summary.total_stop_hooks) missing_plugin_paths=\\(.audit.summary.missing_plugin_paths) missing_command_paths=\\(.audit.summary.missing_command_paths) drift=\\(.audit.summary.version_drift)\""
+    echo "${payload}" | jq -r ".audit.hints[] | \"HINT\\t\\(.)\""
   fi
-  [[ "$(echo "${payload}" | jq -r '.ok')" == "true" ]]
+  jq -e ".ok == true" >/dev/null <<<"${payload}"
 }
 
 case "${sub}" in

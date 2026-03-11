@@ -6,7 +6,7 @@
 
 Local Agent Control Plane for Claude/Codex.
 
-Status: active development (`v0.1.x`).
+Status: active development (`v0.2.x`).
 
 LACP turns local agent operations into an auditable system with:
 - reproducible onboarding
@@ -30,6 +30,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
 - [Obsidian Brain Bundle](#obsidian-brain-bundle)
+- [3-Layer Memory Architecture (Official)](#3-layer-memory-architecture-official)
 - [5 Minute Smoke Test](#5-minute-smoke-test)
 - [Brand Assets](#brand-assets)
 - [Remote Setup](#remote-setup)
@@ -247,7 +248,7 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
 ### Verified release install (recommended for production)
 
 ```bash
-VERSION="0.1.0"
+VERSION="0.2.0"
 curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
 curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
 grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
@@ -317,6 +318,34 @@ Example status checks:
 ```bash
 launchctl print gui/$(id -u)/com.lacp.repo-research-sync
 launchctl print gui/$(id -u)/com.lacp.brain-expand-6h
+```
+
+## 3-Layer Memory Architecture (Official)
+
+LACP now treats memory as an explicit 3-layer stack:
+
+1. Layer 1: Session Memory
+   - project memory scaffolding under `~/.claude/projects/<project-hash>/memory/`
+   - seeded files: `MEMORY.md`, `debugging.md`, `patterns.md`, `architecture.md`, `preferences.md`
+2. Layer 2: Knowledge Graph
+   - Obsidian vault as persistent graph (`$LACP_OBSIDIAN_VAULT`)
+   - MCP wiring for `memory`, `smart-connections`, `qmd`, and `obsidian`
+3. Layer 3: Ingestion Pipeline
+   - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
+   - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
+
+Bootstrap the stack:
+
+```bash
+bin/lacp brain-stack init --json | jq
+bin/lacp brain-stack status --json | jq
+```
+
+Ingest knowledge into the graph:
+
+```bash
+bin/lacp brain-ingest --url "https://youtube.com/watch?v=..." --title "Agent memory talk" --apply --json | jq
+bin/lacp brain-ingest --transcript ./talk.txt --title "Context engineering" --apply --json | jq
 ```
 
 ## 5 Minute Smoke Test
@@ -397,7 +426,7 @@ Notes:
 - `bin/lacp-credential-profile`: list/render reusable credential posture and input-contract templates
 - `bin/lacp-session-fingerprint`: derive deterministic session fingerprints for anti-drift execution gates
 - `bin/lacp-mcp-profile`: list/status/apply MCP operating profiles (`cli-first`, `mcp-selective`, `mcp-heavy`)
-- `bin/lacp-report`: summarize recent run outcomes and latest artifact health
+- `bin/lacp-report`: summarize recent run outcomes and latest artifact health, including `intervention_rate_per_100` and baseline delta (`--baseline-hours`, `--baseline-offset-hours`)
 - `bin/lacp-canary`: 7-day promotion gate over retrieval benchmarks (hit-rate/MRR/triage/gate consistency)
   - baseline support: `--set-clean-baseline`, `--since-clean-baseline`
 - `bin/lacp-canary-optimize`: bounded optimization loop (`verify -> canary`) with optional best `LACP_BENCH_TOP_K` persistence
@@ -455,6 +484,8 @@ Notes:
   - delegates media/transcript extraction to the existing automation ingest pipeline when available
   - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
+- `bin/lacp-brain-stack`: initialize/status official 3-layer memory stack (session memory scaffolding + MCP wiring)
+- `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths
 - `bin/lacp-brain-expand`: automated brain expansion loop (session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + agent-daily sync + inbox hygiene + doctor checks)

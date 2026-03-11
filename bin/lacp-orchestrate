@@ -135,7 +135,9 @@ cmd_run() {
   if [[ -n "${batch_file}" ]]; then
     require_file "${batch_file}"
     local -a job_lines=()
-    mapfile -t job_lines < <(
+    while IFS= read -r line; do
+      job_lines+=("${line}")
+    done < <(
       python3 - <<'PY' "${batch_file}" "${continue_on_error}"
 import json
 import sys
