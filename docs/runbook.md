@@ -79,6 +79,10 @@ bin/lacp status
 
 Use these files as the source of truth for harness workflows:
 
+### Clipper intake to knowledge loop
+- See `docs/clipper-autonomous-knowledge-loop.md` for clipper -> triage -> deep-dive -> canonical promotion operations with LACP gates.
+- Pair with vault playbook at `${LACP_OBSIDIAN_VAULT:-~/obsidian/vault}/inbox/queue-generated/obsidian-clipper-to-knowledge-autonomous-pipeline-2026-03-09.md`.
+
 - `config/harness/tasks.schema.json`
 - `config/harness/sandbox-profiles.yaml`
 - `config/harness/verification-policy.yaml`
