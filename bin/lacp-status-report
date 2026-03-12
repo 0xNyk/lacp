@@ -89,6 +89,13 @@ LATEST_SNAPSHOT="$(latest_or_none "${LACP_AUTOMATION_ROOT}/data/snapshots/snapsh
 LATEST_SANDBOX_RUN="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json")"
 LATEST_REMOTE_SMOKE="$(latest_or_none "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/smoke-*.json")"
 
+INTERVENTION_JSON="$("${ROOT}/bin/lacp-report" --hours "${LACP_VERIFY_HOURS}" --baseline-hours "${LACP_VERIFY_HOURS}" --baseline-offset-hours "${LACP_VERIFY_HOURS}" --json 2>/dev/null || true)"
+if [[ -z "${INTERVENTION_JSON}" ]]; then
+  INTERVENTION_JSON='{"formula":"(intervened_runs / total_runs) * 100","unit":"per_100_runs","intervened_exit_codes":[8,9,10],"current_window":{"hours":0,"window_start_utc":null,"window_end_utc":null,"total_runs":0,"intervened_runs":0,"intervention_rate_per_100":0},"baseline_window":{"hours":0,"offset_hours":0,"window_start_utc":null,"window_end_utc":null,"total_runs":0,"intervened_runs":0,"intervention_rate_per_100":0},"delta":{"absolute":0,"percent":null}}'
+else
+  INTERVENTION_JSON="$(echo "${INTERVENTION_JSON}" | jq -c '.intervention_rate')"
+fi
+
 BENCH_SUMMARY="n/a"
 BENCH_GATE_JSON="null"
 BENCH_GATE_LABEL="unknown"
@@ -140,6 +147,7 @@ if [[ "${FORMAT}" == "json" ]]; then
     --arg latest_snapshot "${LATEST_SNAPSHOT}" \
     --arg latest_sandbox_run "${LATEST_SANDBOX_RUN}" \
     --arg latest_remote_smoke "${LATEST_REMOTE_SMOKE}" \
+    --argjson intervention_rate "${INTERVENTION_JSON}" \
     --arg brain_ok "${BRAIN_OK}" \
     --argjson brain_pass "${BRAIN_PASS_JSON}" \
     --argjson brain_warn "${BRAIN_WARN_JSON}" \
@@ -184,7 +192,8 @@ if [[ "${FORMAT}" == "json" ]]; then
         latest_snapshot: $latest_snapshot,
         latest_sandbox_run: $latest_sandbox_run,
         latest_remote_smoke: $latest_remote_smoke
-      }
+      },
+      intervention_rate: $intervention_rate
     }'
   exit 0
 fi
@@ -208,6 +217,13 @@ Generated (UTC): \`${REPORT_TIME_UTC}\`
 - Pass: \`${PASS_COUNT}\`
 - Warn: \`${WARN_COUNT}\`
 - Fail: \`${FAIL_COUNT}\`
+
+## Intervention Pressure
+
+- Formula: \`$(echo "${INTERVENTION_JSON}" | jq -r '.formula')\`
+- Current: \`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.intervened_runs')\` / \`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.total_runs')\` (\`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.intervention_rate_per_100')\` per 100)
+- Baseline: \`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.intervened_runs')\` / \`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.total_runs')\` (\`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.intervention_rate_per_100')\` per 100)
+- Delta: absolute \`$(echo "${INTERVENTION_JSON}" | jq -r '.delta.absolute')\`, percent \`$(echo "${INTERVENTION_JSON}" | jq -r '.delta.percent // "n/a"')\`
 
 ## Brain
 

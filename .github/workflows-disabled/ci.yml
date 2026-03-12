@@ -77,6 +77,12 @@ jobs:
           chmod +x scripts/ci/test-security-controls.sh
           ./scripts/ci/test-security-controls.sh
 
+      - name: Security hygiene audit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-security-hygiene-audit.sh
+          ./scripts/ci/test-security-hygiene-audit.sh
+
       - name: Cache audit tests
         run: |
           set -euo pipefail

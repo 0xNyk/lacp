@@ -129,6 +129,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-posture.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-shell-and-hooks-hardening.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-security-hygiene-audit.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-knowledge-doctor.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-ops-commands.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-security-controls.sh"

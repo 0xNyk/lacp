@@ -44,6 +44,7 @@ bin/lacp knowledge-doctor
 bin/lacp knowledge-doctor --json
 bin/lacp report --hours 24
 bin/lacp report --hours 24 --baseline-hours 24 --baseline-offset-hours 24 --json | jq '.intervention_rate'
+bin/lacp status --json | jq '.intervention_rate'
 bin/lacp cache-audit --hours 24 --json
 bin/lacp cache-guard --hours 24 --min-hit-rate 0.70 --min-usage-events 100 --json
 bin/lacp canary --json
@@ -60,6 +61,7 @@ bin/lacp policy-pack apply --pack starter --json
 bin/lacp release-gate --quick
 bin/lacp release-prepare --quick --skip-cache-gate --skip-skill-audit-gate --since-clean-baseline --json
 bin/lacp open-source-check --skip-bootstrap --json
+bin/lacp security-hygiene --json | jq
 bin/lacp release-publish --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --skip-gh --json
 bin/lacp pr-preflight --changed-files ./changed-files.txt --head-sha "$(git rev-parse HEAD)" --json
 bin/lacp browser-evidence-validate --manifest ./browser-evidence.json --json

@@ -69,6 +69,7 @@ fi
 "${ROOT}/bin/lacp" swarm --help >/dev/null
 "${ROOT}/bin/lacp" workflow-run --help >/dev/null
 "${ROOT}/bin/lacp" open-source-check --help >/dev/null
+"${ROOT}/bin/lacp" security-hygiene --help >/dev/null
 
 # Pin .env to sentinel values and assert isolated runs do not mutate it.
 cat > "${ENV_FILE}" <<'EOF'

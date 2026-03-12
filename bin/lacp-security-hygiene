@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AUDIT_SCRIPT="${ROOT}/scripts/ci/security-hygiene-audit.sh"
+
+if [[ ! -x "${AUDIT_SCRIPT}" ]]; then
+  if [[ -f "${AUDIT_SCRIPT}" ]]; then
+    chmod +x "${AUDIT_SCRIPT}" >/dev/null 2>&1 || true
+  fi
+fi
+
+exec "/bin/bash" "${AUDIT_SCRIPT}" "$@"

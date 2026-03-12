@@ -42,6 +42,7 @@ Ops:
   release-publish Build + publish release artifacts from local machine (no Actions)
   release-verify Verify release artifacts + checksums + tap install dry-run
   open-source-check Local open-source readiness gate (docs/security/artifacts/bootstrap)
+  security-hygiene Quick local security/hygiene scan (secrets/paths/.env/workflows/email)
   vendor-watch  Track Claude/Codex versions + docs/changelog drift
   automations-tui Unified dashboard for local automation health/status
   mcp-profile  Apply/list MCP operating profiles (cli-first/selective/heavy)
@@ -230,6 +231,9 @@ case "${cmd}" in
     ;;
   open-source-check)
     exec "${ROOT}/bin/lacp-open-source-check" "$@"
+    ;;
+  security-hygiene)
+    exec "${ROOT}/bin/lacp-security-hygiene" "$@"
     ;;
   vendor-watch)
     exec "${ROOT}/bin/lacp-vendor-watch" "$@"

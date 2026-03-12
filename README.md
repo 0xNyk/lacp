@@ -363,7 +363,7 @@ Expected:
 - `lacp-test --quick` exits `0`
 - `lacp-test --isolated` exits `0`
 - doctor reports `"ok": true`
-- status report includes mode + doctor + artifact fields
+- status report includes mode + doctor + artifact fields + `intervention_rate` (current/baseline/delta)
 
 ## Brand Assets
 
@@ -438,6 +438,7 @@ Notes:
 - `bin/lacp-release-publish`: local-only release artifact builder/publisher (`tar.gz` + `SHA256SUMS` + optional `gh release`)
 - `bin/lacp-release-verify`: one-command release verification (`release-publish --skip-gh` + checksum + archive + brew dry-run)
 - `bin/lacp-open-source-check`: local open-source go/no-go gate (docs freshness, security/deps hygiene, artifact checksums, optional bootstrap sanity)
+- `bin/lacp security-hygiene`: quick secret/path/workflow/.env/email hygiene scan with compact JSON output (`--repo-root`, `--json`)
 - `bin/lacp-vendor-watch`: monitor local Claude/Codex versions and upstream docs/changelog drift
 - `bin/lacp-automations-tui`: unified local automation dashboard (`schedule/orchestrate/worktree/swarm/wrappers/vendor-watch`)
 - `bin/lacp-cache-audit`: measure prompt cache efficiency from local Claude/Codex histories
@@ -491,7 +492,7 @@ Notes:
 - `bin/lacp-brain-expand`: automated brain expansion loop (session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + agent-daily sync + inbox hygiene + doctor checks)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
-- `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`)
+- `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`) including intervention pressure KPI (`intervention_rate_per_100`) with baseline delta
 - `bin/lacp-route`: deterministic tier/provider routing with reasons
 - `bin/lacp-sandbox-run`: route + risk-tier/budget gates + dispatch + execution artifact logging
 - `bin/lacp-remote-setup`: provider onboarding and config wiring

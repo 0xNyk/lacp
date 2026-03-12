@@ -68,6 +68,13 @@ assert_eq "$(echo "${report_json}" | jq -r '.schema_version')" "1" "report.schem
 assert_eq "$(echo "${report_json}" | jq -r '.kind')" "report" "report.kind"
 assert_eq "$(echo "${status_json}" | jq -r '.schema_version')" "1" "status.schema_version"
 assert_eq "$(echo "${status_json}" | jq -r '.kind')" "status" "status.kind"
+assert_eq "$(echo "${status_json}" | jq -r '.intervention_rate.formula')" "(intervened_runs / total_runs) * 100" "status.intervention_rate.formula"
+assert_eq "$(echo "${status_json}" | jq -r '.intervention_rate.current_window.intervention_rate_per_100 >= 0')" "true" "status.intervention_rate.current"
+
+security_json="$("/bin/bash" "${ROOT}/bin/lacp-security-hygiene" --repo-root "${ROOT}" --json)"
+assert_eq "$(echo "${security_json}" | jq -r '.schema_version')" "1" "security_hygiene.schema_version"
+assert_eq "$(echo "${security_json}" | jq -r '.kind')" "security_hygiene_audit" "security_hygiene.kind"
+assert_eq "$(echo "${security_json}" | jq -r '.summary.fail >= 0')" "true" "security_hygiene.summary.fail"
 
 # migrate should dry-run and apply env settings.
 migrate_preview="$("/bin/bash" "${ROOT}/bin/lacp-migrate" --automation-root "${AUTOMATION_ROOT}" --knowledge-root "${KNOWLEDGE_ROOT}" --drafts-root "${DRAFTS_ROOT}" --json)"
