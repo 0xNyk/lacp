@@ -135,7 +135,7 @@ def render_link_note(url: str, title: str) -> tuple[str, str]:
 
 
 def ensure_inbox_root() -> Path:
-    vault_root = Path(os.environ.get("LACP_OBSIDIAN_VAULT", str(Path.home() / "obsidian" / "nyk")))
+    vault_root = Path(os.environ.get("LACP_OBSIDIAN_VAULT", str(Path.home() / "obsidian" / "vault")))
     inbox_root = vault_root / "inbox"
     inbox_root.mkdir(parents=True, exist_ok=True)
     return inbox_root
