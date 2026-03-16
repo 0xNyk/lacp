@@ -1,0 +1,452 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-obsidian <command> [options]
+
+Manage Obsidian configuration as code.
+
+Commands:
+  status        Show vault status (path, plugins, graph config)
+  audit         Compare live .obsidian/ against manifest.json
+  apply         Apply manifest.json to live .obsidian/ files
+  backup        Snapshot .obsidian/ config files
+  restore       Restore from a snapshot (--snapshot TIMESTAMP or latest)
+  plugins       List installed community plugins with versions
+  graph-config  Show current graph configuration
+  optimize      Delegate to optimize_obsidian_config.py
+
+Options:
+  --json        Machine-readable JSON output
+  -h, --help    Show this help
+EOF
+}
+
+AS_JSON=0
+SNAPSHOT_TS=""
+
+MANIFEST_PATH="${ROOT}/config/obsidian/manifest.json"
+SNAPSHOT_BASE="${ROOT}/config/obsidian/snapshots"
+
+resolve_vault_path() {
+  local p="${1}"
+  p="${p/#\~/$HOME}"
+  echo "${p}"
+}
+
+# Resolve vault: explicit override > manifest > lacp-lib default
+# LACP_OBSIDIAN_VAULT from lacp-lib defaults to ~/obsidian/vault.
+# If user explicitly sets it to something else, honor that override.
+_lib_default="${HOME}/obsidian/vault"
+_env_vault="${LACP_OBSIDIAN_VAULT:-}"
+if [[ -n "${_env_vault}" && "${_env_vault}" != "${_lib_default}" ]]; then
+  VAULT_ROOT="${_env_vault}"
+elif [[ -f "${MANIFEST_PATH}" ]]; then
+  _manifest_vault="$(python3 -c "import json; print(json.load(open('${MANIFEST_PATH}')).get('vault_path',''))" 2>/dev/null || true)"
+  if [[ -n "${_manifest_vault}" ]]; then
+    VAULT_ROOT="$(resolve_vault_path "${_manifest_vault}")"
+  else
+    VAULT_ROOT="${HOME}/obsidian/nyk"
+  fi
+else
+  VAULT_ROOT="${HOME}/obsidian/nyk"
+fi
+OBSIDIAN_DIR="${VAULT_ROOT}/.obsidian"
+
+cmd_status() {
+  require_dir "${VAULT_ROOT}"
+
+  local core_count=0 community_count=0 color_group_count=0 running="false"
+  local community_list=""
+
+  if [[ -f "${OBSIDIAN_DIR}/core-plugins.json" ]]; then
+    core_count="$(python3 -c "
+import json
+with open('${OBSIDIAN_DIR}/core-plugins.json') as f:
+    d = json.load(f)
+print(sum(1 for v in d.values() if v))
+")"
+  fi
+
+  if [[ -f "${OBSIDIAN_DIR}/community-plugins.json" ]]; then
+    community_list="$(python3 -c "
+import json
+with open('${OBSIDIAN_DIR}/community-plugins.json') as f:
+    d = json.load(f)
+for p in d:
+    print(p)
+")"
+    community_count="$(echo "${community_list}" | grep -c '^' || echo 0)"
+  fi
+
+  local installed_count=0
+  if [[ -d "${OBSIDIAN_DIR}/plugins" ]]; then
+    installed_count="$(find "${OBSIDIAN_DIR}/plugins" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  fi
+
+  if [[ -f "${OBSIDIAN_DIR}/graph.json" ]]; then
+    color_group_count="$(python3 -c "
+import json
+with open('${OBSIDIAN_DIR}/graph.json') as f:
+    d = json.load(f)
+print(len(d.get('colorGroups', [])))
+")"
+  fi
+
+  if pgrep -q "Obsidian" 2>/dev/null; then
+    running="true"
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json
+print(json.dumps({
+    'vault_path': '${VAULT_ROOT}',
+    'obsidian_running': '${running}' == 'true',
+    'core_plugins_enabled': ${core_count},
+    'community_plugins_registered': ${community_count},
+    'community_plugins_installed': ${installed_count},
+    'graph_color_groups': ${color_group_count}
+}, indent=2))
+"
+  else
+    log "Vault: ${VAULT_ROOT}"
+    log "Obsidian running: ${running}"
+    log "Core plugins enabled: ${core_count}"
+    log "Community plugins (registered/installed): ${community_count}/${installed_count}"
+    log "Graph color groups: ${color_group_count}"
+    if [[ -n "${community_list}" ]]; then
+      echo "${community_list}" | sed 's/^/  - /'
+    fi
+  fi
+}
+
+cmd_audit() {
+  require_file "${MANIFEST_PATH}"
+  require_dir "${OBSIDIAN_DIR}"
+
+  python3 - "${MANIFEST_PATH}" "${OBSIDIAN_DIR}" "${AS_JSON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+obsidian_dir = Path(sys.argv[2])
+as_json = sys.argv[3] == "1"
+
+manifest = json.loads(manifest_path.read_text())
+drift = []
+
+# Core plugins
+core_path = obsidian_dir / "core-plugins.json"
+if core_path.exists():
+    live_core = json.loads(core_path.read_text())
+    manifest_core = manifest.get("core_plugins", {})
+    for plugin, expected in manifest_core.items():
+        actual = live_core.get(plugin)
+        if actual != expected:
+            drift.append({
+                "category": "core_plugin",
+                "item": plugin,
+                "expected": expected,
+                "actual": actual
+            })
+else:
+    drift.append({"category": "core_plugin", "item": "core-plugins.json", "expected": "exists", "actual": "missing"})
+
+# Community plugins
+community_path = obsidian_dir / "community-plugins.json"
+if community_path.exists():
+    live_community = set(json.loads(community_path.read_text()))
+    manifest_community = set(manifest.get("community_plugins", []))
+    for p in sorted(manifest_community - live_community):
+        drift.append({"category": "community_plugin", "item": p, "expected": "registered", "actual": "missing"})
+    for p in sorted(live_community - manifest_community):
+        drift.append({"category": "community_plugin", "item": p, "expected": "not registered", "actual": "registered"})
+else:
+    drift.append({"category": "community_plugin", "item": "community-plugins.json", "expected": "exists", "actual": "missing"})
+
+# Graph view
+graph_path = obsidian_dir / "graph.json"
+if graph_path.exists():
+    live_graph = json.loads(graph_path.read_text())
+    manifest_graph = manifest.get("graph_view", {})
+    for key in ("showOrphans", "hideUnresolved"):
+        expected = manifest_graph.get(key)
+        actual = live_graph.get(key)
+        if expected is not None and actual != expected:
+            drift.append({
+                "category": "graph_view",
+                "item": key,
+                "expected": expected,
+                "actual": actual
+            })
+    manifest_cg_count = len(manifest_graph.get("colorGroups", []))
+    live_cg_count = len(live_graph.get("colorGroups", []))
+    if manifest_cg_count != live_cg_count:
+        drift.append({
+            "category": "graph_view",
+            "item": "colorGroups_count",
+            "expected": manifest_cg_count,
+            "actual": live_cg_count
+        })
+else:
+    drift.append({"category": "graph_view", "item": "graph.json", "expected": "exists", "actual": "missing"})
+
+ok = len(drift) == 0
+
+if as_json:
+    print(json.dumps({"ok": ok, "drift_count": len(drift), "drift": drift}, indent=2))
+else:
+    if ok:
+        print("[lacp] Obsidian config: no drift detected")
+    else:
+        print(f"[lacp] Obsidian config: {len(drift)} drift item(s)")
+        for d in drift:
+            print(f"  {d['category']}: {d['item']} expected={d['expected']} actual={d['actual']}")
+
+sys.exit(0 if ok else 1)
+PY
+}
+
+cmd_apply() {
+  require_file "${MANIFEST_PATH}"
+  require_dir "${OBSIDIAN_DIR}"
+
+  # Auto-backup before apply (suppress output)
+  local _saved_json="${AS_JSON}"
+  AS_JSON=0
+  cmd_backup > /dev/null 2>&1
+  AS_JSON="${_saved_json}"
+
+  python3 - "${MANIFEST_PATH}" "${OBSIDIAN_DIR}" "${AS_JSON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+obsidian_dir = Path(sys.argv[2])
+as_json = sys.argv[3] == "1"
+
+manifest = json.loads(manifest_path.read_text())
+applied = []
+
+# Apply core plugins
+core_path = obsidian_dir / "core-plugins.json"
+manifest_core = manifest.get("core_plugins", {})
+if manifest_core:
+    core_path.write_text(json.dumps(manifest_core, indent=2) + "\n")
+    applied.append("core-plugins.json")
+
+# Apply community plugins
+community_path = obsidian_dir / "community-plugins.json"
+manifest_community = manifest.get("community_plugins", [])
+if manifest_community:
+    community_path.write_text(json.dumps(sorted(manifest_community), indent=2) + "\n")
+    applied.append("community-plugins.json")
+
+# Apply graph view settings
+graph_path = obsidian_dir / "graph.json"
+manifest_graph = manifest.get("graph_view", {})
+if manifest_graph and graph_path.exists():
+    live_graph = json.loads(graph_path.read_text())
+    for key in ("showOrphans", "hideUnresolved", "search"):
+        if key in manifest_graph:
+            live_graph[key] = manifest_graph[key]
+    if "colorGroups" in manifest_graph:
+        live_graph["colorGroups"] = manifest_graph["colorGroups"]
+    graph_path.write_text(json.dumps(live_graph, indent=2) + "\n")
+    applied.append("graph.json")
+
+if as_json:
+    print(json.dumps({"ok": True, "applied": applied}, indent=2))
+else:
+    print(f"[lacp] Applied manifest to: {', '.join(applied)}")
+PY
+}
+
+cmd_backup() {
+  require_dir "${OBSIDIAN_DIR}"
+
+  local ts
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  local snap_dir="${SNAPSHOT_BASE}/${ts}"
+  mkdir -p "${snap_dir}"
+
+  local backed=()
+  for f in core-plugins.json community-plugins.json graph.json app.json appearance.json; do
+    if [[ -f "${OBSIDIAN_DIR}/${f}" ]]; then
+      cp "${OBSIDIAN_DIR}/${f}" "${snap_dir}/${f}"
+      backed+=("${f}")
+    fi
+  done
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json
+print(json.dumps({
+    'ok': True,
+    'snapshot': '${ts}',
+    'path': '${snap_dir}',
+    'files': $(python3 -c "import json; print(json.dumps([$(printf '"%s",' "${backed[@]}")])) " 2>/dev/null || echo '[]')
+}, indent=2))
+"
+  else
+    log "Backup created: ${snap_dir} (${#backed[@]} files)"
+  fi
+}
+
+cmd_restore() {
+  local snap_dir
+
+  if [[ -n "${SNAPSHOT_TS}" ]]; then
+    snap_dir="${SNAPSHOT_BASE}/${SNAPSHOT_TS}"
+  else
+    snap_dir="$(find "${SNAPSHOT_BASE}" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -r | head -1)"
+  fi
+
+  if [[ -z "${snap_dir}" || ! -d "${snap_dir}" ]]; then
+    die "No snapshot found${SNAPSHOT_TS:+ at ${SNAPSHOT_TS}}"
+  fi
+
+  require_dir "${OBSIDIAN_DIR}"
+
+  local restored=()
+  for f in "${snap_dir}"/*.json; do
+    [[ -f "${f}" ]] || continue
+    local fname
+    fname="$(basename "${f}")"
+    cp "${f}" "${OBSIDIAN_DIR}/${fname}"
+    restored+=("${fname}")
+  done
+
+  local snap_ts
+  snap_ts="$(basename "${snap_dir}")"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json
+print(json.dumps({
+    'ok': True,
+    'snapshot': '${snap_ts}',
+    'restored': $(python3 -c "import json; print(json.dumps([$(printf '"%s",' "${restored[@]}")])) " 2>/dev/null || echo '[]')
+}, indent=2))
+"
+  else
+    log "Restored from ${snap_ts}: ${restored[*]}"
+  fi
+}
+
+cmd_plugins() {
+  require_dir "${OBSIDIAN_DIR}/plugins"
+
+  python3 - "${OBSIDIAN_DIR}/plugins" "${AS_JSON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+plugins_dir = Path(sys.argv[1])
+as_json = sys.argv[2] == "1"
+
+plugins = []
+for d in sorted(plugins_dir.iterdir()):
+    if not d.is_dir():
+        continue
+    manifest = d / "manifest.json"
+    name = d.name
+    version = "unknown"
+    if manifest.exists():
+        try:
+            m = json.loads(manifest.read_text())
+            version = m.get("version", "unknown")
+            name = m.get("name", d.name)
+        except Exception:
+            pass
+    plugins.append({"id": d.name, "name": name, "version": version})
+
+if as_json:
+    print(json.dumps({"plugins": plugins, "count": len(plugins)}, indent=2))
+else:
+    for p in plugins:
+        print(f"  {p['id']:30s} v{p['version']:10s} {p['name']}")
+PY
+}
+
+cmd_graph_config() {
+  require_file "${OBSIDIAN_DIR}/graph.json"
+
+  python3 - "${OBSIDIAN_DIR}/graph.json" "${AS_JSON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+graph = json.loads(Path(sys.argv[1]).read_text())
+as_json = sys.argv[2] == "1"
+
+cg = graph.get("colorGroups", [])
+info = {
+    "colorGroups_count": len(cg),
+    "showOrphans": graph.get("showOrphans"),
+    "hideUnresolved": graph.get("hideUnresolved"),
+    "search": graph.get("search", ""),
+    "showTags": graph.get("showTags"),
+    "showAttachments": graph.get("showAttachments"),
+}
+
+if as_json:
+    print(json.dumps(info, indent=2))
+else:
+    for k, v in info.items():
+        val = v if not isinstance(v, str) or len(v) < 80 else v[:77] + "..."
+        print(f"  {k}: {val}")
+PY
+}
+
+cmd_optimize() {
+  local script="${ROOT}/scripts/runners/optimize_obsidian_config.py"
+  if [[ ! -f "${script}" ]]; then
+    die "optimize_obsidian_config.py not found (Part 2 dependency)"
+  fi
+
+  local args=()
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    args+=(--json)
+  fi
+  python3 "${script}" "${args[@]}"
+}
+
+# --- Parse args ---
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 1
+fi
+
+COMMAND="$1"
+shift
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --snapshot) SNAPSHOT_TS="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+case "${COMMAND}" in
+  status)       cmd_status ;;
+  audit)        cmd_audit ;;
+  apply)        cmd_apply ;;
+  backup)       cmd_backup ;;
+  restore)      cmd_restore ;;
+  plugins)      cmd_plugins ;;
+  graph-config) cmd_graph_config ;;
+  optimize)     cmd_optimize ;;
+  -h|--help)    usage; exit 0 ;;
+  *)            die "Unknown command: ${COMMAND}" ;;
+esac

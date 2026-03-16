@@ -11,6 +11,7 @@ Usage: lacp-brain-expand [--days N] [--apply] [--strict] [--json] [--skip-qmd]
 
 Runs the local Obsidian brain expansion loop:
   0) Guard Obsidian graph/app config + stable symlinks
+  0.5) Obsidian config drift guard
   1) Sync Claude/Codex sessions into vault notes
   2) Materialize captured web research into inbox notes
   3) Sync research signals into knowledge graph nodes
@@ -25,11 +26,13 @@ Runs the local Obsidian brain expansion loop:
  10) Run brain + knowledge doctors
 
 Options:
-  --days N      Lookback window for research sync (default: 7)
-  --apply       Apply writes for scripts supporting dry-run/apply modes
-  --strict      Return non-zero if any step fails
-  --json        Emit machine-readable JSON summary
-  --skip-qmd    Skip `qmd update`
+  --days N        Lookback window for research sync (default: 7)
+  --apply         Apply writes for scripts supporting dry-run/apply modes
+  --strict        Return non-zero if any step fails
+  --json          Emit machine-readable JSON summary
+  --skip-qmd      Skip `qmd update`
+  --activate      Enable spreading activation for new research signals
+  --consolidate   Use enhanced memory consolidation (prune/merge)
 USAGE
 }
 
@@ -38,6 +41,8 @@ APPLY=0
 STRICT=0
 AS_JSON=0
 SKIP_QMD=0
+ACTIVATE=0
+CONSOLIDATE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,6 +64,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-qmd)
       SKIP_QMD=1
+      shift
+      ;;
+    --activate)
+      ACTIVATE=1
+      shift
+      ;;
+    --consolidate)
+      CONSOLIDATE=1
       shift
       ;;
     -h|--help)
@@ -160,6 +173,17 @@ else
   log_step "WARN" "obsidian_graph_guard" "missing ensure_obsidian_graph_health.py"
 fi
 
+# 0.5) Obsidian config drift guard
+if [[ -x "${ROOT}/bin/lacp-obsidian" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "obsidian_config_guard" "${ROOT}/bin/lacp-obsidian" apply --json
+  else
+    run_step_soft "obsidian_config_guard" "${ROOT}/bin/lacp-obsidian" audit --json
+  fi
+else
+  log_step "WARN" "obsidian_config_guard" "missing ${ROOT}/bin/lacp-obsidian"
+fi
+
 # 1) Session sync
 if [[ -x "${SCRIPTS_DIR}/run_session_sync.sh" ]]; then
   run_step "session_sync" /bin/bash "${SCRIPTS_DIR}/run_session_sync.sh"
@@ -180,11 +204,14 @@ fi
 
 # 3) Sync research graph nodes
 if [[ -f "${SCRIPTS_DIR}/sync_research_knowledge.py" ]]; then
+  SYNC_ARGS=(--days "${DAYS}")
   if [[ "${APPLY}" -eq 1 ]]; then
-    run_step "sync_research_knowledge" python3 "${SCRIPTS_DIR}/sync_research_knowledge.py" --days "${DAYS}" --apply
-  else
-    run_step "sync_research_knowledge" python3 "${SCRIPTS_DIR}/sync_research_knowledge.py" --days "${DAYS}"
+    SYNC_ARGS+=(--apply)
   fi
+  if [[ "${ACTIVATE}" -eq 1 ]]; then
+    SYNC_ARGS+=(--activate)
+  fi
+  run_step "sync_research_knowledge" python3 "${SCRIPTS_DIR}/sync_research_knowledge.py" "${SYNC_ARGS[@]}"
 else
   log_step "WARN" "sync_research_knowledge" "missing ${SCRIPTS_DIR}/sync_research_knowledge.py"
 fi
@@ -223,7 +250,14 @@ else
 fi
 
 # 7) Weekly consolidation gate
-if [[ -f "${SCRIPTS_DIR}/consolidate_research.py" ]]; then
+if [[ "${CONSOLIDATE}" -eq 1 && -f "${SCRIPTS_DIR}/memory_consolidation.py" ]]; then
+  # Enhanced consolidation with prune/merge logic
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/memory_consolidation.py" --apply
+  else
+    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/memory_consolidation.py" --dry-run
+  fi
+elif [[ -f "${SCRIPTS_DIR}/consolidate_research.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
     run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/consolidate_research.py" --apply --weekly-gate --min-days-between-runs 6
   else
@@ -280,7 +314,7 @@ run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
-  python3 - <<'PY' "${STEPS_FILE}" "${LOG_FILE}" "${RUN_TS}" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${DAYS}" "${APPLY}" "${STRICT}"
+  python3 - <<'PY' "${STEPS_FILE}" "${LOG_FILE}" "${RUN_TS}" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${DAYS}" "${APPLY}" "${STRICT}" "${ACTIVATE}" "${CONSOLIDATE}"
 import json
 import sys
 from pathlib import Path
@@ -294,6 +328,8 @@ fail_count = int(sys.argv[6])
 days = int(sys.argv[7])
 apply = sys.argv[8] == "1"
 strict = sys.argv[9] == "1"
+activate = sys.argv[10] == "1" if len(sys.argv) > 10 else False
+consolidate = sys.argv[11] == "1" if len(sys.argv) > 11 else False
 
 steps = []
 for line in steps_file.read_text().splitlines():
@@ -309,6 +345,8 @@ payload = {
     "ok": fail_count == 0,
     "strict": strict,
     "apply": apply,
+    "activate": activate,
+    "consolidate": consolidate,
     "days": days,
     "summary": {"pass": pass_count, "warn": warn_count, "fail": fail_count},
     "log_file": log_file,

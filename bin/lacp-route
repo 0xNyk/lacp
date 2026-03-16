@@ -211,6 +211,28 @@ if task_matches_critical_keywords; then
 fi
 
 cost_ceiling_usd="$(jq -r --arg risk_tier "${risk_tier}" '.routing.cost_ceiling_usd_by_risk_tier[$risk_tier] // 0' "${LACP_SANDBOX_POLICY_FILE}")"
+
+model_slot=""
+model_hint=""
+resolve_model_slot() {
+  local slot kw
+  while IFS= read -r slot; do
+    [[ -z "${slot}" ]] && continue
+    while IFS= read -r kw; do
+      [[ -z "${kw}" ]] && continue
+      if [[ "${task_lc}" == *"${kw}"* ]]; then
+        model_slot="${slot}"
+        model_hint="$(jq -r --arg s "${slot}" '.model_routing.slots[$s].hint // "sonnet"' "${LACP_SANDBOX_POLICY_FILE}")"
+        return 0
+      fi
+    done < <(jq -r --arg s "${slot}" '.model_routing.slots[$s].keywords[]?' "${LACP_SANDBOX_POLICY_FILE}")
+  done < <(jq -r '.model_routing.slots | keys[]?' "${LACP_SANDBOX_POLICY_FILE}")
+  model_slot="$(jq -r '.model_routing.default_slot // "subagent"' "${LACP_SANDBOX_POLICY_FILE}")"
+  model_hint="$(jq -r --arg s "${model_slot}" '.model_routing.slots[$s].hint // "sonnet"' "${LACP_SANDBOX_POLICY_FILE}")"
+}
+if jq -e '.model_routing' "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
+  resolve_model_slot
+fi
 if ! [[ "${cost_ceiling_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   die "Invalid cost ceiling for risk_tier=${risk_tier}: ${cost_ceiling_usd}"
 fi
@@ -229,6 +251,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --arg risk_tier "${risk_tier}" \
     --argjson cost_ceiling_usd "${cost_ceiling_usd}" \
     --arg policy_file "${LACP_SANDBOX_POLICY_FILE}" \
+    --arg model_slot "${model_slot}" \
+    --arg model_hint "${model_hint}" \
     --argjson reasons "$(printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .)" \
     '{
       route: $route,
@@ -245,6 +269,8 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
       risk_tier: $risk_tier,
       cost_ceiling_usd: $cost_ceiling_usd,
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
+      model_slot: (if $model_slot == "" then null else $model_slot end),
+      model_hint: (if $model_hint == "" then null else $model_hint end),
       policy_file: $policy_file
     }'
 else
@@ -254,6 +280,7 @@ else
   echo "remote_provider=${remote_provider:-<n/a>}"
   echo "risk_tier=${risk_tier}"
   echo "cost_ceiling_usd=${cost_ceiling_usd}"
+  echo "model_slot=${model_slot:-<n/a>} model_hint=${model_hint:-<n/a>}"
   echo "policy_file=${LACP_SANDBOX_POLICY_FILE}"
   echo "reasons=$(IFS=,; echo "${reasons[*]}")"
 fi

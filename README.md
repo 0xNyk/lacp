@@ -6,7 +6,9 @@
 
 Local Agent Control Plane for Claude/Codex.
 
-Status: active development (`v0.3.x`).
+> **Alpha Release** — This project is under active development and is a work in progress. Expect bugs, breaking changes, and incomplete features. APIs, hook interfaces, and configuration formats may change between versions without notice. Contributions, bug reports, and feedback are welcome — please open an issue if something breaks or doesn't work as expected.
+
+Status: alpha (`v0.3.x`).
 
 LACP turns local agent operations into an auditable system with:
 - reproducible onboarding
@@ -18,6 +20,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 
 ## Table of Contents
 
+- [Support the Project](#-support-the-project)
 - [End Goal](#end-goal)
 - [Prerequisites](#prerequisites)
 - [Starter Guide](#starter-guide)
@@ -41,6 +44,16 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Optimization Backlog](#optimization-backlog)
+
+## ❤️ Support the Project
+
+If you find this project useful, consider supporting my open-source work.
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nyk_builderz)
+
+**Solana donations**
+
+`BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
 
 ## End Goal
 
@@ -415,6 +428,56 @@ LACP includes a first-class Obsidian brain workflow out of the box:
 - upstream Anthropic skill sync:
   - `bin/lacp skill-sync-anthropic --skill skill-creator --apply --json | jq`
 
+### Obsidian Configuration Management
+
+LACP manages Obsidian configuration as code via `bin/lacp-obsidian`:
+
+```bash
+# Show vault health, plugin state, config status
+lacp obsidian status
+
+# Detect drift between live .obsidian/ and declared manifest
+lacp obsidian audit --json | jq
+
+# Apply declared config (auto-backs up first)
+lacp obsidian apply
+
+# Snapshot/restore config
+lacp obsidian backup
+lacp obsidian restore
+
+# Auto-tune settings based on vault size and graph density
+lacp obsidian optimize --dry-run
+lacp obsidian optimize --apply
+```
+
+Configuration is declared in `config/obsidian/manifest.json` (plugins, core settings, graph view). The optimization engine (`optimize`) auto-selects a profile (small/medium/large) based on vault node count and tunes graph physics, dataview refresh intervals, linter rules, and plugin settings accordingly.
+
+Config files:
+- `config/obsidian/manifest.json` — declarative vault config (core plugins, community plugins, graph colorGroups)
+- `config/obsidian/plugin-settings.json` — optimal per-plugin settings template
+- `config/obsidian/optimization-profiles.json` — size-based optimization profiles (small/medium/large)
+
+### Mycelium Network Memory
+
+The knowledge graph uses biologically-inspired memory principles modeled on mycelium (fungal) networks:
+
+| Mechanism | Function | Description |
+|-----------|----------|-------------|
+| Adaptive path reinforcement | `reinforce_access_paths()` | Frequently-traversed edges get stronger (like mycelium hyphae thickening) |
+| Self-healing | `heal_broken_paths()` | Pruned nodes trigger reconnection of orphaned neighbors |
+| Exploratory tendrils | Tendril protection in consolidation | Frontier nodes in active categories are shielded from pruning |
+| Flow scoring | `compute_flow_score()` | Betweenness centrality proxy identifies critical transport hubs |
+| Spreading activation | `spreading_activation()` | Collins & Loftus propagation over graph edges |
+| Temporal decay | FSRS dual-strength model | Storage strength (S) + retrieval strength (R) with forgetting curve |
+
+Use with brain-expand:
+
+```bash
+# Full expansion with mycelium-enhanced consolidation
+lacp brain-expand --apply --activate --consolidate --json | jq
+```
+
 Recommended automation profiles:
 - every 30 minutes (repo research sync): `com.lacp.repo-research-sync`
 - every 6 hours (full brain-expand): `com.lacp.brain-expand-6h`
@@ -549,7 +612,7 @@ Notes:
 - `bin/lacp-install`: bootstraps Obsidian vault/symlinks by default (`--no-obsidian-setup` to skip)
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
-- `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including `hardened-exec` execution guard profile
+- `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including profiles: `hardened-exec`, `quality-gate-v2`, `session-start`, `pretool-guard`, `write-validate`
 - `bin/lacp-console`: interactive slash-command shell (`/doctor`, `/up`, `/orchestrate`, `/worktree`, `/swarm`, `/hooks`, `/loop`, `/release`, `/run`)
 - `bin/lacp-time`: monthly project/client session time tracking (`start`, `stop`, `active`, `report`, `month`) with directory split rollups (`clients/projects/experiments`), tag rollups, and activity buckets (`coding/testing/docs/ops`)
 - `bin/lacp-loop`: deterministic `intent -> execute -> observe -> adapt` control loop wrapper for one task
@@ -626,9 +689,10 @@ Notes:
 - `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
 - `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
 - `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
+- `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths
-- `bin/lacp-brain-expand`: automated brain expansion loop (session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + agent-daily sync + inbox hygiene + doctor checks)
+- `bin/lacp-brain-expand`: automated brain expansion loop (config guard + session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + mycelium-enhanced memory consolidation + agent-daily sync + inbox hygiene + doctor checks)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately
 - `bin/lacp-status-report`: generate compact system snapshot (`docs/system-status.md`) including intervention pressure KPI (`intervention_rate_per_100`) with baseline delta
@@ -760,6 +824,8 @@ cd /path/to/lacp
 ./scripts/ci/test-ops-commands.sh
 ./scripts/ci/test-install.sh
 ./scripts/ci/test-system-health.sh
+./scripts/ci/test-obsidian-cli.sh
+./scripts/ci/test-brain-memory.sh
 ./scripts/ci/smoke.sh
 ```
 

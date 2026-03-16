@@ -20,6 +20,7 @@ Validates the Obsidian brain ecosystem health:
   - Atlas MOCs (7 expected)
   - MCP entities file
   - Stale remote lock files
+  - Obsidian config drift from manifest
 
 Output matches lacp-doctor format (pass/warn/fail counts).
 EOF
@@ -282,6 +283,66 @@ if [[ "${stale_locks}" -eq 0 ]]; then
 else
   add_check "brain:stale_locks" "WARN" "${stale_locks} stale lock(s) (>12h old) in ${lock_dir}"
   add_hint "Clean stale locks: find ${lock_dir} -name '.remote_context.*.json' -mmin +720 -delete"
+fi
+
+# --- 11. Obsidian config drift ---
+OBSIDIAN_MANIFEST="${ROOT}/config/obsidian/manifest.json"
+if [[ -f "${OBSIDIAN_MANIFEST}" ]]; then
+  # Resolve vault path from manifest when LACP_OBSIDIAN_VAULT is at the default
+  OBSIDIAN_VAULT_FOR_DRIFT="${VAULT_ROOT}"
+  if [[ "${VAULT_ROOT}" == "${HOME}/obsidian/vault" ]]; then
+    manifest_vault="$(python3 -c "
+import json, os, sys
+m = json.loads(open(sys.argv[1]).read())
+p = m.get('vault_path', '')
+print(os.path.expanduser(p) if p else '')
+" "${OBSIDIAN_MANIFEST}" 2>/dev/null || true)"
+    if [[ -n "${manifest_vault}" && -d "${manifest_vault}/.obsidian" ]]; then
+      OBSIDIAN_VAULT_FOR_DRIFT="${manifest_vault}"
+    fi
+  fi
+  drift_count="$(python3 - "${OBSIDIAN_MANIFEST}" "${OBSIDIAN_VAULT_FOR_DRIFT}/.obsidian" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+obsidian_dir = Path(sys.argv[2])
+manifest = json.loads(manifest_path.read_text())
+drift = 0
+
+core_path = obsidian_dir / "core-plugins.json"
+if core_path.exists():
+    live_core = json.loads(core_path.read_text())
+    for plugin, expected in manifest.get("core_plugins", {}).items():
+        if live_core.get(plugin) != expected:
+            drift += 1
+
+community_path = obsidian_dir / "community-plugins.json"
+if community_path.exists():
+    live_set = set(json.loads(community_path.read_text()))
+    manifest_set = set(manifest.get("community_plugins", []))
+    drift += len(manifest_set - live_set) + len(live_set - manifest_set)
+
+graph_path = obsidian_dir / "graph.json"
+if graph_path.exists():
+    live_graph = json.loads(graph_path.read_text())
+    manifest_graph = manifest.get("graph_view", {})
+    for key in ("showOrphans", "hideUnresolved"):
+        if key in manifest_graph and live_graph.get(key) != manifest_graph[key]:
+            drift += 1
+
+print(drift)
+PY
+  )"
+  if [[ "${drift_count}" -eq 0 ]]; then
+    add_check "brain:obsidian_config" "PASS" "no config drift from manifest"
+  else
+    add_check "brain:obsidian_config" "WARN" "${drift_count} config drift item(s) from manifest"
+    add_hint "Run: lacp-obsidian apply"
+  fi
+else
+  add_check "brain:obsidian_config" "WARN" "obsidian manifest not configured"
 fi
 
 # --- Summary ---

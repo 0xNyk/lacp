@@ -573,6 +573,8 @@ REMOTE_PROVIDER="$(printf '%s' "${ROUTE_JSON}" | jq -r '.remote_provider // empt
 RISK_TIER="$(printf '%s' "${ROUTE_JSON}" | jq -r '.risk_tier // "review"')"
 COST_CEILING_USD="$(printf '%s' "${ROUTE_JSON}" | jq -r '.cost_ceiling_usd // 0')"
 REASONS_JSON="$(printf '%s' "${ROUTE_JSON}" | jq -c '.reasons')"
+MODEL_SLOT="$(printf '%s' "${ROUTE_JSON}" | jq -r '.model_slot // empty')"
+MODEL_HINT="$(printf '%s' "${ROUTE_JSON}" | jq -r '.model_hint // empty')"
 
 if ! [[ "${ESTIMATED_COST_USD}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   die "--estimated-cost-usd must be a non-negative number"
@@ -834,6 +836,8 @@ jq -n \
   --arg error "${ERROR_MSG}" \
   --argjson exit_code "${EXEC_RC}" \
   --argjson command "${CMD_JSON}" \
+  --arg model_slot "${MODEL_SLOT}" \
+  --arg model_hint "${MODEL_HINT}" \
   '{
     schema_version: $schema_version,
     timestamp: $timestamp,
@@ -843,6 +847,8 @@ jq -n \
     task: $task,
     route: $route,
     risk_tier: $risk_tier,
+    model_slot: (if $model_slot == "" then null else $model_slot end),
+    model_hint: (if $model_hint == "" then null else $model_hint end),
     cost_ceiling_usd: $cost_ceiling_usd,
     estimated_cost_usd: $estimated_cost_usd,
     budget_confirmed: $budget_confirmed,
@@ -924,11 +930,15 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --argjson provider_metadata "${PROVIDER_META_JSON}" \
     --argjson remote_approval "${APPROVAL_JSON}" \
     --arg error "${ERROR_MSG}" \
+    --arg model_slot "${MODEL_SLOT}" \
+    --arg model_hint "${MODEL_HINT}" \
     '{
       schema_version: $schema_version,
       run_file: $run_file,
       route: $route,
       risk_tier: $risk_tier,
+      model_slot: (if $model_slot == "" then null else $model_slot end),
+      model_hint: (if $model_hint == "" then null else $model_hint end),
       cost_ceiling_usd: $cost_ceiling_usd,
       estimated_cost_usd: $estimated_cost_usd,
       budget_confirmed: $budget_confirmed,
