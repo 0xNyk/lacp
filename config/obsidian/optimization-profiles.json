@@ -1,0 +1,35 @@
+{
+  "small": {
+    "max_nodes": 200,
+    "graph_physics": {
+      "repelStrength": 300,
+      "linkDistance": 100,
+      "linkStrength": 0.3,
+      "centerStrength": 0.25
+    },
+    "dataview_refresh_ms": 10000,
+    "search_weight_boost": 1.0
+  },
+  "medium": {
+    "max_nodes": 1000,
+    "graph_physics": {
+      "repelStrength": 500,
+      "linkDistance": 150,
+      "linkStrength": 0.2,
+      "centerStrength": 0.18
+    },
+    "dataview_refresh_ms": 30000,
+    "search_weight_boost": 0.8
+  },
+  "large": {
+    "max_nodes": null,
+    "graph_physics": {
+      "repelStrength": 800,
+      "linkDistance": 200,
+      "linkStrength": 0.1,
+      "centerStrength": 0.12
+    },
+    "dataview_refresh_ms": 60000,
+    "search_weight_boost": 0.6
+  }
+}

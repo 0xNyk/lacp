@@ -207,6 +207,42 @@ check_cmd rg
 check_cmd jq
 check_cmd curl
 check_cmd git
+check_cmd ollama
+check_cmd docker
+
+# Ollama daemon + required models
+if command -v ollama >/dev/null 2>&1; then
+  if curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+    add_check "service:ollama" "PASS" "running at localhost:11434"
+    # Check required models
+    ollama_models="$(curl -s --max-time 5 http://localhost:11434/api/tags 2>/dev/null | jq -r '.models[].name' 2>/dev/null || echo "")"
+    for model in "mxbai-embed-large" "llama3.1:8b"; do
+      if echo "${ollama_models}" | grep -q "${model}"; then
+        add_check "model:${model}" "PASS" "available"
+      else
+        add_check "model:${model}" "WARN" "not pulled (run: ollama pull ${model})"
+        add_hint "ollama pull ${model}"
+      fi
+    done
+  else
+    add_check "service:ollama" "WARN" "installed but not running (start: ollama serve)"
+    add_hint "ollama serve &"
+  fi
+fi
+
+# OrbStack / Docker runtime
+if command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    docker_runtime="docker"
+    if docker info 2>/dev/null | grep -q "orbstack\|OrbStack"; then
+      docker_runtime="OrbStack"
+    fi
+    add_check "service:docker" "PASS" "running (${docker_runtime})"
+  else
+    add_check "service:docker" "WARN" "installed but daemon not running"
+    add_hint "Start OrbStack or Docker Desktop"
+  fi
+fi
 
 check_canonical_dir "${LACP_AUTOMATION_ROOT}" "root:automation"
 check_canonical_dir "${LACP_KNOWLEDGE_ROOT}" "root:knowledge"

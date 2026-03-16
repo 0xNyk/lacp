@@ -1,0 +1,9 @@
+{
+  "cluster_threshold": 0.75,
+  "merge_threshold": 0.80,
+  "min_cluster_size": 3,
+  "prune_r_threshold": 0.1,
+  "prune_s_threshold": 0.3,
+  "prune_edge_threshold": 0.5,
+  "max_prune_per_run": 50
+}

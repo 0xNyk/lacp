@@ -10,8 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
-  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|orient|write-validate] [--dry-run] [--json]
-  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|orient|write-validate] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -25,8 +25,11 @@ Profiles:
   minimal-stop  Disable known noisy Stop-hook plugins by default.
   balanced      Keep current enabled plugins unchanged.
   hardened-exec Apply local execution guard hooks (PreToolUse/PermissionRequest/ConfigChange).
-  quality-gate  Install ollama-backed Stop hook that blocks rationalized incomplete work.
-  orient        Install SessionStart hook for vault/repo spatial awareness.
+  quality-gate  Install ollama-backed Stop hook (bash version, legacy).
+  quality-gate-v2 Install modular Python Stop hook with test verification + heuristics.
+  orient        Install SessionStart hook for vault/repo spatial awareness (bash, legacy).
+  session-start Install unified Python SessionStart hook with test cmd caching.
+  pretool-guard Install Python PreToolUse guard (co-author, scp/root, rm -rf, etc.).
   write-validate Install PostToolUse(Write) hook for YAML frontmatter validation.
 EOF
 }
@@ -403,8 +406,8 @@ cmd_apply_profile() {
   done
 
   case "${profile}" in
-    minimal-stop|balanced|hardened-exec|quality-gate|orient|write-validate) ;;
-    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|orient|write-validate" ;;
+    minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate) ;;
+    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate" ;;
   esac
 
   local result
@@ -897,6 +900,249 @@ if profile == "write-validate":
         "action": "apply_write_validate_hook",
         "command": f"python3 {dst_validate}",
         "matcher": "Write",
+    })
+
+if profile == "quality-gate-v2":
+    # Install modular Python Stop hook with test verification + heuristics.
+    # Replaces the bash stop_quality_gate.sh with stop_quality_gate.py.
+    import shutil as _shutil_qg2
+
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Files needed by the Python stop hook
+    py_hook_files = [
+        "stop_quality_gate.py",
+        "detect_session_changes.py",
+        "hook_telemetry.py",
+        "test_stop_hook.py",
+    ]
+
+    for filename in py_hook_files:
+        src = lacp_root / "hooks" / filename
+        dst = hooks_dir / filename
+        if src.exists():
+            actions.append({
+                "status": "changed",
+                "action": "install_hook_asset",
+                "from": str(src),
+                "to": str(dst),
+            })
+            if not dry_run:
+                _shutil_qg2.copy2(src, dst)
+                dst.chmod(0o755)
+        elif not dst.exists():
+            actions.append({
+                "status": "error",
+                "action": "install_hook_asset",
+                "file": filename,
+                "reason": "source not found and no existing install",
+            })
+
+    # Also install exit2 adapter
+    exit2_src = lacp_root / "hooks" / "exit2_quality_gate.sh"
+    exit2_dst = hooks_dir / "exit2_quality_gate.sh"
+    if exit2_src.exists():
+        if not dry_run:
+            _shutil_qg2.copy2(exit2_src, exit2_dst)
+            exit2_dst.chmod(0o755)
+
+    # Remove existing Stop hooks (prompt-type and old quality gate)
+    for ev in ("Stop", "SubagentStop"):
+        blocks = hooks_cfg.get(ev, [])
+        if not isinstance(blocks, list):
+            blocks = []
+        kept = []
+        removed_count = 0
+        for block in blocks:
+            if not isinstance(block, dict):
+                kept.append(block)
+                continue
+            block_hooks = block.get("hooks", [])
+            if not isinstance(block_hooks, list):
+                kept.append(block)
+                continue
+            has_quality_gate = any(
+                isinstance(h, dict) and "stop_quality_gate" in str(h.get("command", ""))
+                for h in block_hooks
+            )
+            has_prompt = any(
+                isinstance(h, dict) and h.get("type") == "prompt"
+                for h in block_hooks
+            )
+            if has_quality_gate or has_prompt:
+                removed_count += 1
+                continue
+            kept.append(block)
+        hooks_cfg[ev] = kept
+        if removed_count:
+            actions.append({
+                "status": "changed",
+                "action": f"prune_old_{ev.lower()}_hooks",
+                "removed": removed_count,
+            })
+
+    # Add Python quality gate to Stop and SubagentStop
+    qg_cmd = f"python3 {hooks_dir / 'stop_quality_gate.py'}"
+    for ev in ("Stop", "SubagentStop"):
+        block = {"matcher": "", "hooks": [{"type": "command", "command": qg_cmd, "timeout": 30000}]}
+        existing = hooks_cfg.get(ev, [])
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(block)
+        hooks_cfg[ev] = existing
+    actions.append({
+        "status": "changed",
+        "action": "apply_quality_gate_v2_hooks",
+        "command": qg_cmd,
+    })
+
+if profile == "session-start":
+    # Install unified Python SessionStart hook with test command caching.
+    import shutil as _shutil_ss
+
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    src = lacp_root / "hooks" / "session_start.py"
+    dst = hooks_dir / "session_start.py"
+
+    if src.exists():
+        actions.append({
+            "status": "changed",
+            "action": "install_session_start_script",
+            "from": str(src),
+            "to": str(dst),
+        })
+        if not dry_run:
+            _shutil_ss.copy2(src, dst)
+            dst.chmod(0o755)
+    elif not dst.exists():
+        actions.append({
+            "status": "error",
+            "action": "install_session_start_script",
+            "reason": "source not found and no existing install",
+        })
+
+    # Remove all existing SessionStart hooks
+    ss_blocks = hooks_cfg.get("SessionStart", [])
+    if not isinstance(ss_blocks, list):
+        ss_blocks = []
+    removed_ss = len(ss_blocks)
+    hooks_cfg["SessionStart"] = []
+    if removed_ss:
+        actions.append({
+            "status": "changed",
+            "action": "prune_old_session_start_hooks",
+            "removed": removed_ss,
+        })
+
+    # Add the unified Python session start hook
+    ss_cmd = f"python3 {dst}"
+    append_command_hook("SessionStart", ss_cmd)
+    actions.append({
+        "status": "changed",
+        "action": "apply_session_start_hook",
+        "command": ss_cmd,
+    })
+
+if profile == "pretool-guard":
+    # Install Python PreToolUse guard with co-author, scp/root, rm -rf blocks.
+    import shutil as _shutil_pg
+
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    src = lacp_root / "hooks" / "pretool_guard.py"
+    dst = hooks_dir / "pretool_guard.py"
+
+    if src.exists():
+        actions.append({
+            "status": "changed",
+            "action": "install_pretool_guard",
+            "from": str(src),
+            "to": str(dst),
+        })
+        if not dry_run:
+            _shutil_pg.copy2(src, dst)
+            dst.chmod(0o755)
+    elif not dst.exists():
+        actions.append({
+            "status": "error",
+            "action": "install_pretool_guard",
+            "reason": "source not found and no existing install",
+        })
+
+    # Remove existing pretool_guard and redundant hooks from PreToolUse
+    ptu_blocks = hooks_cfg.get("PreToolUse", [])
+    if not isinstance(ptu_blocks, list):
+        ptu_blocks = []
+    kept_ptu = []
+    removed_ptu = 0
+    for block in ptu_blocks:
+        if not isinstance(block, dict):
+            kept_ptu.append(block)
+            continue
+        block_hooks = block.get("hooks", [])
+        if not isinstance(block_hooks, list):
+            kept_ptu.append(block)
+            continue
+        # Remove pretool_guard, knowledge_preflight, dcg, exec_guard blocks
+        has_managed = any(
+            isinstance(h, dict) and h.get("type") == "command"
+            and any(name in str(h.get("command", "")) for name in
+                    ("pretool_guard", "knowledge_preflight", "dcg", "exec_guard"))
+            for h in block_hooks
+        )
+        if has_managed:
+            removed_ptu += 1
+            continue
+        kept_ptu.append(block)
+    hooks_cfg["PreToolUse"] = kept_ptu
+
+    if removed_ptu:
+        actions.append({
+            "status": "changed",
+            "action": "prune_redundant_pretool_hooks",
+            "removed": removed_ptu,
+        })
+
+    # Also remove PermissionRequest exec_guard entries
+    pr_blocks = hooks_cfg.get("PermissionRequest", [])
+    if isinstance(pr_blocks, list):
+        kept_pr = []
+        removed_pr = 0
+        for block in pr_blocks:
+            if not isinstance(block, dict):
+                kept_pr.append(block)
+                continue
+            block_hooks = block.get("hooks", [])
+            if not isinstance(block_hooks, list):
+                kept_pr.append(block)
+                continue
+            has_exec_guard = any(
+                isinstance(h, dict) and "exec_guard" in str(h.get("command", ""))
+                for h in block_hooks
+            )
+            if has_exec_guard:
+                removed_pr += 1
+                continue
+            kept_pr.append(block)
+        hooks_cfg["PermissionRequest"] = kept_pr
+        if removed_pr:
+            actions.append({
+                "status": "changed",
+                "action": "prune_permission_request_exec_guard",
+                "removed": removed_pr,
+            })
+
+    # Add clean pretool_guard hooks
+    append_command_hook("PreToolUse", f"python3 {dst} bash", "Bash")
+    append_command_hook("PreToolUse", f"python3 {dst} write", "Edit|Write")
+    actions.append({
+        "status": "changed",
+        "action": "apply_pretool_guard_hooks",
+        "command": f"python3 {dst}",
     })
 
 if actions and not dry_run:
