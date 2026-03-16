@@ -6,7 +6,7 @@
 
 Local Agent Control Plane for Claude/Codex.
 
-Status: active development (`v0.2.x`).
+Status: active development (`v0.3.x`).
 
 LACP turns local agent operations into an auditable system with:
 - reproducible onboarding
@@ -20,6 +20,7 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 
 - [End Goal](#end-goal)
 - [Prerequisites](#prerequisites)
+- [Starter Guide](#starter-guide)
 - [Architecture](#architecture)
 - [Execution Tiers](#execution-tiers)
 - [Risk Tiers](#risk-tiers)
@@ -59,6 +60,117 @@ Required:
 
 Recommended:
 - `shellcheck`
+
+## Starter Guide
+
+New to LACP? This walks you through install, first health check, and your first gated agent session.
+
+### Step 1: Install
+
+Pick one method:
+
+```bash
+# Homebrew (recommended on macOS)
+brew tap 0xNyk/lacp
+brew install lacp
+
+# or cURL bootstrap
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+
+# or verified release
+VERSION="0.3.0"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
+grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "lacp-${VERSION}.tar.gz"
+cd "lacp-${VERSION}"
+```
+
+### Step 2: Bootstrap
+
+Run the one-command setup. This creates your `.env`, installs missing dependencies, scaffolds directories, sets up the Obsidian brain bundle, and runs verification.
+
+```bash
+lacp bootstrap-system --profile starter --with-verify
+```
+
+What happens under the hood:
+
+| Step | Detail |
+|------|--------|
+| Auto-deps | Installs missing brew formulas (`jq`, `ripgrep`, `python@3.11`) and casks (`obsidian`) |
+| `.env` | Creates config from `config/lacp.env.example` with safe defaults |
+| Policy pack | Applies `starter` policy (local-only, no external CI) |
+| Directories | Creates `~/.lacp/automation/`, `~/.lacp/knowledge/`, `~/.lacp/drafts/` |
+| Obsidian vault | Scaffolds vault at `~/obsidian/vault/` with symlinks to knowledge, docs, sessions, skills |
+| Shared skills | Links `~/control/skills/claude` and `~/control/skills/codex` so both agents share one skill tree |
+| Stubs | Creates safe noop automation scripts (memory pipeline, benchmarks, snapshots) |
+| Onboard | Runs bootstrap checks, adopts local `claude`/`codex` wrappers, applies Claude hook profile |
+| Verify | Runs full verification cycle and produces baseline artifacts |
+
+### Step 3: Verify
+
+```bash
+# Health check — should report ok: true
+lacp doctor --json | jq '.ok,.summary'
+
+# Quick test suite — should exit 0
+lacp test --quick
+
+# See current operating state
+lacp status --json | jq
+lacp mode show
+```
+
+### Step 4: Run your first gated command
+
+```bash
+# Route a simple task through LACP policy gates
+lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
+```
+
+This routes the command through risk-tier, budget, and context gates before execution. The `--repo-trust trusted` flag marks the task as low-risk (no approval needed).
+
+### Step 5: Adopt local wrappers (optional)
+
+Make your existing `claude` and `codex` commands route through LACP automatically:
+
+```bash
+lacp adopt-local --json | jq
+```
+
+This installs reversible wrappers — your agents work exactly as before, but every invocation goes through LACP's policy gates. Undo anytime with `lacp unadopt-local`.
+
+### Step 6: Set up the brain (optional)
+
+Initialize the 3-layer memory stack for persistent knowledge across sessions:
+
+```bash
+# Init the memory stack (session memory + knowledge graph + ingestion pipeline)
+lacp brain-stack init --json | jq
+
+# Check brain health
+lacp brain-doctor --json | jq
+
+# Ingest your first piece of knowledge
+lacp brain-ingest --url "https://docs.anthropic.com/en/docs/claude-code" --title "Claude Code docs" --apply --json | jq
+
+# Run the brain expansion loop
+lacp brain-expand --apply --json | jq
+```
+
+### What's next
+
+| Goal | Command |
+|------|---------|
+| Daily health check | `lacp doctor --fix-hints` |
+| Switch to remote mode | `lacp mode remote-enabled --ttl-min 30` |
+| Multi-agent sessions | `lacp up --session dev --instances 3 --command "claude"` |
+| Interactive console | `lacp console` |
+| Pre-merge validation | `lacp test --isolated && lacp release-prepare --profile local-iterative --json` |
+| Time tracking | `lacp time start --project . --tags coding` |
+
+See the [Daily Developer Workflow](#daily-developer-workflow) for the full day-to-day flow.
 
 ## Architecture
 
@@ -223,11 +335,12 @@ bin/lacp adopt-local --force --json | jq
 
 ## Install Options
 
-### Homebrew (HEAD from this repo)
+### Homebrew
 
 ```bash
 brew tap 0xNyk/lacp
-brew install --HEAD lacp
+brew install lacp            # stable v0.3.0
+brew install --HEAD lacp     # or track main branch
 ```
 
 ### cURL bootstrap
@@ -248,7 +361,7 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -
 ### Verified release install (recommended for production)
 
 ```bash
-VERSION="0.2.0"
+VERSION="0.3.0"
 curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
 curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
 grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
