@@ -18,7 +18,7 @@ else
   tmux_flag=""
 fi
 
-local system_prompt_flag=""
+system_prompt_flag=""
 if [[ -n "${prompt_prefix}" ]]; then
   system_prompt_flag=' --system-prompt "{prompt_prefix}"'
 fi
