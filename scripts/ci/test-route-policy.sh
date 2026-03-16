@@ -107,4 +107,39 @@ run_case \
   --repo-trust trusted \
   --sensitive-data true
 
+# Case 6: model routing — "plan" keyword should yield main/opus.
+model_out="$("${ROOT}/bin/lacp-route" --task "plan the migration strategy" --repo-trust trusted --json)"
+model_slot="$(echo "${model_out}" | jq -r '.model_slot')"
+model_hint="$(echo "${model_out}" | jq -r '.model_hint')"
+assert_eq "${model_slot}" "main" "model-routing-plan:model_slot"
+assert_eq "${model_hint}" "opus" "model-routing-plan:model_hint"
+
+# Case 7: model routing — "fix" keyword should yield subagent/sonnet.
+model_out2="$("${ROOT}/bin/lacp-route" --task "fix the login bug" --repo-trust trusted --json)"
+model_slot2="$(echo "${model_out2}" | jq -r '.model_slot')"
+model_hint2="$(echo "${model_out2}" | jq -r '.model_hint')"
+assert_eq "${model_slot2}" "subagent" "model-routing-fix:model_slot"
+assert_eq "${model_hint2}" "sonnet" "model-routing-fix:model_hint"
+
+# Case 8: model routing — "debug" keyword should yield reasoning/opus.
+model_out3="$("${ROOT}/bin/lacp-route" --task "debug the memory leak" --repo-trust trusted --json)"
+model_slot3="$(echo "${model_out3}" | jq -r '.model_slot')"
+model_hint3="$(echo "${model_out3}" | jq -r '.model_hint')"
+assert_eq "${model_slot3}" "reasoning" "model-routing-debug:model_slot"
+assert_eq "${model_hint3}" "opus" "model-routing-debug:model_hint"
+
+# Case 9: model routing — "research" keyword should yield search/sonnet.
+model_out4="$("${ROOT}/bin/lacp-route" --task "research alternative approaches" --repo-trust trusted --json)"
+model_slot4="$(echo "${model_out4}" | jq -r '.model_slot')"
+model_hint4="$(echo "${model_out4}" | jq -r '.model_hint')"
+assert_eq "${model_slot4}" "search" "model-routing-research:model_slot"
+assert_eq "${model_hint4}" "sonnet" "model-routing-research:model_hint"
+
+# Case 10: model routing — no matching keyword → default subagent/sonnet.
+model_out5="$("${ROOT}/bin/lacp-route" --task "hello world" --repo-trust trusted --json)"
+model_slot5="$(echo "${model_out5}" | jq -r '.model_slot')"
+model_hint5="$(echo "${model_out5}" | jq -r '.model_hint')"
+assert_eq "${model_slot5}" "subagent" "model-routing-default:model_slot"
+assert_eq "${model_hint5}" "sonnet" "model-routing-default:model_hint"
+
 echo "[route-test] all route policy tests passed"

@@ -56,5 +56,56 @@
       "browser automation"
     ],
     "max_local_runtime_seconds": 1800
+  },
+  "model_routing": {
+    "slots": {
+      "main": {
+        "hint": "opus",
+        "keywords": [
+          "plan",
+          "design",
+          "architect",
+          "decompose",
+          "coordinate",
+          "review",
+          "strategy"
+        ]
+      },
+      "subagent": {
+        "hint": "sonnet",
+        "keywords": [
+          "implement",
+          "fix",
+          "lint",
+          "format",
+          "refactor",
+          "migrate",
+          "build",
+          "test"
+        ]
+      },
+      "search": {
+        "hint": "sonnet",
+        "keywords": [
+          "research",
+          "search",
+          "find",
+          "analyze",
+          "compare",
+          "evaluate"
+        ]
+      },
+      "reasoning": {
+        "hint": "opus",
+        "keywords": [
+          "debug",
+          "diagnose",
+          "explain",
+          "reason",
+          "prove"
+        ]
+      }
+    },
+    "default_slot": "subagent"
   }
 }
