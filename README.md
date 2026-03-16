@@ -438,7 +438,8 @@ launchctl print gui/$(id -u)/com.lacp.brain-expand-6h
 LACP now treats memory as an explicit 3-layer stack:
 
 1. Layer 1: Session Memory
-   - project memory scaffolding under `~/.claude/projects/<project-hash>/memory/`
+   - project memory scaffolding under `~/.claude/projects/<project-slug>/memory/`
+   - slug is the project path with `/` replaced by `-` (e.g., `/Users/alice/repos/lacp` → `-Users-alice-repos-lacp`)
    - seeded files: `MEMORY.md`, `debugging.md`, `patterns.md`, `architecture.md`, `preferences.md`
 2. Layer 2: Knowledge Graph
    - Obsidian vault as persistent graph (`$LACP_OBSIDIAN_VAULT`)
@@ -446,12 +447,35 @@ LACP now treats memory as an explicit 3-layer stack:
 3. Layer 3: Ingestion Pipeline
    - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
    - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
+4. Layer 4 (optional): Code Intelligence
+   - GitNexus AST-level knowledge graph via MCP (`--with-gitnexus`)
+   - indexes symbols, call chains, clusters, and execution flows per repo
+   - provides impact analysis, process-grouped search, and pre-commit scope verification
+   - install: `npm install -g gitnexus && npx gitnexus analyze`
+5. Layer 5: Agent Identity & Provenance
+   - persistent agent IDs per `(hostname, project)` pair via `bin/lacp agent-id`
+   - SHA-256 hash-chained session receipts via `bin/lacp provenance`
+   - each receipt links to the previous via `prev_hash`, creating a tamper-evident continuity proof
+   - `verify` detects broken links / tampered receipts across the full chain
 
 Bootstrap the stack:
 
 ```bash
 bin/lacp brain-stack init --json | jq
 bin/lacp brain-stack status --json | jq
+
+# Include GitNexus code intelligence (AST knowledge graph via MCP)
+bin/lacp brain-stack init --with-gitnexus --json | jq
+# Then index your repo: npx gitnexus analyze
+
+# Audit memory coverage across all projects
+bin/lacp brain-stack audit --json | jq
+
+# Scaffold memory for all projects with 5+ sessions that are missing it
+bin/lacp brain-stack scaffold-all --min-sessions 5 --json | jq
+
+# Dry-run first to see what would be created
+bin/lacp brain-stack scaffold-all --min-sessions 5 --dry-run --json | jq
 ```
 
 Ingest knowledge into the graph:
@@ -598,7 +622,9 @@ Notes:
   - delegates media/transcript extraction to the existing automation ingest pipeline when available
   - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
-- `bin/lacp-brain-stack`: initialize/status official 3-layer memory stack (session memory scaffolding + MCP wiring)
+- `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 3-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
+- `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
+- `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
 - `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths

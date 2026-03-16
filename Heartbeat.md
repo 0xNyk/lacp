@@ -1,6 +1,6 @@
 # Heartbeat
 
-Last updated: 2026-03-12 (UTC)
+Last updated: 2026-03-16 (UTC)
 Phase: 6 - Memory System
 
 ## What we built (executive summary)
@@ -35,6 +35,11 @@ LACP is now a local-first agent control plane with strong guardrails, observable
 - Local-first/no-external-ci posture enforced by policy and tests.
 
 ## Recent milestone notes
+- Memory bootstrap operational end-to-end:
+  - Fixed `brain-stack` to use Claude Code's native project slug naming (`/path` → `-path`) instead of shasum hash
+  - Seeded `MEMORY.md` and topic files (`architecture.md`, `patterns.md`, `debugging.md`, `preferences.md`)
+  - Bootstrapped `~/.lacp/` directory tree so `session_orient.sh` runs cleanly on fresh installs
+  - All three memory layers now functional: session memory → knowledge graph MCP → ingestion pipeline
 - Added first-class intervention pressure KPI:
   - `intervention_rate_per_100 = (intervened_runs / total_runs) * 100`
   - baseline window compare with absolute + percent delta
@@ -42,6 +47,10 @@ LACP is now a local-first agent control plane with strong guardrails, observable
   - covered by CI assertions (`test-report-intervention-rate.sh`, `test-ops-commands.sh`)
 
 ## Current focus
+- System-wide session memory coverage: 29/51 projects now have memory (up from 10/51), 0 high-traffic projects missing.
+- `brain-stack audit` and `scaffold-all` subcommands provide ongoing visibility and one-command remediation.
+- Optional GitNexus code intelligence layer wired into brain-stack (`--with-gitnexus`) for AST-level knowledge graphs.
+- Agent identity registry (`agent-id`) and cryptographic provenance chain (`provenance`) now provide verifiable continuity across sessions — persistent agent IDs, SHA-256 hash-chained session receipts with tamper detection.
 - Consolidate phase-based operational memory in this `Memory/` tree.
 - Keep definitions and handoff context stable across sessions.
 - Make operator status/report/canary signals easy to compare over time.
