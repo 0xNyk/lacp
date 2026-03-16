@@ -45,11 +45,16 @@ Hooks live in `hooks/` and are installed to `~/.claude/` via `bin/lacp-claude-ho
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `session_orient.sh` | SessionStart | Vault tree, recent changes, brain-expand status |
+| `stop_quality_gate.py` | Stop | Modular Python quality gate with test verification + heuristics + Ollama |
+| `session_start.py` | SessionStart | Unified Python hook with git context + test cmd caching |
+| `pretool_guard.py` | PreToolUse | Co-author, scp/root, rm -rf, publishing, exfiltration guards |
+| `detect_session_changes.py` | (library) | Scans transcript for file changes (imported by stop hook) |
+| `hook_telemetry.py` | (library) | JSONL telemetry logger with rotation (imported by stop hook) |
 | `write_validate.py` | PostToolUse(Write) | YAML frontmatter schema validation |
-| `stop_quality_gate.sh` | Stop | Ollama-backed rationalization detection |
+| `session_orient.sh` | SessionStart | Vault tree, recent changes (legacy bash) |
+| `stop_quality_gate.sh` | Stop | Ollama-backed rationalization detection (legacy bash) |
 
-Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate`, `orient`, `write-validate`.
+Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate`, `quality-gate-v2`, `orient`, `session-start`, `pretool-guard`, `write-validate`.
 
 ## Environment Variables
 
