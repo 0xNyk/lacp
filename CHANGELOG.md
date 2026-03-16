@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `bin/lacp-brain-stack audit` subcommand to report memory coverage across all Claude Code projects (total projects, sessions, with/without memory, top missing by session count).
+- `bin/lacp-brain-stack scaffold-all` subcommand to create `memory/MEMORY.md` + topic stubs for projects with session files but no memory directory (`--min-sessions N`, `--dry-run`, `--json`).
+- `bin/lacp-brain-stack init --with-gitnexus` to optionally wire GitNexus code intelligence MCP server (`npx gitnexus@latest mcp`) into the memory stack for AST-level codebase knowledge graphs.
+- `bin/lacp-brain-stack status --json` now reports `gitnexus_installed` and `gitnexus_indexed` in checks.
+- `bin/lacp-agent-id` persistent agent identity registry (`show`, `list`, `register`, `revoke`, `touch`).
+  - Each `(hostname, project_slug)` pair gets a stable `agent-<hex8>` identity that survives across sessions.
+  - `show` auto-registers on first use; `touch` increments session count and updates `last_seen`.
+  - Registry stored at `~/.lacp/agents/registry.json`.
+- `bin/lacp-provenance` cryptographic session provenance chain (`start`, `end`, `verify`, `log`, `export`).
+  - Each session receipt is SHA-256 hash-chained to the previous receipt via `prev_hash` / `receipt_hash` fields.
+  - Chain stored as append-only JSONL at `~/.lacp/provenance/chain.jsonl`.
+  - `verify` walks the full chain and detects tampered or broken links.
+  - Receipts include `agent_id`, `session_fingerprint`, `project_slug`, `memory_hash`, and timestamps.
+- `bin/lacp` top-level dispatcher expanded with `agent-id` and `provenance`.
+- CI coverage: `scripts/ci/test-agent-id.sh`, `scripts/ci/test-provenance.sh`.
+
+### Fixed
+- `bin/lacp-brain-stack` now uses Claude Code's native project slug naming (`/path` → `-path`) instead of `shasum`-based hashing for memory directory paths. Previously scaffolded memory files in a location Claude Code would never discover.
+
+### Added
+- Bootstrap `~/.lacp/` directory tree with empty data files so `session_orient.sh` runs cleanly on fresh installs instead of silently failing.
 - `bin/lacp-system-health` macOS/Apple Silicon developer workstation readiness checks (`--json`, `--fix-hints`, `--fix`).
   - thermal state, CPU load vs core count, memory pressure, swap usage
   - Spotlight indexing exclusion audit for dev directories (`~/.cargo`, `~/.rustup`, `~/.npm`, `~/.nvm`, `~/.bun`, `~/work`, `~/miniconda3`)

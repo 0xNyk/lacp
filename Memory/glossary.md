@@ -39,3 +39,9 @@ Multi-session orchestration workflow with planning, launch, status, and collisio
 
 ## artifacts
 Structured outputs stored under automation/knowledge roots (runs, benchmarks, snapshots, reports).
+
+## project slug
+Claude Code's naming convention for project directories: the absolute path with `/` replaced by `-`. Example: `/Users/alice/repos/lacp` → `-Users-alice-repos-lacp`. Used to locate `~/.claude/projects/<slug>/memory/`.
+
+## brain-stack
+Three-layer memory bootstrap: Layer 1 (session memory scaffolding), Layer 2 (Obsidian knowledge graph MCP wiring), Layer 3 (ingestion pipeline). Initialized via `lacp brain-stack init`.
