@@ -14,6 +14,10 @@ Usage:
   lacp-swarm up --manifest <path> [--force-init] [--json]
   lacp-swarm tui [--session <name> | --manifest <path> | --latest] [--dry-run] [--json]
   lacp-swarm status [--latest | --id <swarm-id> | --file <path>] [--json]
+  lacp-swarm episode-write --swarm-id <id> --session <name> --status <completed|failed|skipped> [options] [--json]
+  lacp-swarm episodes --swarm-id <id> [--json]
+  lacp-swarm digest --swarm-id <id> [--max-tokens <n>] [--json]
+  lacp-swarm context --swarm-id <id> [--max-tokens <n>]
 
 Notes:
   - Manifests are JSON and dmux-first by default.
@@ -231,6 +235,12 @@ for idx, job in enumerate(jobs):
 
     if backend in healthy_backends and not healthy_backends.get(backend, False):
         warnings.append(f"{prefix}.backend unavailable on this host: {backend}")
+
+    role = merged.get("role")
+    supported_roles = {"orchestrator", "executor"}
+    if role is not None:
+        if not isinstance(role, str) or role not in supported_roles:
+            errors.append(f"{prefix}.role must be one of {sorted(supported_roles)}")
 
     reservations_raw = merged.get("reservations", merged.get("files", []))
     reservations: list[str] = []
@@ -680,6 +690,260 @@ PY
   fi
 }
 
+episodes_dir() {
+  local swarm_id="$1"
+  printf '%s/data/swarms/episodes/%s' "${LACP_KNOWLEDGE_ROOT}" "${swarm_id}"
+}
+
+cmd_episode_write() {
+  local swarm_id="" session="" task="" status="" summary="" error_msg=""
+  local files_modified="" tool_calls_succeeded="0" tool_calls_failed="0" duration_ms="0"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --swarm-id) swarm_id="$2"; shift 2 ;;
+      --session) session="$2"; shift 2 ;;
+      --task) task="$2"; shift 2 ;;
+      --status) status="$2"; shift 2 ;;
+      --summary) summary="$2"; shift 2 ;;
+      --error) error_msg="$2"; shift 2 ;;
+      --files-modified) files_modified="$2"; shift 2 ;;
+      --tool-calls-succeeded) tool_calls_succeeded="$2"; shift 2 ;;
+      --tool-calls-failed) tool_calls_failed="$2"; shift 2 ;;
+      --duration-ms) duration_ms="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${swarm_id}" ]] || die "--swarm-id is required"
+  [[ -n "${session}" ]] || die "--session is required"
+  [[ -n "${status}" ]] || die "--status is required"
+  case "${status}" in
+    completed|failed|skipped) ;;
+    *) die "--status must be completed|failed|skipped" ;;
+  esac
+
+  local ep_dir
+  ep_dir="$(episodes_dir "${swarm_id}")"
+  mkdir -p "${ep_dir}"
+  local ep_file="${ep_dir}/${session}.json"
+
+  local files_json="[]"
+  if [[ -n "${files_modified}" ]]; then
+    files_json="$(printf '%s' "${files_modified}" | tr ',' '\n' | jq -R . | jq -s .)"
+  fi
+
+  jq -n \
+    --arg swarm_id "${swarm_id}" \
+    --arg session "${session}" \
+    --arg task "${task}" \
+    --arg status "${status}" \
+    --arg summary "${summary}" \
+    --argjson files_modified "${files_json}" \
+    --argjson tool_calls_succeeded "${tool_calls_succeeded}" \
+    --argjson tool_calls_failed "${tool_calls_failed}" \
+    --argjson duration_ms "${duration_ms}" \
+    --arg error "${error_msg}" \
+    --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{
+      swarm_id: $swarm_id,
+      session: $session,
+      task: (if $task == "" then null else $task end),
+      status: $status,
+      summary: (if $summary == "" then null else $summary end),
+      files_modified: $files_modified,
+      tool_calls_succeeded: $tool_calls_succeeded,
+      tool_calls_failed: $tool_calls_failed,
+      duration_ms: $duration_ms,
+      error: (if $error == "" then null else $error end),
+      timestamp: $timestamp
+    }' > "${ep_file}"
+
+  if [[ "${as_json}" == "true" ]]; then
+    jq -n --arg file "${ep_file}" '{ok:true,file:$file}'
+  else
+    log "episode written: ${ep_file}"
+  fi
+}
+
+cmd_episodes() {
+  local swarm_id=""
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --swarm-id) swarm_id="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${swarm_id}" ]] || die "--swarm-id is required"
+
+  local ep_dir
+  ep_dir="$(episodes_dir "${swarm_id}")"
+
+  if [[ ! -d "${ep_dir}" ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      echo "[]"
+    else
+      log "no episodes for swarm_id=${swarm_id}"
+    fi
+    return 0
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    python3 - <<'PY' "${ep_dir}"
+import json
+import sys
+from pathlib import Path
+
+ep_dir = Path(sys.argv[1])
+episodes = []
+for f in sorted(ep_dir.glob("*.json")):
+    try:
+        episodes.append(json.loads(f.read_text()))
+    except Exception:
+        pass
+print(json.dumps(episodes, indent=2))
+PY
+  else
+    local count
+    count="$(find "${ep_dir}" -name '*.json' -type f | wc -l | tr -d ' ')"
+    log "episodes for swarm_id=${swarm_id}: ${count}"
+    for f in "${ep_dir}"/*.json; do
+      [[ -f "${f}" ]] || continue
+      jq -r '"  \(.session): \(.status) (\(.summary // "no summary"))"' "${f}"
+    done
+  fi
+}
+
+cmd_digest() {
+  local swarm_id=""
+  local max_tokens="${LACP_DIGEST_MAX_TOKENS:-2000}"
+  local as_json="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --swarm-id) swarm_id="$2"; shift 2 ;;
+      --max-tokens) max_tokens="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${swarm_id}" ]] || die "--swarm-id is required"
+
+  local ep_dir
+  ep_dir="$(episodes_dir "${swarm_id}")"
+
+  python3 - <<'PY' "${ep_dir}" "${max_tokens}" "${as_json}" "${swarm_id}"
+import json
+import sys
+from pathlib import Path
+
+ep_dir = Path(sys.argv[1])
+max_tokens = int(sys.argv[2])
+as_json = sys.argv[3] == "true"
+swarm_id = sys.argv[4]
+
+episodes = []
+if ep_dir.is_dir():
+    for f in sorted(ep_dir.glob("*.json")):
+        try:
+            episodes.append(json.loads(f.read_text()))
+        except Exception:
+            pass
+
+if not episodes:
+    if as_json:
+        print(json.dumps({"ok": True, "swarm_id": swarm_id, "episode_count": 0, "digest": "No episodes found."}))
+    else:
+        print(f"[lacp] no episodes for swarm_id={swarm_id}")
+    raise SystemExit(0)
+
+lines = []
+for ep in episodes:
+    session = ep.get("session", "?")
+    status = ep.get("status", "?")
+    summary = ep.get("summary") or "no summary"
+    task = ep.get("task") or ""
+    files = ep.get("files_modified", [])
+    succeeded = ep.get("tool_calls_succeeded", 0)
+    failed = ep.get("tool_calls_failed", 0)
+    error = ep.get("error")
+
+    parts = [f"[{session}] status={status}"]
+    if task:
+        parts.append(f"task={task}")
+    parts.append(f"summary={summary}")
+    if files:
+        parts.append(f"files={','.join(files[:5])}")
+    parts.append(f"tools_ok={succeeded} tools_fail={failed}")
+    if error:
+        parts.append(f"error={error}")
+    lines.append(" | ".join(parts))
+
+digest_text = "\n".join(lines)
+# Rough token estimate: ~4 chars per token
+max_chars = max_tokens * 4
+if len(digest_text) > max_chars:
+    per_episode = max_chars // len(episodes)
+    truncated = []
+    for line in lines:
+        if len(line) > per_episode:
+            truncated.append(line[:per_episode - 3] + "...")
+        else:
+            truncated.append(line)
+    digest_text = "\n".join(truncated)
+
+if as_json:
+    print(json.dumps({
+        "ok": True,
+        "swarm_id": swarm_id,
+        "episode_count": len(episodes),
+        "digest": digest_text,
+    }))
+else:
+    print(f"[lacp] digest for swarm_id={swarm_id} ({len(episodes)} episodes):")
+    print(digest_text)
+PY
+}
+
+cmd_context() {
+  local swarm_id=""
+  local max_tokens="${LACP_DIGEST_MAX_TOKENS:-2000}"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --swarm-id) swarm_id="$2"; shift 2 ;;
+      --max-tokens) max_tokens="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${swarm_id}" ]] || die "--swarm-id is required"
+
+  local digest_json
+  digest_json="$("${ROOT}/bin/lacp-swarm" digest --swarm-id "${swarm_id}" --max-tokens "${max_tokens}" --json)"
+  local digest_text
+  digest_text="$(jq -r '.digest' <<<"${digest_json}")"
+  local ep_count
+  ep_count="$(jq -r '.episode_count' <<<"${digest_json}")"
+
+  cat <<EOF
+<swarm-context swarm_id="${swarm_id}" episodes="${ep_count}">
+${digest_text}
+</swarm-context>
+EOF
+}
+
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local sub="$1"
@@ -692,6 +956,10 @@ main() {
     up) cmd_up "$@" ;;
     tui) cmd_tui "$@" ;;
     status) cmd_status "$@" ;;
+    episode-write) cmd_episode_write "$@" ;;
+    episodes) cmd_episodes "$@" ;;
+    digest) cmd_digest "$@" ;;
+    context) cmd_context "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown subcommand: ${sub}" ;;
   esac

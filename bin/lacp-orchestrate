@@ -412,11 +412,31 @@ PY
     return 14
   fi
 
+  local model_slot model_hint role prompt_prefix
+  model_slot="$(jq -r '.model_slot // empty' <<<"${job_json:-"{}"}" 2>/dev/null || true)"
+  model_hint="$(jq -r '.model_hint // empty' <<<"${job_json:-"{}"}" 2>/dev/null || true)"
+  role="$(jq -r '.role // empty' <<<"${job_json:-"{}"}" 2>/dev/null || true)"
+  prompt_prefix=""
+
+  local prompt_prefixes_file="${ROOT}/config/prompt-prefixes.json"
+  if [[ -n "${role}" && -f "${prompt_prefixes_file}" ]]; then
+    local role_hint
+    role_hint="$(jq -r --arg r "${role}" '.roles[$r].model_hint // empty' "${prompt_prefixes_file}" 2>/dev/null || true)"
+    if [[ -n "${role_hint}" && -z "${model_hint}" ]]; then
+      model_hint="${role_hint}"
+    fi
+    prompt_prefix="$(jq -r --arg r "${role}" '.roles[$r].prefix // empty' "${prompt_prefixes_file}" 2>/dev/null || true)"
+  fi
+
   export LACP_ORCH_BACKEND="${backend}"
   export LACP_ORCH_SESSION_NAME="${session}"
   export LACP_ORCH_COMMAND="${command_text}"
   export LACP_ORCH_DRY_RUN="${dry_run}"
   export LACP_CLAUDE_WORKTREE_USE_TMUX="${claude_tmux}"
+  export LACP_ORCH_MODEL_SLOT="${model_slot}"
+  export LACP_ORCH_MODEL_HINT="${model_hint}"
+  export LACP_ORCH_ROLE="${role}"
+  export LACP_ORCH_PROMPT_PREFIX="${prompt_prefix}"
 
   local -a run_args=(
     --task "${task}"
