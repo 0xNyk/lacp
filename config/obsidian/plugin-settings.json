@@ -1,0 +1,107 @@
+{
+  "obsidian-linter": {
+    "ruleConfigs": {
+      "yaml-title": {
+        "enabled": true,
+        "title-key": "title",
+        "mode": "first-h1-or-filename-if-h1-missing"
+      },
+      "yaml-title-alias": {
+        "enabled": true,
+        "preserve-existing-alias-section-style": true,
+        "keep-alias-that-matches-the-filename": false
+      },
+      "insert-yaml-attributes": {
+        "enabled": true,
+        "text-to-insert": "id: \ndescription: \ntags: "
+      },
+      "format-tags-in-yaml": {
+        "enabled": true
+      },
+      "dedupe-yaml-array-values": {
+        "enabled": true,
+        "dedupe-alias-key": true,
+        "dedupe-tag-key": true,
+        "dedupe-array-keys": true,
+        "ignore-keys": ""
+      }
+    }
+  },
+  "dataview": {
+    "enableDataviewJs": true,
+    "enableInlineDataviewJs": true,
+    "enableInlineDataview": true,
+    "refreshEnabled": true,
+    "refreshInterval": 30000,
+    "showResultCount": true,
+    "maxRecursiveRenderDepth": 4,
+    "allowHtml": false
+  },
+  "obsidian-git": {
+    "autoSaveInterval": 30,
+    "autoPullOnBoot": true,
+    "disablePush": true,
+    "autoCommitMessage": "chore: vault auto-save {{date}}",
+    "commitDateFormat": "YYYY-MM-DD HH:mm:ss",
+    "showStatusBar": true,
+    "changedFilesInStatusBar": true,
+    "showBranchStatusBar": true,
+    "syncMethod": "merge"
+  },
+  "homepage": {
+    "version": 4,
+    "separateMobile": false,
+    "homepages": {
+      "Main Homepage": {
+        "value": "atlas/index",
+        "kind": "File",
+        "openOnStartup": false,
+        "openMode": "Replace all open notes",
+        "manualOpenMode": "Keep open notes",
+        "view": "Default view",
+        "revertView": true,
+        "openWhenEmpty": true,
+        "refreshDataview": true,
+        "autoCreate": false,
+        "autoScroll": false,
+        "pin": false,
+        "commands": [],
+        "alwaysApply": false,
+        "hideReleaseNotes": true
+      }
+    }
+  },
+  "templater-obsidian": {
+    "templates_folder": "00-home/templates",
+    "trigger_on_file_creation": true,
+    "auto_jump_to_cursor": true,
+    "enable_folder_templates": true,
+    "syntax_highlighting": true
+  },
+  "extended-graph": {
+    "enableFeatures": {
+      "graph": {
+        "tags": true,
+        "properties": true,
+        "links": true,
+        "folders": true,
+        "arrows": true,
+        "layers": true,
+        "focus": false,
+        "shapes": false
+      }
+    }
+  },
+  "breadcrumbs": {
+    "hierarchyFields": ["parent", "up"],
+    "showBreadcrumbs": true,
+    "showTrail": true
+  },
+  "metadata-menu": {
+    "globallyAvailableFields": [
+      { "name": "id", "type": "Input" },
+      { "name": "description", "type": "Input" },
+      { "name": "tags", "type": "Multi" }
+    ]
+  }
+}
