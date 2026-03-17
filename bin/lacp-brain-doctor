@@ -165,6 +165,15 @@ else
   add_hint "Setup smart-connections MCP: see ~/.local/share/smart-connections-mcp/"
 fi
 
+# MCP probe: smart-connections Obsidian plugin
+OBSIDIAN_DIR_FOR_SC="${VAULT_ROOT}/.obsidian"
+if [[ -f "${OBSIDIAN_DIR_FOR_SC}/plugins/smart-connections/manifest.json" ]]; then
+  add_check "brain:plugin:smart_connections" "PASS" "Obsidian plugin installed"
+else
+  add_check "brain:plugin:smart_connections" "WARN" "Smart Connections Obsidian plugin not installed"
+  add_hint "Install: lacp-obsidian install-plugins"
+fi
+
 # --- 4. Daily note ---
 today="$(date +%Y-%m-%d)"
 daily_note="${DAILY_DIR}/${today}.md"

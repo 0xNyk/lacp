@@ -92,6 +92,13 @@
       }
     }
   },
+  "smart-connections": {
+    "smart_chat_model": "claude-sonnet-4-20250514",
+    "embed_model": "transformers",
+    "local_embedding": true,
+    "file_exclusions": ".smart-env,_generated/extractions,_generated/sessions",
+    "force_refresh": false
+  },
   "breadcrumbs": {
     "hierarchyFields": ["parent", "up"],
     "showBreadcrumbs": true,
