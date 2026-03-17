@@ -28,17 +28,20 @@ LACP is **not** a new runtime. It is a control plane around your existing local 
 - [Execution Tiers](#execution-tiers)
 - [Risk Tiers](#risk-tiers)
 - [Budget Gates](#budget-gates)
+- [Context Contract Gate](#context-contract-gate)
 - [Quick Start](#quick-start)
 - [Daily Developer Workflow](#daily-developer-workflow)
 - [Install Options](#install-options)
 - [Who It Is For](#who-it-is-for)
 - [What Install Does](#what-install-does)
 - [Obsidian Brain Bundle](#obsidian-brain-bundle)
-- [3-Layer Memory Architecture (Official)](#3-layer-memory-architecture-official)
+- [5-Layer Memory Architecture](#5-layer-memory-architecture)
 - [5 Minute Smoke Test](#5-minute-smoke-test)
 - [Brand Assets](#brand-assets)
 - [Remote Setup](#remote-setup)
+- [Hook Architecture](#hook-architecture)
 - [Command Reference](#command-reference)
+- [Harness Engineering Contracts](#harness-engineering-contracts)
 - [Security Model](#security-model)
 - [Artifacts](#artifacts)
 - [Testing](#testing)
@@ -156,7 +159,7 @@ This installs reversible wrappers — your agents work exactly as before, but ev
 
 ### Step 6: Set up the brain (optional)
 
-Initialize the 3-layer memory stack for persistent knowledge across sessions:
+Initialize the 5-layer memory stack for persistent knowledge across sessions:
 
 ```bash
 # Init the memory stack (session memory + knowledge graph + ingestion pipeline)
@@ -496,9 +499,9 @@ launchctl print gui/$(id -u)/com.lacp.repo-research-sync
 launchctl print gui/$(id -u)/com.lacp.brain-expand-6h
 ```
 
-## 3-Layer Memory Architecture (Official)
+## 5-Layer Memory Architecture
 
-LACP now treats memory as an explicit 3-layer stack:
+LACP treats memory as an explicit 5-layer stack:
 
 1. Layer 1: Session Memory
    - project memory scaffolding under `~/.claude/projects/<project-slug>/memory/`
@@ -510,7 +513,7 @@ LACP now treats memory as an explicit 3-layer stack:
 3. Layer 3: Ingestion Pipeline
    - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
    - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
-4. Layer 4 (optional): Code Intelligence
+4. Layer 4: Code Intelligence (optional)
    - GitNexus AST-level knowledge graph via MCP (`--with-gitnexus`)
    - indexes symbols, call chains, clusters, and execution flows per repo
    - provides impact analysis, process-grouped search, and pre-commit scope verification
@@ -602,14 +605,69 @@ Notes:
 - Default mode is non-interactive lifecycle (`create -> exec -> kill`) using E2B SDK.
 - `E2B_SANDBOX_ID` enables existing-sandbox mode via e2b CLI.
 
+## Hook Architecture
+
+LACP ships a modular Python hook pipeline that enforces quality and safety at every stage of a Claude Code session. Hooks are installed to `~/.claude/` via `lacp claude-hooks apply-profile`.
+
+### Hook Pipeline
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `session_start.py` | SessionStart | Git context injection, test command caching, branch/status awareness |
+| `pretool_guard.py` | PreToolUse | Block dangerous operations before they execute |
+| `write_validate.py` | PostToolUse (Write) | YAML frontmatter schema validation on written files |
+| `stop_quality_gate.py` | Stop | Evaluate whether the agent is rationalizing incomplete work |
+| `detect_session_changes.py` | (library) | Scan transcript for file modifications (used by stop gate) |
+| `hook_telemetry.py` | (library) | JSONL telemetry with log rotation (used by stop gate) |
+
+Legacy bash hooks (`session_orient.sh`, `stop_quality_gate.sh`) are still available but superseded by the Python pipeline.
+
+### PreToolUse Guard
+
+The pretool guard blocks dangerous patterns before execution:
+
+- **Registry publishing** — `npm publish`, `cargo publish`, `yarn publish`
+- **Destructive git** — `git reset --hard`, `git clean -f`
+- **Unsafe permissions** — `chmod 777`
+- **Privileged containers** — `docker run --privileged`
+- **Fork bombs** — detected via pattern matching
+- **Root-targeted transfers** — `scp`/`rsync` to `/root`
+- **Pipe-to-interpreter** — `curl | python`, `wget | node`
+- **Protected file writes** — `.env`, secrets, PEM keys, authorized_keys, `.gnupg`
+- **Scoped approval caching** — per-window/pane TTL tokens so repeated safe operations don't block
+
+### Stop Quality Gate
+
+A 3-tier evaluation that prevents the agent from stopping prematurely:
+
+1. **Fast heuristics** — pattern-match the conversation for incomplete work signals (failing tests, unresolved TODOs, unanswered questions)
+2. **Test verification** — detect modified files, find cached test commands, verify they were actually run and passed
+3. **Ollama LLM eval** — send the conversation summary to a local LLM (default: `llama3.1:8b`) to detect rationalization of incomplete work
+
+Configurable via env vars: `LACP_QUALITY_GATE_MODEL`, `LACP_QUALITY_GATE_TIMEOUT`, `LACP_QUALITY_GATE_MAX_BLOCKS`.
+
+### Hook Profiles
+
+Profiles compose hooks into named configurations applied via `lacp claude-hooks apply-profile <profile>`:
+
+| Profile | Hooks enabled |
+|---------|--------------|
+| `minimal-stop` | Stop quality gate only |
+| `balanced` | SessionStart + Stop gate |
+| `hardened-exec` | SessionStart + PreToolUse guard + Stop gate |
+| `quality-gate-v2` | Full Python pipeline (SessionStart + PreToolUse + Stop gate) |
+| `session-start` | SessionStart only |
+| `pretool-guard` | PreToolUse guard only |
+| `write-validate` | Write validation only |
+
+`lacp claude-hooks optimize` auto-selects the best profile based on your current setup.
+
 ## Command Reference
 
 - `bin/lacp`: top-level CLI dispatcher (`lacp <command> ...`)
 - `bin/lacp-bootstrap-system`: one-command install + onboard + doctor flow
 - `bin/lacp-onboard`: initialize `.env`, run bootstrap, optional full verify, and auto-optimize Claude hooks/profile by default
-- `bin/lacp-install`: first-time installer (creates roots, starter stubs, then onboard)
-- `bin/lacp-install`: auto-detects/install macOS formulas/casks/npm globals by default (`--no-auto-deps` to skip, `--auto-deps-dry-run` supported)
-- `bin/lacp-install`: bootstraps Obsidian vault/symlinks by default (`--no-obsidian-setup` to skip)
+- `bin/lacp-install`: first-time installer — creates roots, starter stubs, auto-detects/installs macOS deps (`--no-auto-deps` to skip), bootstraps Obsidian vault/symlinks (`--no-obsidian-setup` to skip), then runs onboard
 - `bin/lacp-test`: one-command local test suite (`--quick`, `--isolated` supported)
 - `bin/lacp-posture`: one-shot local-first/no-external-ci contract report (`--strict`, `--json`)
 - `bin/lacp-claude-hooks`: audit/repair/optimize local Claude hook/plugin drift (`audit`, `repair`, `apply-profile`, `optimize`) including profiles: `hardened-exec`, `quality-gate-v2`, `session-start`, `pretool-guard`, `write-validate`
@@ -682,14 +740,13 @@ Notes:
   - UI compositor overhead (reduce motion/transparency, Dock/Finder animations)
   - background process audit (known CPU-wasting agents)
 - `bin/lacp-knowledge-doctor`: markdown knowledge graph quality gates (`--json` supported)
-- `bin/lacp-brain-ingest`: ingest local text/audio/video sources and web links into the Obsidian inbox
+- `bin/lacp-brain-ingest`: ingest local text/audio/video sources, web links, and transcripts into the Obsidian inbox (`inbox/queue-generated/`)
   - delegates media/transcript extraction to the existing automation ingest pipeline when available
   - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
-- `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 3-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
+- `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 5-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
 - `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
 - `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
-- `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-score`: recompute confidence scores, prune low-confidence workflows, and report on auto-skill-factory ledger health (`recalc`, `prune`, `report`)
