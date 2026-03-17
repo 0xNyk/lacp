@@ -90,4 +90,36 @@ if ${ROOT}/bin/lacp-provenance end --json 2>/dev/null | jq -e '.ok == true' >/de
   exit 1
 fi
 
+## --- double-start should warn but succeed ---
+${ROOT}/bin/lacp-provenance start --json >/dev/null
+double_start_output="$(${ROOT}/bin/lacp-provenance start --json 2>&1 || true)"
+if [[ "${double_start_output}" == *"overwriting existing pending session"* ]]; then
+  echo "[provenance-test] PASS double-start warning"
+else
+  echo "[provenance-test] FAIL double-start should warn about overwrite" >&2
+  exit 1
+fi
+# Clean up: end the pending session
+${ROOT}/bin/lacp-provenance end --json >/dev/null
+
+## --- corrupted chain.jsonl mid-file: verify detects break ---
+chain_file="${HOME}/.lacp/provenance/chain.jsonl"
+# Start fresh chain
+echo "" > "${chain_file}"
+${ROOT}/bin/lacp-provenance start --json >/dev/null
+${ROOT}/bin/lacp-provenance end --json >/dev/null
+${ROOT}/bin/lacp-provenance start --json >/dev/null
+${ROOT}/bin/lacp-provenance end --json >/dev/null
+# Insert garbage line in the middle
+python3 -c "
+with open('${chain_file}') as f:
+    lines = f.readlines()
+lines.insert(1, 'CORRUPTED LINE\n')
+with open('${chain_file}', 'w') as f:
+    f.writelines(lines)
+"
+verify_corrupt="$(${ROOT}/bin/lacp-provenance verify --json)"
+echo "${verify_corrupt}" | jq -e '.ok == false and (.breaks | length) > 0' >/dev/null || { echo "[provenance-test] corrupted mid-chain not detected" >&2; exit 1; }
+echo "[provenance-test] PASS corrupted chain mid-file detection"
+
 echo "[provenance-test] provenance chain tests passed"

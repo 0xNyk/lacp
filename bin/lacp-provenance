@@ -95,6 +95,11 @@ start_cmd() {
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   pending_file="${PROVENANCE_ROOT}/pending.json"
 
+  # Warn on double-start (previous start without end)
+  if [[ -f "${pending_file}" ]]; then
+    log "WARN: overwriting existing pending session (previous start without end)"
+  fi
+
   # Touch agent to increment session count
   if [[ -x "${ROOT}/bin/lacp-agent-id" ]]; then
     "${ROOT}/bin/lacp-agent-id" touch --json >/dev/null 2>&1 || true
@@ -147,7 +152,7 @@ end_cmd() {
   mem_h="$(memory_hash)"
 
   python3 - <<'PY' "${pending_file}" "${CHAIN_FILE}" "${now}" "${mem_h}"
-import json, sys, hashlib
+import json, sys, hashlib, fcntl, os
 
 pending_path = sys.argv[1]
 chain_path = sys.argv[2]
@@ -156,39 +161,44 @@ mem_hash = sys.argv[4]
 
 pending = json.load(open(pending_path))
 
-# Get prev_hash from last chain entry
-prev_hash = "genesis"
-try:
-    with open(chain_path) as f:
-        lines = [l.strip() for l in f if l.strip()]
-    if lines:
-        last = json.loads(lines[-1])
-        prev_hash = last.get("receipt_hash", "genesis")
-except Exception:
-    pass
+lock_path = chain_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-# Build receipt
-receipt = {
-    "receipt_id": f"r-{ended_at.replace(':','').replace('-','')}",
-    "agent_id": pending.get("agent_id", "unknown"),
-    "session_fingerprint": pending.get("session_fingerprint", "unknown"),
-    "project_slug": pending.get("project_slug", "unknown"),
-    "started_at": pending.get("started_at", "unknown"),
-    "ended_at": ended_at,
-    "memory_hash": mem_hash,
-    "prev_hash": prev_hash,
-}
+    # Get prev_hash from last chain entry
+    prev_hash = "genesis"
+    try:
+        with open(chain_path) as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if lines:
+            last = json.loads(lines[-1])
+            prev_hash = last.get("receipt_hash", "genesis")
+    except Exception:
+        pass
 
-# Compute receipt_hash over the canonical JSON (without receipt_hash itself)
-canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
-receipt["receipt_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    # Build receipt
+    receipt = {
+        "receipt_id": f"r-{ended_at.replace(':','').replace('-','')}",
+        "agent_id": pending.get("agent_id", "unknown"),
+        "session_fingerprint": pending.get("session_fingerprint", "unknown"),
+        "project_slug": pending.get("project_slug", "unknown"),
+        "started_at": pending.get("started_at", "unknown"),
+        "ended_at": ended_at,
+        "memory_hash": mem_hash,
+        "prev_hash": prev_hash,
+    }
 
-# Append to chain
-with open(chain_path, "a") as f:
-    f.write(json.dumps(receipt, separators=(",", ":")) + "\n")
+    # Compute receipt_hash over the canonical JSON (without receipt_hash itself)
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+    # Design choice: truncate SHA-256 to 24 hex chars (96 bits) — sufficient for
+    # integrity checking while keeping receipts compact. Not used for security.
+    receipt["receipt_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
 
-# Remove pending
-import os
+    # Append to chain
+    with open(chain_path, "a") as f:
+        f.write(json.dumps(receipt, separators=(",", ":")) + "\n")
+
+# Remove pending (outside lock — safe, only this process owns the pending file)
 os.remove(pending_path)
 
 PY
@@ -272,8 +282,14 @@ for i, line in enumerate(lines):
     prev_expected = receipt_hash if receipt_hash else computed
     entry["receipt_hash"] = receipt_hash  # restore for next iteration
 
-first_receipt = json.loads(lines[0]).get("started_at", "?") if lines else None
-last_receipt = json.loads(lines[-1]).get("ended_at", "?") if lines else None
+def safe_parse(line, key, default="?"):
+    try:
+        return json.loads(line).get(key, default)
+    except Exception:
+        return default
+
+first_receipt = safe_parse(lines[0], "started_at") if lines else None
+last_receipt = safe_parse(lines[-1], "ended_at") if lines else None
 
 result = {
     "schema_version": "1",
@@ -327,11 +343,17 @@ for i, line in enumerate(lines):
     entry["receipt_hash"] = receipt_hash
     prev_expected = receipt_hash if receipt_hash else computed
 
+def safe_parse(line, key, default="?"):
+    try:
+        return json.loads(line).get(key, default)
+    except Exception:
+        return default
+
 print(json.dumps({
     "schema_version": "1", "kind": "provenance_verify", "ok": len(breaks) == 0,
     "chain_length": len(lines),
-    "first_receipt": json.loads(lines[0]).get("started_at", "?"),
-    "last_receipt": json.loads(lines[-1]).get("ended_at", "?"),
+    "first_receipt": safe_parse(lines[0], "started_at"),
+    "last_receipt": safe_parse(lines[-1], "ended_at"),
     "breaks": breaks, "agent_ids": sorted(agent_ids)
 }))
 PY2

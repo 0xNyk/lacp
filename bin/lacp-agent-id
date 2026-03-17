@@ -75,10 +75,26 @@ generate_agent_id() {
 lookup_agent() {
   local hostname="$1" slug="$2"
   python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
-import json, sys
-registry = json.load(open(sys.argv[1]))
+import json, sys, datetime
+
+registry_path = sys.argv[1]
 hostname = sys.argv[2].lower()
 slug = sys.argv[3]
+
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+        import shutil
+        shutil.copy2(path, backup)
+        print(f"WARNING: corrupted registry backed up to {backup}, recreating", file=sys.stderr)
+        with open(path, "w") as f:
+            json.dump([], f)
+            f.write("\n")
+        return []
+
+registry = load_registry(registry_path)
 for entry in registry:
     if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
         print(json.dumps(entry))
@@ -90,102 +106,140 @@ PY
 register_agent() {
   local hostname="$1" slug="$2"
   python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
-import json, sys, secrets, datetime
+import json, sys, secrets, datetime, fcntl, shutil
 
 registry_path = sys.argv[1]
 hostname = sys.argv[2].lower()
 slug = sys.argv[3]
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-registry = json.load(open(registry_path))
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
 
-# Check if already registered
-for entry in registry:
-    if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
-        # Already exists — return it
-        print(json.dumps(entry))
-        sys.exit(0)
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-# Generate new agent
-agent_id = f"agent-{secrets.token_hex(4)}"
-entry = {
-    "agent_id": agent_id,
-    "hostname": hostname,
-    "project_slug": slug,
-    "created_at": now,
-    "last_seen": now,
-    "session_count": 0,
-    "revoked": False
-}
-registry.append(entry)
+    registry = load_registry(registry_path)
 
-with open(registry_path, "w") as f:
-    json.dump(registry, f, indent=2)
-    f.write("\n")
+    # Check if already registered
+    for entry in registry:
+        if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
+            print(json.dumps(entry))
+            sys.exit(0)
 
-print(json.dumps(entry))
+    # Generate new agent
+    agent_id = f"agent-{secrets.token_hex(4)}"
+    entry = {
+        "agent_id": agent_id,
+        "hostname": hostname,
+        "project_slug": slug,
+        "created_at": now,
+        "last_seen": now,
+        "session_count": 0,
+        "revoked": False
+    }
+    registry.append(entry)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(entry))
 PY
 }
 
 touch_agent() {
   local hostname="$1" slug="$2"
   python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
-import json, sys, datetime
+import json, sys, datetime, fcntl, shutil
 
 registry_path = sys.argv[1]
 hostname = sys.argv[2].lower()
 slug = sys.argv[3]
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-registry = json.load(open(registry_path))
-found = False
-for entry in registry:
-    if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
-        entry["last_seen"] = now
-        entry["session_count"] = entry.get("session_count", 0) + 1
-        found = True
-        result = entry
-        break
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
 
-if not found:
-    sys.exit(1)
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-with open(registry_path, "w") as f:
-    json.dump(registry, f, indent=2)
-    f.write("\n")
+    registry = load_registry(registry_path)
+    found = False
+    for entry in registry:
+        if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
+            entry["last_seen"] = now
+            entry["session_count"] = entry.get("session_count", 0) + 1
+            found = True
+            result = entry
+            break
 
-print(json.dumps(result))
+    if not found:
+        sys.exit(1)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(result))
 PY
 }
 
 revoke_agent() {
   local target_id="$1"
   python3 - <<'PY' "${REGISTRY_FILE}" "${target_id}"
-import json, sys, datetime
+import json, sys, datetime, fcntl, shutil
 
 registry_path = sys.argv[1]
 target = sys.argv[2]
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-registry = json.load(open(registry_path))
-found = False
-for entry in registry:
-    if entry.get("agent_id") == target:
-        entry["revoked"] = True
-        entry["revoked_at"] = now
-        found = True
-        result = entry
-        break
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
 
-if not found:
-    print(json.dumps({"ok": False, "error": f"agent_id not found: {target}"}))
-    sys.exit(1)
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-with open(registry_path, "w") as f:
-    json.dump(registry, f, indent=2)
-    f.write("\n")
+    registry = load_registry(registry_path)
+    found = False
+    for entry in registry:
+        if entry.get("agent_id") == target:
+            entry["revoked"] = True
+            entry["revoked_at"] = now
+            found = True
+            result = entry
+            break
 
-print(json.dumps(result))
+    if not found:
+        print(json.dumps({"ok": False, "error": f"agent_id not found: {target}"}))
+        sys.exit(1)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(result))
 PY
 }
 

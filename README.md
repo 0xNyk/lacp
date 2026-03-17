@@ -674,6 +674,7 @@ Notes:
   - actionable remediation commands: `bin/lacp doctor --check-limits --fix-hints --json | jq '.remediation_hints'`
   - macOS system health (thermal, memory, Spotlight, Docker, Rust, UI): `bin/lacp doctor --system --json | jq`
 - `bin/lacp-system-health`: macOS/Apple Silicon workstation readiness checks (`--json`, `--fix-hints`, `--fix`)
+- `bin/lacp-mcp-health`: probe all configured MCP servers for health status (`--json`)
   - thermal state, CPU load, memory pressure, swap usage
   - Spotlight indexing exclusions for dev directories
   - container runtime detection (OrbStack vs Docker Desktop)
@@ -688,7 +689,6 @@ Notes:
 - `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 3-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
 - `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
 - `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
-- `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths
