@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-repos-index discover    [--scan-root <path>] [--json]
+  lacp-repos-index index       [--scan-root <path>] [--force] [--dry-run] [--json]
+  lacp-repos-index index-repo  [<path>] [--force] [--dry-run] [--json]
+  lacp-repos-index status      [--json]
+
+Discover and index git repos with GitNexus for cross-repo code intelligence.
+
+Subcommands:
+  discover     List all git repos found under scan roots (no side effects)
+  index        Run gitnexus analyze on all discovered repos
+  index-repo   Index a single repo (default: cwd) and create Obsidian vault note
+  status       Show indexed vs unindexed repos across scan roots
+
+Environment:
+  LACP_REPOS_SCAN_ROOTS   Colon-separated dirs to scan (default: $HOME/repos:$HOME/work)
+  LACP_OBSIDIAN_VAULT     Obsidian vault path for repo notes (default: $HOME/obsidian/vault)
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+DRY_RUN=0
+FORCE=0
+EXTRA_ROOTS=()
+REPO_PATH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --scan-root) EXTRA_ROOTS+=("$2"); shift 2 ;;
+    --force) FORCE=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*)  die "Unknown argument: $1" ;;
+    *)   REPO_PATH="$1"; shift ;;
+  esac
+done
+
+# Parse LACP_REPOS_SCAN_ROOTS into array
+parse_scan_roots() {
+  local -a roots=()
+  local IFS=':'
+  # shellcheck disable=SC2206
+  roots=(${LACP_REPOS_SCAN_ROOTS})
+  for extra in "${EXTRA_ROOTS[@]+"${EXTRA_ROOTS[@]}"}"; do
+    roots+=("${extra}")
+  done
+  printf '%s\n' "${roots[@]}"
+}
+
+# Discover git repos under scan roots (finds .git dirs, returns parent paths)
+discover_repos() {
+  local -a roots=()
+  while IFS= read -r root; do
+    roots+=("${root}")
+  done < <(parse_scan_roots)
+
+  for root in "${roots[@]}"; do
+    root="$(eval echo "${root}")"  # expand ~ and $HOME
+    [[ -d "${root}" ]] || continue
+    find "${root}" -name .git -type d -maxdepth 4 2>/dev/null | while IFS= read -r git_dir; do
+      dirname "${git_dir}"
+    done
+  done | sort -uf
+}
+
+discover_cmd() {
+  local -a repos=()
+  while IFS= read -r repo; do
+    repos+=("${repo}")
+  done < <(discover_repos)
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    local repos_json="[]"
+    for repo in "${repos[@]+"${repos[@]}"}"; do
+      local has_gitnexus=false
+      [[ -d "${repo}/.gitnexus" ]] && has_gitnexus=true
+      repos_json="$(printf '%s' "${repos_json}" | jq \
+        --arg path "${repo}" \
+        --arg name "$(basename "${repo}")" \
+        --argjson indexed "${has_gitnexus}" \
+        '. + [{"path":$path,"name":$name,"indexed":$indexed}]')"
+    done
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "repos_index_discover" \
+      --argjson repos_count "${#repos[@]}" \
+      --argjson repos "${repos_json}" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,repos_count:$repos_count,repos:$repos}'
+  else
+    log "Discovered ${#repos[@]} repos"
+    for repo in "${repos[@]+"${repos[@]}"}"; do
+      local marker=" "
+      [[ -d "${repo}/.gitnexus" ]] && marker="*"
+      echo "  [${marker}] ${repo}"
+    done
+    echo ""
+    echo "  [*] = indexed   [ ] = not indexed"
+  fi
+}
+
+index_cmd() {
+  require_cmd gitnexus
+
+  local -a repos=()
+  while IFS= read -r repo; do
+    repos+=("${repo}")
+  done < <(discover_repos)
+
+  local indexed=0 skipped=0 failed=0
+  local results_json="[]"
+
+  for repo in "${repos[@]+"${repos[@]}"}"; do
+    local name
+    name="$(basename "${repo}")"
+
+    # Skip if already indexed and --force not set
+    if [[ -d "${repo}/.gitnexus" && "${FORCE}" -eq 0 ]]; then
+      skipped=$((skipped + 1))
+      results_json="$(printf '%s' "${results_json}" | jq \
+        --arg path "${repo}" --arg name "${name}" --arg status "skipped" \
+        '. + [{"path":$path,"name":$name,"status":$status}]')"
+      [[ "${AS_JSON}" -eq 0 ]] && log "skip ${name} (already indexed)"
+      continue
+    fi
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      indexed=$((indexed + 1))
+      results_json="$(printf '%s' "${results_json}" | jq \
+        --arg path "${repo}" --arg name "${name}" --arg status "would_index" \
+        '. + [{"path":$path,"name":$name,"status":$status}]')"
+      [[ "${AS_JSON}" -eq 0 ]] && log "would index ${name}"
+      continue
+    fi
+
+    # Run gitnexus analyze
+    if gitnexus analyze "${repo}" >/dev/null 2>&1; then
+      indexed=$((indexed + 1))
+      results_json="$(printf '%s' "${results_json}" | jq \
+        --arg path "${repo}" --arg name "${name}" --arg status "indexed" \
+        '. + [{"path":$path,"name":$name,"status":$status}]')"
+      [[ "${AS_JSON}" -eq 0 ]] && log "indexed ${name}"
+    else
+      failed=$((failed + 1))
+      results_json="$(printf '%s' "${results_json}" | jq \
+        --arg path "${repo}" --arg name "${name}" --arg status "failed" \
+        '. + [{"path":$path,"name":$name,"status":$status}]')"
+      [[ "${AS_JSON}" -eq 0 ]] && log "FAILED ${name}"
+    fi
+  done
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "repos_index_index" \
+      --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+      --argjson force "$([[ "${FORCE}" -eq 1 ]] && echo true || echo false)" \
+      --argjson total "${#repos[@]}" \
+      --argjson indexed "${indexed}" \
+      --argjson skipped "${skipped}" \
+      --argjson failed "${failed}" \
+      --argjson results "${results_json}" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,force:$force,total:$total,indexed:$indexed,skipped:$skipped,failed:$failed,results:$results}'
+  else
+    echo ""
+    log "index summary: total=${#repos[@]} indexed=${indexed} skipped=${skipped} failed=${failed}"
+  fi
+}
+
+status_cmd() {
+  local -a repos=()
+  while IFS= read -r repo; do
+    repos+=("${repo}")
+  done < <(discover_repos)
+
+  local indexed_count=0 unindexed_count=0
+  for repo in "${repos[@]+"${repos[@]}"}"; do
+    if [[ -d "${repo}/.gitnexus" ]]; then
+      indexed_count=$((indexed_count + 1))
+    else
+      unindexed_count=$((unindexed_count + 1))
+    fi
+  done
+
+  # Check global registry
+  local registry_path="${HOME}/.gitnexus/registry.json"
+  local registry_count=0
+  if [[ -f "${registry_path}" ]]; then
+    registry_count="$(jq 'if type == "array" then length elif type == "object" then (keys | length) else 0 end' "${registry_path}" 2>/dev/null || echo 0)"
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "repos_index_status" \
+      --argjson total "${#repos[@]}" \
+      --argjson indexed "${indexed_count}" \
+      --argjson unindexed "${unindexed_count}" \
+      --argjson registry_count "${registry_count}" \
+      --argjson gitnexus_installed "$(command -v gitnexus >/dev/null 2>&1 && echo true || echo false)" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,total:$total,indexed:$indexed,unindexed:$unindexed,registry_count:$registry_count,gitnexus_installed:$gitnexus_installed}'
+  else
+    log "repos-index status"
+    echo "  total repos:      ${#repos[@]}"
+    echo "  indexed:          ${indexed_count}"
+    echo "  unindexed:        ${unindexed_count}"
+    echo "  registry entries: ${registry_count}"
+    echo "  gitnexus:         $(command -v gitnexus >/dev/null 2>&1 && echo installed || echo missing)"
+  fi
+}
+
+index_repo_cmd() {
+  require_cmd gitnexus
+
+  local repo_dir="${REPO_PATH:-$(pwd)}"
+  repo_dir="$(cd "${repo_dir}" && pwd)"
+
+  if [[ ! -d "${repo_dir}/.git" ]]; then
+    die "Not a git repository: ${repo_dir}"
+  fi
+
+  local repo_name
+  repo_name="$(basename "${repo_dir}")"
+
+  # Gather repo metadata via git
+  local remote_url branch description lang_summary
+  remote_url="$(git -C "${repo_dir}" config --get remote.origin.url 2>/dev/null || echo "")"
+  branch="$(git -C "${repo_dir}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+  description="$(git -C "${repo_dir}" log --oneline -5 2>/dev/null || echo "(no commits)")"
+
+  # Simple language breakdown via file extensions
+  lang_summary="$(git -C "${repo_dir}" ls-files 2>/dev/null \
+    | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -8 \
+    | awk '{printf "%s (%d), ", $2, $1}' | sed 's/, $//' || echo "unknown")"
+
+  local already_indexed=false
+  [[ -d "${repo_dir}/.gitnexus" ]] && already_indexed=true
+
+  local did_index=false
+  local index_status="skipped"
+
+  if [[ "${already_indexed}" == "true" && "${FORCE}" -eq 0 ]]; then
+    index_status="already_indexed"
+    [[ "${AS_JSON}" -eq 0 ]] && log "${repo_name}: already indexed (use --force to re-index)"
+  elif [[ "${DRY_RUN}" -eq 1 ]]; then
+    index_status="would_index"
+    [[ "${AS_JSON}" -eq 0 ]] && log "${repo_name}: would index (dry-run)"
+  else
+    if gitnexus analyze "${repo_dir}" >/dev/null 2>&1; then
+      did_index=true
+      index_status="indexed"
+      [[ "${AS_JSON}" -eq 0 ]] && log "${repo_name}: indexed with gitnexus"
+    else
+      index_status="failed"
+      [[ "${AS_JSON}" -eq 0 ]] && log "${repo_name}: gitnexus analyze failed"
+    fi
+  fi
+
+  # Write Obsidian vault note
+  local vault_dir="${LACP_OBSIDIAN_VAULT}/graph/repositories"
+  local note_slug="repo-${repo_name}"
+  local note_path="${vault_dir}/${note_slug}.md"
+  local note_written=false
+  local generated_at
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  local repo_rel="${repo_dir/#$HOME/\~}"
+
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    mkdir -p "${vault_dir}"
+
+    cat > "${note_path}" <<NOTEEOF
+---
+id: ${note_slug}
+type: repository
+tags: [repository, gitnexus, code-intelligence]
+description: GitNexus-indexed repository profile for ${repo_name}.
+source_path: ${repo_rel}
+remote_url: ${remote_url}
+gitnexus_indexed: ${index_status}
+generated_at_utc: ${generated_at}
+---
+
+# ${repo_name}
+
+## Identity
+
+- Path: \`${repo_rel}\`
+- Remote: \`${remote_url:-none}\`
+- Branch: \`${branch}\`
+- GitNexus: \`${index_status}\`
+
+## Languages
+
+${lang_summary}
+
+## Recent Commits
+
+\`\`\`
+${description}
+\`\`\`
+
+## Connections
+
+- [[repo-knowledge-index|Repository Index]]
+- [[research-index]]
+NOTEEOF
+    note_written=true
+    [[ "${AS_JSON}" -eq 0 ]] && log "vault note: ${note_path}"
+  else
+    [[ "${AS_JSON}" -eq 0 ]] && log "would write vault note: ${note_path}"
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "repos_index_repo" \
+      --arg repo_path "${repo_dir}" \
+      --arg repo_name "${repo_name}" \
+      --arg remote_url "${remote_url}" \
+      --arg branch "${branch}" \
+      --arg index_status "${index_status}" \
+      --arg note_path "${note_path}" \
+      --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+      --argjson note_written "${note_written}" \
+      --argjson did_index "${did_index}" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,repo_path:$repo_path,repo_name:$repo_name,remote_url:$remote_url,branch:$branch,index_status:$index_status,did_index:$did_index,note_path:$note_path,note_written:$note_written}'
+  fi
+}
+
+case "${sub}" in
+  discover) discover_cmd ;;
+  index) index_cmd ;;
+  index-repo) index_repo_cmd ;;
+  status) status_cmd ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

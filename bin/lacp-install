@@ -110,8 +110,8 @@ fi
 setup_obsidian_vault() {
   local vault_root="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
   local docs_root="${HOME}/docs"
-  local sessions_root="${HOME}/control/sessions"
-  local skills_root="${HOME}/control/skills"
+  local sessions_root="${LACP_SESSIONS_ROOT:-${HOME}/.lacp/sessions}"
+  local skills_root="${LACP_SKILLS_ROOT:-${HOME}/.lacp/skills}"
   local automation_scripts="${LACP_AUTOMATION_ROOT}/scripts"
 
   mkdir -p "${vault_root}"

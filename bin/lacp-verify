@@ -65,7 +65,7 @@ if [[ -n "${qmd_status_out}" ]]; then
 fi
 
 # Session extraction freshness
-sessions_dir="${HOME}/control/sessions/claude"
+sessions_dir="${LACP_SESSIONS_ROOT:-${HOME}/.lacp/sessions}/claude"
 if [[ -d "${sessions_dir}" ]]; then
   latest_session="$(find "${sessions_dir}" -name '*.md' -type f -exec stat -f '%m %N' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
   if [[ -n "${latest_session}" ]]; then

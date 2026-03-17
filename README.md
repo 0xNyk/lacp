@@ -116,7 +116,7 @@ What happens under the hood:
 | Policy pack | Applies `starter` policy (local-only, no external CI) |
 | Directories | Creates `~/.lacp/automation/`, `~/.lacp/knowledge/`, `~/.lacp/drafts/` |
 | Obsidian vault | Scaffolds vault at `~/obsidian/vault/` with symlinks to knowledge, docs, sessions, skills |
-| Shared skills | Links `~/control/skills/claude` and `~/control/skills/codex` so both agents share one skill tree |
+| Shared skills | Links `~/.lacp/skills/claude` and `~/.lacp/skills/codex` so both agents share one skill tree |
 | Stubs | Creates safe noop automation scripts (memory pipeline, benchmarks, snapshots) |
 | Onboard | Runs bootstrap checks, adopts local `claude`/`codex` wrappers, applies Claude hook profile |
 | Verify | Runs full verification cycle and produces baseline artifacts |
@@ -247,7 +247,7 @@ For remote routes, provider is policy-driven (`daytona` or `e2b`), with override
 bin/lacp-sandbox-run \
   --task "create local venv" \
   --repo-trust trusted \
-  --context-contract '{"expected_host":"my-host","expected_cwd_prefix":"'"$HOME"'/control"}' \
+  --context-contract '{"expected_host":"my-host","expected_cwd_prefix":"'"$HOME"'/repos"}' \
   -- python3 -m venv .venv
 ```
 
@@ -692,7 +692,9 @@ Notes:
 - `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
+- `bin/lacp-skill-score`: recompute confidence scores, prune low-confidence workflows, and report on auto-skill-factory ledger health (`recalc`, `prune`, `report`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths
+- `bin/lacp-repos-index`: discover and index git repos with GitNexus for cross-repo code intelligence (`discover`, `index`, `index-repo`, `status`)
 - `bin/lacp-brain-expand`: automated brain expansion loop (config guard + session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + mycelium-enhanced memory consolidation + agent-daily sync + inbox hygiene + doctor checks)
 - `bin/lacp-mode`: switch/read operating mode (`local-only` vs `remote-enabled`)
 - `bin/lacp-mode revoke-approval`: revoke remote approval token immediately

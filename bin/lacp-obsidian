@@ -54,10 +54,10 @@ elif [[ -f "${MANIFEST_PATH}" ]]; then
   if [[ -n "${_manifest_vault}" ]]; then
     VAULT_ROOT="$(resolve_vault_path "${_manifest_vault}")"
   else
-    VAULT_ROOT="${HOME}/obsidian/nyk"
+    VAULT_ROOT="${HOME}/obsidian/vault"
   fi
 else
-  VAULT_ROOT="${HOME}/obsidian/nyk"
+  VAULT_ROOT="${HOME}/obsidian/vault"
 fi
 OBSIDIAN_DIR="${VAULT_ROOT}/.obsidian"
 
