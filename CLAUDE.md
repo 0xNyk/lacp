@@ -67,6 +67,8 @@ All configurable via env or `.env` file. Key ones:
 - `LACP_WRITE_VALIDATE_PATHS` — colon-separated paths for write validation
 - `LACP_TAXONOMY_PATH` — taxonomy.json location for category validation
 
+> Full list of 40+ environment variables with defaults: `config/lacp.env.example`
+
 ## Git Workflow
 
 - Branch from `main` for features: `feat/<name>`

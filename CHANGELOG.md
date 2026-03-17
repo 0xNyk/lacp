@@ -24,6 +24,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - `bin/lacp-brain-stack` now uses Claude Code's native project slug naming (`/path` → `-path`) instead of `shasum`-based hashing for memory directory paths. Previously scaffolded memory files in a location Claude Code would never discover.
 
+## [0.3.0] - 2026-03-15
+
 ### Added
 - Bootstrap `~/.lacp/` directory tree with empty data files so `session_orient.sh` runs cleanly on fresh installs instead of silently failing.
 - `bin/lacp-system-health` macOS/Apple Silicon developer workstation readiness checks (`--json`, `--fix-hints`, `--fix`).
@@ -223,4 +225,5 @@ All notable changes to this project will be documented in this file.
 - Structured input-contract gate for risky sandbox runs (`--input-contract`, exit code `11` on violation).
 - Release workflow no longer depends on third-party actions; uses `gh release` with repository `GITHUB_TOKEN`.
 
+[0.3.0]: https://github.com/0xNyk/lacp/releases/tag/v0.3.0
 [0.1.0]: https://github.com/0xNyk/lacp/releases/tag/v0.1.0

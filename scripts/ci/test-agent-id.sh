@@ -50,4 +50,14 @@ fi
 reg2_json="$(${ROOT}/bin/lacp-agent-id show --json)"
 echo "${reg2_json}" | jq -e '.ok == true' >/dev/null
 
+## --- corrupted registry.json recovery ---
+registry_file="${HOME}/.lacp/agents/registry.json"
+echo "NOT VALID JSON{{{" > "${registry_file}"
+recover_json="$(${ROOT}/bin/lacp-agent-id register --json 2>/dev/null)"
+echo "${recover_json}" | jq -e '.ok == true' >/dev/null || { echo "[agent-id-test] corrupted registry recovery failed" >&2; exit 1; }
+# Verify a .corrupt backup was created
+corrupt_count="$(ls "${HOME}/.lacp/agents/"registry.json.corrupt.* 2>/dev/null | wc -l | tr -d ' ')"
+[[ "${corrupt_count}" -ge 1 ]] || { echo "[agent-id-test] corrupted registry backup not created" >&2; exit 1; }
+echo "[agent-id-test] PASS corrupted registry recovery"
+
 echo "[agent-id-test] agent identity tests passed"

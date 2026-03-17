@@ -40,7 +40,7 @@ done
 
 VAULT_ROOT="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
-SESSIONS_ROOT="${HOME}/control/sessions"
+SESSIONS_ROOT="${LACP_SESSIONS_ROOT:-${HOME}/.lacp/sessions}"
 SESSIONS_DIR="${SESSIONS_ROOT}/claude"
 CODEX_SESSIONS_DIR="${SESSIONS_ROOT}/codex"
 DAILY_DIR="${VAULT_ROOT}/00-home/daily"
@@ -163,6 +163,15 @@ if [[ -f "${SC_MCP_DIR}/server.py" && -f "${SC_MCP_DIR}/.venv/bin/python" ]]; th
 else
   add_check "brain:mcp:sc_files" "WARN" "smart-connections MCP missing files"
   add_hint "Setup smart-connections MCP: see ~/.local/share/smart-connections-mcp/"
+fi
+
+# MCP probe: smart-connections Obsidian plugin
+OBSIDIAN_DIR_FOR_SC="${VAULT_ROOT}/.obsidian"
+if [[ -f "${OBSIDIAN_DIR_FOR_SC}/plugins/smart-connections/manifest.json" ]]; then
+  add_check "brain:plugin:smart_connections" "PASS" "Obsidian plugin installed"
+else
+  add_check "brain:plugin:smart_connections" "WARN" "Smart Connections Obsidian plugin not installed"
+  add_hint "Install: lacp-obsidian install-plugins"
 fi
 
 # --- 4. Daily note ---

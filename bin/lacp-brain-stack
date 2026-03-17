@@ -186,6 +186,18 @@ EOF
     echo "  claude settings: ${CLAUDE_SETTINGS}"
     echo "  memory root: ${mem_root}"
     echo "  memory file: ${memory_file}"
+    if [[ "${WITH_GITNEXUS}" -eq 1 ]]; then
+      echo ""
+      echo "  hint: run 'lacp-repos-index index' to index repos for cross-repo code intelligence"
+    fi
+  fi
+
+  # Ensure Obsidian plugins match MCP server expectations
+  if command -v curl >/dev/null 2>&1 && [[ -x "${ROOT}/bin/lacp-obsidian" ]]; then
+    local _obs_args=()
+    [[ "${DRY_RUN}" -eq 1 ]] && _obs_args+=(--dry-run)
+    [[ "${AS_JSON}" -eq 1 ]] && _obs_args+=(--json)
+    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" 2>/dev/null || true
   fi
 }
 
