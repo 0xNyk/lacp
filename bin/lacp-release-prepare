@@ -23,7 +23,7 @@ Options:
   --canary-days <n>              Canary lookback window (default: 7)
   --since-clean-baseline         Evaluate canary since clean baseline cutoff
   --baseline-file <path>         Canary baseline file path override
-  --no-require-managed-wrappers  Do not require LACP-managed local claude/codex wrappers
+  --no-require-managed-wrappers  Do not require LACP-managed local claude/codex/hermes wrappers
   --skip-cache-gate              Skip cache guard in release-gate stage
   --skip-skill-audit-gate        Skip skill audit in release-gate stage
   --allow-external-ci            Allow active .github/workflows when LACP_NO_EXTERNAL_CI=true
@@ -205,13 +205,15 @@ except Exception:
 wrappers = (((report.get("observability") or {}).get("wrappers")) or {})
 claude = ((wrappers.get("claude") or {}).get("managed") is True)
 codex = ((wrappers.get("codex") or {}).get("managed") is True)
-ok = claude and codex
+hermes = ((wrappers.get("hermes") or {}).get("managed") is True)
+ok = claude and codex and hermes
 
 payload = {
     "ok": ok,
     "bin_dir": wrappers.get("bin_dir", bin_dir),
     "claude_managed": claude,
     "codex_managed": codex,
+    "hermes_managed": hermes,
 }
 print(json.dumps(payload))
 raise SystemExit(0 if ok else 1)

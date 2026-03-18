@@ -1,209 +1,52 @@
-<p align="center">
-  <img src="docs/assets/readme-banner.png" alt="LACP" width="1200">
-</p>
+# LACP
 
-<h3 align="center"><em>Local Agent Control Plane for Claude and Codex</em></h3>
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha">
-  <img src="https://img.shields.io/badge/runtime-local--first-blue.svg" alt="Local first">
-  <img src="https://img.shields.io/badge/memory-obsidian%20bundle-7C3AED.svg" alt="Obsidian bundle">
-</p>
+![LACP Banner](docs/assets/readme-banner.png)
 
-<p align="center">
-  <a href="#why-lacp">Why LACP?</a> •
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#daily-developer-workflow">Workflow</a> •
-  <a href="#command-reference">Command Reference</a> •
-  <a href="#testing">Testing</a>
-</p>
+Local Agent Control Plane for Claude/Codex.
 
----
+> **Stable Release** — LACP is now stable for daily local-first operations. Changes remain iterative, but defaults, command contracts, and core automation workflows are expected to be backward-compatible. If something regresses, please open an issue with reproduction steps.
 
-LACP turns local agent work into an auditable control plane with reproducible onboarding, policy-based execution gates, verification loops, and artifact-backed health records.
+Status: stable (`v0.3.x`).
 
-It is **not** a new agent runtime. It sits around the tools you already use and makes them safer, more repeatable, and easier to inspect.
+LACP turns local agent operations into an auditable system with:
+- reproducible onboarding
+- verification gates
+- policy-based sandbox routing
+- artifact-backed health and execution records
 
-> **Alpha release**: interfaces, hooks, and configuration formats may still change between releases. Treat the current `v0.3.x` line as active build-out, not a frozen platform contract.
+LACP is **not** a new runtime. It is a control plane around your existing local automation and agent tooling.
 
-## Why LACP?
+## Table of Contents
 
-Most local agent workflows break down in the same places:
-- setup drifts across machines
-- risky commands are launched without enough context
-- approvals and budgets live in chat instead of policy
-- evidence is scattered across logs, shells, and temp files
-
-LACP standardizes that loop:
-
-```text
-intent -> route -> sandbox -> verify -> report -> learn
-   |         |         |         |         |        |
- task     policy    execution  gates    artifacts  lessons
-```
-
-The goal is simple: make Claude/Codex operations measurable, reliable, safe, and reproducible without forcing a hosted platform or replacing your existing shell-based tooling.
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| Local-first control plane | Wraps your existing local agent commands instead of replacing them with a new runtime |
-| Policy-based routing | Applies repo trust, internet, remote, budget, and approval gates before execution |
-| Verification loops | Bakes in `doctor`, `verify`, `test`, canary, and release readiness checks |
-| Auditable artifacts | Produces structured records for health, execution, evidence, and post-run review |
-| Multi-agent orchestration | Supports dmux/tmux/worktree-backed session fanout with `up`, `orchestrate`, and `swarm` |
-| Obsidian memory bundle | Ships ingestion, graph maintenance, brain health, and research sync commands |
-| Open-source readiness | Includes release, docs, security, and bootstrap checks for maintainers shipping from local machines |
-| Reversible adoption | Can wrap existing `claude` and `codex` commands, and undo that cleanly later |
-
-## Installation
-
-Prerequisites:
-- `bash`
-- `python3`
-- `jq`
-- `rg` (`ripgrep`)
-
-Recommended:
-- `shellcheck`
-
-### Homebrew
-
-```bash
-brew tap 0xNyk/lacp
-brew install lacp
-```
-
-### cURL bootstrap
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
-```
-
-### Verified release
-
-```bash
-VERSION="0.3.0"
-curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
-curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
-grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
-tar -xzf "lacp-${VERSION}.tar.gz"
-cd "lacp-${VERSION}"
-```
-
-If you are running from a source checkout instead of an installed binary, use `./bin/lacp ...` in the examples below.
-
-## Quick Start
-
-### 1. Bootstrap the local control plane
-
-```bash
-lacp bootstrap-system --profile starter --with-verify
-```
-
-That flow installs missing dependencies, creates local config, scaffolds core directories, wires the Obsidian bundle, runs onboarding, and emits baseline verification artifacts.
-
-### 2. Check health and current mode
-
-```bash
-lacp doctor --json | jq '.ok,.summary'
-lacp status --json | jq
-lacp mode show
-```
-
-### 3. Route a command through LACP
-
-```bash
-lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
-```
-
-This runs the command through routing, risk, budget, and context gates before execution.
-
-### 4. Adopt your existing agent commands
-
-```bash
-lacp adopt-local --json | jq
-```
-
-This installs reversible local wrappers so `claude` and `codex` run through LACP without changing your day-to-day commands. Undo with `lacp unadopt-local`.
-
-### 5. Enable the memory stack
-
-```bash
-lacp brain-stack init --json | jq
-lacp brain-doctor --json | jq
-lacp brain-ingest --url "https://docs.anthropic.com/en/docs/claude-code" --title "Claude Code docs" --apply --json | jq
-lacp brain-expand --apply --json | jq
-```
-
-## Daily Developer Workflow
-
-Use this as the default day-to-day flow after install.
-
-### 1. Start with diagnostics
-
-```bash
-lacp doctor --fix-hints
-lacp system-health --fix-hints
-lacp status --json | jq
-```
-
-### 2. Set the execution posture
-
-```bash
-lacp mode local-only
-lacp mode remote-enabled --ttl-min 30
-```
-
-### 3. Run work through policy gates
-
-```bash
-lacp run --task "trusted smoke" --repo-trust trusted -- /bin/echo hello
-lacp loop --task "implement feature X" --repo-trust trusted --json -- <command>
-```
-
-### 4. Fan out agent sessions when needed
-
-```bash
-lacp up --session dev --instances 3 --command "claude"
-lacp up --backend tmux --session batch --instances 2 --command "codex --profile fast"
-```
-
-### 5. Produce evidence before merge or release
-
-```bash
-lacp test --isolated
-lacp release-prepare --profile local-iterative --json | jq
-lacp open-source-check --json | jq
-```
-
-## Who It Is For
-
-Use LACP if you want:
-- local agent workflows with explicit policy and audit trails
-- repeatable onboarding across repos and machines
-- one command surface for routing, verification, and release hygiene
-- an Obsidian-backed memory workflow tied to real sessions and repo research
-
-LACP is not for:
-- teams looking for a hosted chat product
-- users who do not want to maintain local scripts and config
-- teams that need managed cloud orchestration with no local control surface
-
-## What Install Does
-
-`lacp bootstrap-system --profile starter --with-verify`:
-- creates `.env` from `config/lacp.env.example` when missing
-- auto-installs core dependencies on macOS unless disabled
-- applies the `starter` policy pack
-- scaffolds required root, data, and automation paths
-- sets up the Obsidian vault bundle and shared skills links
-- runs onboarding checks and fresh-machine confidence checks
-- emits baseline verification artifacts for later comparison
+- [Support the Project](#-support-the-project)
+- [End Goal](#end-goal)
+- [Prerequisites](#prerequisites)
+- [Starter Guide](#starter-guide)
+- [Architecture](#architecture)
+- [Execution Tiers](#execution-tiers)
+- [Risk Tiers](#risk-tiers)
+- [Budget Gates](#budget-gates)
+- [Context Contract Gate](#context-contract-gate)
+- [Quick Start](#quick-start)
+- [Daily Developer Workflow](#daily-developer-workflow)
+- [Install Options](#install-options)
+- [Who It Is For](#who-it-is-for)
+- [What Install Does](#what-install-does)
+- [Obsidian Brain Bundle](#obsidian-brain-bundle)
+- [5-Layer Memory Architecture](#5-layer-memory-architecture)
+- [5 Minute Smoke Test](#5-minute-smoke-test)
+- [Brand Assets](#brand-assets)
+- [Remote Setup](#remote-setup)
+- [Hook Architecture](#hook-architecture)
+- [Command Reference](#command-reference)
+- [Harness Engineering Contracts](#harness-engineering-contracts)
+- [Security Model](#security-model)
+- [Artifacts](#artifacts)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Optimization Backlog](#optimization-backlog)
 
 ## ❤️ Support the Project
 
@@ -214,6 +57,136 @@ If you find this project useful, consider supporting my open-source work.
 **Solana donations**
 
 `BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
+
+## End Goal
+
+Make Claude/Codex operations:
+- measurable (benchmarks, snapshots, diagnostics)
+- reliable (verification loops, explicit pass/fail gates)
+- safe (tiered execution with sandbox policy)
+- reproducible (one-command setup and runbook workflows)
+
+## Prerequisites
+
+Required:
+- `bash`
+- `python3`
+- `jq`
+- `rg` (`ripgrep`)
+
+Recommended:
+- `shellcheck`
+
+## Starter Guide
+
+New to LACP? This walks you through install, first health check, and your first gated agent session.
+
+### Step 1: Install
+
+Pick one method:
+
+```bash
+# Homebrew (recommended on macOS)
+brew tap 0xNyk/lacp
+brew install lacp
+
+# or cURL bootstrap
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+
+# or verified release
+VERSION="0.3.0"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
+grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "lacp-${VERSION}.tar.gz"
+cd "lacp-${VERSION}"
+```
+
+### Step 2: Bootstrap
+
+Run the one-command setup. This creates your `.env`, installs missing dependencies, scaffolds directories, sets up the Obsidian brain bundle, and runs verification.
+
+```bash
+lacp bootstrap-system --profile starter --with-verify
+```
+
+What happens under the hood:
+
+| Step | Detail |
+|------|--------|
+| Auto-deps | Installs missing brew formulas (`jq`, `ripgrep`, `python@3.11`) and casks (`obsidian`) |
+| `.env` | Creates config from `config/lacp.env.example` with safe defaults |
+| Policy pack | Applies `starter` policy (local-only, no external CI) |
+| Directories | Creates `~/.lacp/automation/`, `~/.lacp/knowledge/`, `~/.lacp/drafts/` |
+| Obsidian vault | Scaffolds vault at `~/obsidian/vault/` with symlinks to knowledge, docs, sessions, skills |
+| Shared skills | Links `~/.lacp/skills/claude` and `~/.lacp/skills/codex` so both agents share one skill tree |
+| Stubs | Creates safe noop automation scripts (memory pipeline, benchmarks, snapshots) |
+| Onboard | Runs bootstrap checks, adopts local `claude`/`codex` wrappers, applies Claude hook profile |
+| Verify | Runs full verification cycle and produces baseline artifacts |
+
+### Step 3: Verify
+
+```bash
+# Health check — should report ok: true
+lacp doctor --json | jq '.ok,.summary'
+
+# Quick test suite — should exit 0
+lacp test --quick
+
+# See current operating state
+lacp status --json | jq
+lacp mode show
+```
+
+### Step 4: Run your first gated command
+
+```bash
+# Route a simple task through LACP policy gates
+lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
+```
+
+This routes the command through risk-tier, budget, and context gates before execution. The `--repo-trust trusted` flag marks the task as low-risk (no approval needed).
+
+### Step 5: Adopt local wrappers (optional)
+
+Make your existing `claude`, `codex`, and `hermes` commands route through LACP automatically:
+
+```bash
+lacp adopt-local --json | jq
+```
+
+This installs reversible wrappers — your agents work exactly as before, but every invocation goes through LACP's policy gates. Undo anytime with `lacp unadopt-local`.
+
+### Step 6: Set up the brain (optional)
+
+Initialize the 5-layer memory stack for persistent knowledge across sessions:
+
+```bash
+# Init the memory stack (session memory + knowledge graph + ingestion pipeline)
+lacp brain-stack init --json | jq
+
+# Check brain health
+lacp brain-doctor --json | jq
+
+# Ingest your first piece of knowledge
+lacp brain-ingest --url "https://docs.anthropic.com/en/docs/claude-code" --title "Claude Code docs" --apply --json | jq
+
+# Run the brain expansion loop
+lacp brain-expand --apply --json | jq
+```
+
+### What's next
+
+| Goal | Command |
+|------|---------|
+| Daily health check | `lacp doctor --fix-hints` |
+| Switch to remote mode | `lacp mode remote-enabled --ttl-min 30` |
+| Multi-agent sessions | `lacp up --session dev --instances 3 --command "claude"` |
+| Interactive console | `lacp console` |
+| Pre-merge validation | `lacp test --isolated && lacp release-prepare --profile local-iterative --json` |
+| Time tracking | `lacp time start --project . --tags coding` |
+
+See the [Daily Developer Workflow](#daily-developer-workflow) for the full day-to-day flow.
 
 ## Architecture
 
@@ -281,6 +254,166 @@ bin/lacp-sandbox-run \
   -- python3 -m venv .venv
 ```
 
+## Quick Start
+
+```bash
+cd /path/to/lacp
+bin/lacp bootstrap-system --profile starter --with-verify
+bin/lacp-mode show
+bin/lacp-mode remote-enabled --ttl-min 30
+bin/lacp-doctor
+bin/lacp-verify --hours 24
+```
+
+## Daily Developer Workflow
+
+Use this as the default day-to-day flow after install.
+
+### 1. Start session health checks
+
+```bash
+cd /path/to/lacp
+bin/lacp doctor --fix-hints
+bin/lacp system-health --fix-hints
+bin/lacp status --json | jq
+```
+
+### 2. Set operating mode
+
+```bash
+# local-only (default safe mode)
+bin/lacp mode local-only
+
+# or temporary remote mode with explicit TTL
+bin/lacp mode remote-enabled --ttl-min 30
+```
+
+### 3. Run work through LACP gates
+
+```bash
+# single command with routing/risk/budget/context gates
+bin/lacp run --task "trusted smoke" --repo-trust trusted -- /bin/echo hello
+
+# one-task control loop (intent -> execute -> observe -> adapt)
+bin/lacp loop --task "implement feature X" --repo-trust trusted --json -- <command>
+```
+
+### 4. Use isolation for parallel agent work
+
+```bash
+# dmux-style: start 3 panes/sessions in one command
+bin/lacp up --session dev --instances 3 --command "claude" --json | jq
+
+# add one more instance to the same session later
+bin/lacp up --session dev --instances 1 --command "claude" --json | jq
+
+# layout preset + brand default session (acme-dev)
+bin/lacp up --layout squad --brand acme --command "claude" --json | jq
+
+# worktree lifecycle
+bin/lacp worktree create --repo-root . --name "feature-a" --base HEAD --json | jq
+bin/lacp worktree list --repo-root . --json | jq
+
+# optional orchestrated multi-session runs
+bin/lacp orchestrate run --task "parallel batch" --backend dmux --json | jq
+bin/lacp swarm launch --manifest ./swarm.json --json | jq
+```
+
+### 5. Generate evidence before merge/release
+
+```bash
+# browser/web flows
+bin/lacp e2e smoke --workdir . --init-template --command "npx playwright test --grep @smoke" --json | jq
+
+# backend/API flows
+bin/lacp api-e2e smoke --workdir . --init-template --command "npx schemathesis run --checks all" --json | jq
+
+# smart-contract flows
+bin/lacp contract-e2e smoke --workdir . --init-template --command "forge test -vv" --json | jq
+
+# enforce policy gate for current PR context
+bin/lacp pr-preflight --changed-files ./changed-files.txt --checks-json ./checks.json --review-json ./review-state.json --json | jq
+```
+
+### 6. Final validation + release discipline
+
+```bash
+bin/lacp test --isolated
+bin/lacp release-prepare --profile local-iterative --json | jq
+bin/lacp release-verify --tag vX.Y.Z --quick --skip-cache-gate --skip-skill-audit-gate --json | jq
+```
+
+### 7. Optional: make `claude` / `codex` default to LACP routing
+
+```bash
+bin/lacp adopt-local --force --json | jq
+```
+
+## Install Options
+
+### Homebrew
+
+```bash
+brew tap 0xNyk/lacp
+brew install lacp            # stable v0.3.0
+brew install --HEAD lacp     # or track main branch
+```
+
+### cURL bootstrap
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+```
+
+Optional flags:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash -s -- \
+  --ref main \
+  --profile starter \
+  --with-verify true
+```
+
+### Verified release install (recommended for production)
+
+```bash
+VERSION="0.3.0"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
+curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
+grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "lacp-${VERSION}.tar.gz"
+cd "lacp-${VERSION}"
+bin/lacp-install --profile starter --with-verify
+```
+
+## Who It Is For
+
+Use LACP if you want:
+- measurable local agent operations (artifacts + diagnostics)
+- policy-based execution gates (risk, approvals, budget)
+- repeatable onboarding for Claude/Codex workflows
+
+LACP is not for:
+- users looking for a chat UI product
+- users who do not want to maintain local scripts/config
+- teams that need managed cloud orchestration out of the box
+
+## What Install Does
+
+`bin/lacp bootstrap-system --profile starter --with-verify`:
+- creates `.env` from template when missing
+- auto-detects and installs missing dependencies on macOS (disable with `--no-auto-deps`)
+  - Homebrew formulas: `jq ripgrep python@3.11 git tmux gh node`
+  - Homebrew casks: `obsidian`
+  - npm globals: `@tobilu/qmd`
+- bootstraps Obsidian vault structure at `$LACP_OBSIDIAN_VAULT` (default: `~/obsidian/vault`) with core LACP symlinks (disable with `--no-obsidian-setup`)
+- applies the `starter` policy pack defaults (starter profile)
+- ensures required root/data paths exist
+- scaffolds safe starter automation scripts when missing
+- runs onboarding preflight checks
+- runs verification and produces baseline artifacts
+- runs fresh-machine confidence checks (`lacp-test --quick --isolated` + core command probes)
+
 ## Obsidian Brain Bundle
 
 LACP includes a first-class Obsidian brain workflow out of the box:
@@ -304,21 +437,21 @@ LACP manages Obsidian configuration as code via `bin/lacp-obsidian`:
 
 ```bash
 # Show vault health, plugin state, config status
-bin/lacp-obsidian status
+lacp obsidian status
 
 # Detect drift between live .obsidian/ and declared manifest
-bin/lacp-obsidian audit --json | jq
+lacp obsidian audit --json | jq
 
 # Apply declared config (auto-backs up first)
-bin/lacp-obsidian apply
+lacp obsidian apply
 
 # Snapshot/restore config
-bin/lacp-obsidian backup
-bin/lacp-obsidian restore
+lacp obsidian backup
+lacp obsidian restore
 
 # Auto-tune settings based on vault size and graph density
-bin/lacp-obsidian optimize --dry-run
-bin/lacp-obsidian optimize --apply
+lacp obsidian optimize --dry-run
+lacp obsidian optimize --apply
 ```
 
 Configuration is declared in `config/obsidian/manifest.json` (plugins, core settings, graph view). The optimization engine (`optimize`) auto-selects a profile (small/medium/large) based on vault node count and tunes graph physics, dataview refresh intervals, linter rules, and plugin settings accordingly.
@@ -376,7 +509,7 @@ LACP treats memory as an explicit 5-layer stack:
    - seeded files: `MEMORY.md`, `debugging.md`, `patterns.md`, `architecture.md`, `preferences.md`
 2. Layer 2: Knowledge Graph
    - Obsidian vault as persistent graph (`$LACP_OBSIDIAN_VAULT`)
-   - MCP wiring for `memory`, `qmd`, and `obsidian`; `smart-connections` is optional via `--qmd-only`
+   - MCP wiring for `memory`, `smart-connections`, `qmd`, `obsidian`, and optionally `ori-mnemos` (graph-aware retrieval with ACT-R decay + RRF fusion)
 3. Layer 3: Ingestion Pipeline
    - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
    - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
@@ -397,27 +530,18 @@ Bootstrap the stack:
 bin/lacp brain-stack init --json | jq
 bin/lacp brain-stack status --json | jq
 
-# QMD-only profile (does not wire smart-connections)
-bin/lacp brain-stack init --qmd-only --json | jq
-
 # Include GitNexus code intelligence (AST knowledge graph via MCP)
 bin/lacp brain-stack init --with-gitnexus --json | jq
 # Then index your repo: npx gitnexus analyze
+
+# Include Ori-Mnemos graph-aware retrieval (ACT-R decay + RRF fusion via MCP)
+bin/lacp brain-stack init --with-ori-mnemos --json | jq
 
 # Audit memory coverage across all projects
 bin/lacp brain-stack audit --json | jq
 
 # Scaffold memory for all projects with 5+ sessions that are missing it
 bin/lacp brain-stack scaffold-all --min-sessions 5 --json | jq
-
-# Validate memory quality KPIs for the current vault
-bin/lacp memory-kpi --json | jq
-
-# Resolve contradiction/supersession state for a memory note
-bin/lacp brain-resolve --id mem-abc123 --resolution superseded --superseded-by mem-def456 --reason "replaced by newer validated source" --json | jq
-
-# Apply graph optimization profile to reduce Obsidian hairball noise
-bin/lacp obsidian-memory-optimize --json | jq
 
 # Dry-run first to see what would be created
 bin/lacp brain-stack scaffold-all --min-sessions 5 --dry-run --json | jq
@@ -624,9 +748,6 @@ Profiles compose hooks into named configurations applied via `lacp claude-hooks 
   - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
 - `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 5-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
-- `bin/lacp-memory-kpi`: compute memory quality metrics (schema coverage, provenance coverage, contradiction/stale counts)
-- `bin/lacp-brain-resolve`: resolve contradiction/supersession/validation states for canonical memory notes
-- `bin/lacp-obsidian-memory-optimize`: apply graph profile defaults to keep Obsidian memory views readable and low-noise
 - `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
 - `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
@@ -919,6 +1040,17 @@ bin/lacp test --isolated
 - doctor path errors: check `.env` roots and rerun `bin/lacp-doctor --json`
 
 ## Optimization Backlog
+
+
+## ❤️ Support the Project
+
+If you find this project useful, consider supporting my open-source work.
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nyk_builderz)
+
+**Solana donations**
+
+`BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
 
 Prioritized optimization findings are tracked in:
 - `docs/optimization-audit-2026-02-20.md`

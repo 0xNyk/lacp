@@ -154,8 +154,9 @@ blocked_budget = run_stats["blocked_budget"]
 wrapper_tasks = {
     "interactive claude session": 0,
     "interactive codex session": 0,
+    "interactive hermes session": 0,
 }
-wrapper_routed_runs = {"claude": 0, "codex": 0}
+wrapper_routed_runs = {"claude": 0, "codex": 0, "hermes": 0}
 for r in current_runs:
     task = str(r.get("task", ""))
     if task in wrapper_tasks:
@@ -167,6 +168,8 @@ for r in current_runs:
         wrapper_routed_runs["claude"] += 1
     elif base == "codex.native":
         wrapper_routed_runs["codex"] += 1
+    elif base == "hermes.native":
+        wrapper_routed_runs["hermes"] += 1
 
 def wrapper_state(cmd_name: str):
     wrapper_path = wrapper_bin_dir / cmd_name
@@ -319,16 +322,19 @@ payload = {
             "bin_dir": str(wrapper_bin_dir),
             "claude": wrapper_state("claude"),
             "codex": wrapper_state("codex"),
+            "hermes": wrapper_state("hermes"),
         },
         "wrapper_routed_runs": {
             "claude": wrapper_routed_runs["claude"],
             "codex": wrapper_routed_runs["codex"],
-            "total": wrapper_routed_runs["claude"] + wrapper_routed_runs["codex"],
+            "hermes": wrapper_routed_runs["hermes"],
+            "total": wrapper_routed_runs["claude"] + wrapper_routed_runs["codex"] + wrapper_routed_runs["hermes"],
         },
         "wrapper_task_runs": {
             "claude": wrapper_tasks["interactive claude session"],
             "codex": wrapper_tasks["interactive codex session"],
-            "total": wrapper_tasks["interactive claude session"] + wrapper_tasks["interactive codex session"],
+            "hermes": wrapper_tasks["interactive hermes session"],
+            "total": wrapper_tasks["interactive claude session"] + wrapper_tasks["interactive codex session"] + wrapper_tasks["interactive hermes session"],
         },
     },
     "time_tracking": {
@@ -378,7 +384,7 @@ else
     "  intervention.baseline=\(.intervention_rate.baseline_window.intervened_runs)/\(.intervention_rate.baseline_window.total_runs) rate=\(.intervention_rate.baseline_window.intervention_rate_per_100)",
     "  intervention.delta.absolute=\(.intervention_rate.delta.absolute) intervention.delta.percent=\(.intervention_rate.delta.percent // "n/a")",
     "  wrappers.bin_dir=\(.observability.wrappers.bin_dir)",
-    "  wrappers.claude.managed=\(.observability.wrappers.claude.managed) wrappers.codex.managed=\(.observability.wrappers.codex.managed)",
+    "  wrappers.claude.managed=\(.observability.wrappers.claude.managed) wrappers.codex.managed=\(.observability.wrappers.codex.managed) wrappers.hermes.managed=\(.observability.wrappers.hermes.managed)",
     "  wrapper_runs.total=\(.observability.wrapper_routed_runs.total) wrapper_tasks.total=\(.observability.wrapper_task_runs.total)",
     "  time.month=\(.time_tracking.month) time.sessions=\(.time_tracking.sessions) time.total_hours=\(.time_tracking.total_hours)",
     "  benchmark.path=\(.artifacts.latest_benchmark.path // "<none>")",

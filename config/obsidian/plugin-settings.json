@@ -81,12 +81,12 @@
   "extended-graph": {
     "enableFeatures": {
       "graph": {
-        "tags": true,
-        "properties": true,
+        "tags": false,
+        "properties": false,
         "links": true,
-        "folders": true,
-        "arrows": true,
-        "layers": true,
+        "folders": false,
+        "arrows": false,
+        "layers": false,
         "focus": false,
         "shapes": false
       }
@@ -99,16 +99,20 @@
     "file_exclusions": ".smart-env,_generated/extractions,_generated/sessions",
     "force_refresh": false
   },
-  "breadcrumbs": {
-    "hierarchyFields": ["parent", "up"],
-    "showBreadcrumbs": true,
-    "showTrail": true
-  },
   "metadata-menu": {
     "globallyAvailableFields": [
-      { "name": "id", "type": "Input" },
-      { "name": "description", "type": "Input" },
-      { "name": "tags", "type": "Multi" }
+      {
+        "name": "id",
+        "type": "Input"
+      },
+      {
+        "name": "description",
+        "type": "Input"
+      },
+      {
+        "name": "tags",
+        "type": "Multi"
+      }
     ]
   }
 }

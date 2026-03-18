@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-brain-promote <note-path> [--type <type>] [--dest <dir>] [--dry-run] [--json]
+
+Promote a note from inbox/ to a permanent vault location.
+
+  - Updates frontmatter: status: inbox -> status: active
+  - Auto-classifies type via keyword heuristics if --type not given
+  - Detects and adds wiki-links from content
+  - Moves note to --dest or auto-determined vault subdirectory
+
+Types: idea, decision, learning, insight, blocker, opportunity
+
+Examples:
+  lacp-brain-promote inbox/my-note.md --json
+  lacp-brain-promote inbox/my-note.md --type decision --dest knowledge/decisions/ --json
+  lacp-brain-promote inbox/my-note.md --dry-run --json
+EOF
+}
+
+AS_JSON=0
+DRY_RUN=0
+NOTE_PATH=""
+NOTE_TYPE=""
+DEST_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type) NOTE_TYPE="$2"; shift 2 ;;
+    --dest) DEST_DIR="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "Unknown flag: $1" ;;
+    *)
+      if [[ -z "${NOTE_PATH}" ]]; then
+        NOTE_PATH="$1"
+      else
+        die "Unexpected argument: $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -n "${NOTE_PATH}" ]] || die "Note path required. Run with --help for usage."
+
+VAULT_ROOT="${LACP_OBSIDIAN_VAULT}"
+
+# Resolve note path relative to vault if not absolute
+if [[ "${NOTE_PATH}" != /* ]]; then
+  NOTE_PATH="${VAULT_ROOT}/${NOTE_PATH}"
+fi
+
+[[ -f "${NOTE_PATH}" ]] || die "Note not found: ${NOTE_PATH}"
+
+result_json="$(python3 - <<'PY' "${NOTE_PATH}" "${NOTE_TYPE}" "${DEST_DIR}" "${VAULT_ROOT}" "${DRY_RUN}"
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+note_path = Path(sys.argv[1])
+explicit_type = sys.argv[2]
+explicit_dest = sys.argv[3]
+vault_root = Path(sys.argv[4])
+dry_run = sys.argv[5] == "1"
+
+text = note_path.read_text(encoding="utf-8", errors="replace")
+
+# --- Parse frontmatter ---
+fm_raw = ""
+body = text
+fm = {}
+if text.startswith("---\n"):
+    end = text.find("\n---\n", 4)
+    if end != -1:
+        fm_raw = text[4:end]
+        body = text[end + 5:]
+        try:
+            import yaml
+            loaded = yaml.safe_load(fm_raw)
+            if isinstance(loaded, dict):
+                fm = loaded
+        except Exception:
+            for line in fm_raw.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fm[k.strip()] = v.strip().strip('"').strip("'")
+
+# --- Auto-classify type ---
+TYPE_KEYWORDS = {
+    "decision": ["decided", "decision", "chose", "choosing", "trade-off", "tradeoff", "alternative"],
+    "insight": ["realized", "insight", "discovered", "learned that", "key takeaway", "aha"],
+    "blocker": ["blocked", "blocker", "stuck", "cannot", "failing", "broken", "error"],
+    "opportunity": ["opportunity", "potential", "could try", "worth exploring", "promising"],
+    "learning": ["learned", "learning", "tutorial", "how to", "guide", "reference"],
+    "idea": ["idea", "brainstorm", "what if", "concept", "proposal", "suggestion"],
+}
+
+def classify_type(text_lower: str) -> str:
+    scores: dict[str, int] = {}
+    for typ, keywords in TYPE_KEYWORDS.items():
+        scores[typ] = sum(1 for kw in keywords if kw in text_lower)
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "idea"
+
+note_type = explicit_type or fm.get("type", "") or classify_type(body.lower())
+
+# --- Detect wiki-links ---
+wiki_re = re.compile(r"\[\[([^\]]+)\]\]")
+detected_links = []
+for match in wiki_re.findall(body):
+    target = match.split("|", 1)[0].split("#", 1)[0].strip()
+    if target:
+        detected_links.append(target)
+
+# --- Determine destination ---
+TYPE_DIRS = {
+    "decision": "knowledge/decisions",
+    "insight": "knowledge/insights",
+    "learning": "knowledge/learnings",
+    "blocker": "knowledge/blockers",
+    "opportunity": "knowledge/opportunities",
+    "idea": "knowledge/ideas",
+}
+if explicit_dest:
+    dest_dir = vault_root / explicit_dest
+else:
+    dest_dir = vault_root / TYPE_DIRS.get(note_type, "knowledge/general")
+
+dest_path = dest_dir / note_path.name
+
+# --- Update frontmatter ---
+new_fm = dict(fm)
+new_fm["status"] = "active"
+new_fm["type"] = note_type
+if "promoted_from" not in new_fm:
+    new_fm["promoted_from"] = "inbox"
+
+# Rebuild frontmatter
+try:
+    import yaml
+    new_fm_str = yaml.dump(new_fm, default_flow_style=False, sort_keys=False).strip()
+except Exception:
+    lines = []
+    for k, v in new_fm.items():
+        lines.append(f"{k}: {v}")
+    new_fm_str = "\n".join(lines)
+
+new_text = f"---\n{new_fm_str}\n---\n{body}"
+
+# --- Execute ---
+moved = False
+if not dry_run:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path.write_text(new_text, encoding="utf-8")
+    note_path.unlink()
+    moved = True
+
+result = {
+    "ok": True,
+    "dry_run": dry_run,
+    "source": str(note_path),
+    "destination": str(dest_path),
+    "type": note_type,
+    "type_auto_classified": not bool(explicit_type),
+    "detected_links": detected_links,
+    "link_count": len(detected_links),
+    "status_change": "inbox -> active",
+    "moved": moved,
+}
+print(json.dumps(result, indent=2))
+PY
+)"
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  printf '%s\n' "${result_json}"
+else
+  type_val="$(printf '%s' "${result_json}" | python3 -c "import json,sys; print(json.load(sys.stdin)['type'])")"
+  dest_val="$(printf '%s' "${result_json}" | python3 -c "import json,sys; print(json.load(sys.stdin)['destination'])")"
+  link_count="$(printf '%s' "${result_json}" | python3 -c "import json,sys; print(json.load(sys.stdin)['link_count'])")"
+
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "brain-promote (dry-run)"
+  else
+    echo "brain-promote"
+  fi
+  echo "  source: ${NOTE_PATH}"
+  echo "  destination: ${dest_val}"
+  echo "  type: ${type_val}"
+  echo "  links detected: ${link_count}"
+fi

@@ -13,7 +13,7 @@ Run canary gate and apply fail-safe rollback if unhealthy.
 
 Rollback actions (on canary failure):
   1) set mode to local-only
-  2) unadopt local claude/codex wrappers
+  2) unadopt local claude/codex/hermes wrappers
   3) write rollback artifact in knowledge/data/rollbacks
 
 Options:

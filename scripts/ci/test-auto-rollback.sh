@@ -42,12 +42,17 @@ cat > "${LACP_WRAPPER_BIN_DIR}/codex.native" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "${LACP_WRAPPER_BIN_DIR}/claude.native" "${LACP_WRAPPER_BIN_DIR}/codex.native"
+cat > "${LACP_WRAPPER_BIN_DIR}/hermes.native" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${LACP_WRAPPER_BIN_DIR}/claude.native" "${LACP_WRAPPER_BIN_DIR}/codex.native" "${LACP_WRAPPER_BIN_DIR}/hermes.native"
 
 "/bin/bash" "${ROOT}/bin/lacp-adopt-local" \
   --bin-dir "${LACP_WRAPPER_BIN_DIR}" \
   --claude-native "${LACP_WRAPPER_BIN_DIR}/claude.native" \
-  --codex-native "${LACP_WRAPPER_BIN_DIR}/codex.native" >/dev/null
+  --codex-native "${LACP_WRAPPER_BIN_DIR}/codex.native" \
+  --hermes-native "${LACP_WRAPPER_BIN_DIR}/hermes.native" >/dev/null
 
 python3 - <<'PY' "${LACP_KNOWLEDGE_ROOT}/data/benchmarks"
 import datetime as dt
@@ -82,12 +87,17 @@ fi
 [[ "$(echo "${rollback_json}" | jq -r '.mode_result.mode')" == "local-only" ]] || { echo "[auto-rollback-test] FAIL mode not local-only" >&2; exit 1; }
 [[ -x "${LACP_WRAPPER_BIN_DIR}/claude" ]] || { echo "[auto-rollback-test] FAIL claude command missing" >&2; exit 1; }
 [[ -x "${LACP_WRAPPER_BIN_DIR}/codex" ]] || { echo "[auto-rollback-test] FAIL codex command missing" >&2; exit 1; }
+[[ -x "${LACP_WRAPPER_BIN_DIR}/hermes" ]] || { echo "[auto-rollback-test] FAIL hermes command missing" >&2; exit 1; }
 if rg -q 'LACP_MANAGED_WRAPPER=1' "${LACP_WRAPPER_BIN_DIR}/claude"; then
   echo "[auto-rollback-test] FAIL claude still managed wrapper" >&2
   exit 1
 fi
 if rg -q 'LACP_MANAGED_WRAPPER=1' "${LACP_WRAPPER_BIN_DIR}/codex"; then
   echo "[auto-rollback-test] FAIL codex still managed wrapper" >&2
+  exit 1
+fi
+if rg -q 'LACP_MANAGED_WRAPPER=1' "${LACP_WRAPPER_BIN_DIR}/hermes"; then
+  echo "[auto-rollback-test] FAIL hermes still managed wrapper" >&2
   exit 1
 fi
 
