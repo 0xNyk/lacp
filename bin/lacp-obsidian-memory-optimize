@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Apply memory-centric Obsidian graph defaults for LACP")
+    p.add_argument("--vault", default=os.environ.get("LACP_OBSIDIAN_VAULT", ""), help="Vault root")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        value = "~/obsidian/vault"
+    return Path(value).expanduser().resolve()
+
+
+def default_graph_profile() -> dict:
+    return {
+        "collapse-filter": False,
+        "search": "-path:inbox/queue-generated -path:99-archive -path:.trash",
+        "showTags": True,
+        "showAttachments": False,
+        "hideUnresolved": True,
+        "localJumps": 1,
+        "neighborJumps": 1,
+        "lineSizeMultiplier": 0.7,
+        "nodeSizeMultiplier": 0.9,
+        "lineStrength": 0.6,
+        "centerStrength": 0.4,
+        "repelStrength": 10,
+        "linkDistance": 120,
+        "close": False,
+        "colorGroups": [
+            {"query": "path:01-session", "color": {"a": 1, "rgb": 9360716}},
+            {"query": "path:02-graph-core OR path:knowledge", "color": {"a": 1, "rgb": 4897072}},
+            {"query": "path:03-ingest OR path:inbox/queue-generated", "color": {"a": 1, "rgb": 12632256}},
+            {"query": "path:04-code-intel", "color": {"a": 1, "rgb": 5887948}},
+            {"query": "path:05-identity-provenance", "color": {"a": 1, "rgb": 13882323}},
+            {"query": "tag:#decision OR type:decision", "color": {"a": 1, "rgb": 16756224}},
+            {"query": "tag:#concept OR type:concept", "color": {"a": 1, "rgb": 4247295}}
+        ]
+    }
+
+
+def write_json(path: Path, payload: dict, dry_run: bool) -> bool:
+    if dry_run:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+    if not vault.exists():
+        payload = {"ok": False, "kind": "obsidian_memory_optimize", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2) if args.json else payload["error"])
+        return 2
+
+    graph_path = vault / ".obsidian" / "graph.json"
+    payload = default_graph_profile()
+    wrote = write_json(graph_path, payload, args.dry_run)
+
+    out = {
+        "ok": True,
+        "kind": "obsidian_memory_optimize",
+        "vault": str(vault),
+        "dry_run": args.dry_run,
+        "graph": {"path": str(graph_path), "wrote": wrote, "profile": "lacp-memory-v1"},
+    }
+
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        print(f"obsidian-memory-optimize ok=true wrote={str(wrote).lower()} path={graph_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

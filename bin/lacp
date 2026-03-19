@@ -81,6 +81,9 @@ Knowledge:
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
   brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
   brain-stack        Bootstrap official 5-layer memory stack (MCP + memory scaffolding)
+  brain-resolve      Resolve contradiction/supersession state for canonical memory nodes
+  memory-kpi         Compute memory-quality KPIs (coverage/provenance/contradiction/staleness)
+  obsidian-memory-optimize Apply memory-centric graph defaults (reduce hairball, improve categorization)
   agent-id           Persistent agent identity registry (show/list/register/revoke/touch)
   provenance         Cryptographic session provenance chain (start/end/verify/log/export)
   repo-research-sync Mirror repo docs/research notes into Obsidian knowledge graph
@@ -142,6 +145,15 @@ case "${cmd}" in
     ;;
   brain-stack)
     exec "${ROOT}/bin/lacp-brain-stack" "$@"
+    ;;
+  brain-resolve)
+    exec "${ROOT}/bin/lacp-brain-resolve" "$@"
+    ;;
+  memory-kpi)
+    exec "${ROOT}/bin/lacp-memory-kpi" "$@"
+    ;;
+  obsidian-memory-optimize)
+    exec "${ROOT}/bin/lacp-obsidian-memory-optimize" "$@"
     ;;
   agent-id)
     exec "${ROOT}/bin/lacp-agent-id" "$@"

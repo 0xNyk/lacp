@@ -110,9 +110,22 @@ def render_link_note(url: str, title: str) -> tuple[str, str]:
             f"id: link-{note_hash}",
             f"created: {created}",
             "type: research",
+            "layer: 3",
             "status: inbox",
+            "confidence: 0.6",
             "source: link-ingest",
-            "tags: [web-link, inbox]",
+            "source_urls:",
+            f'  - "{url}"',
+            "source_sessions: []",
+            f"last_verified: {created}",
+            "tags: [web-link, inbox, memory-layer-3]",
+            "links:",
+            "  supports: []",
+            "  contradicts: []",
+            "  supersedes: []",
+            "  derived_from: []",
+            "  related_to: []",
+            "  belongs_to: []",
             f'description: "Captured link for later triage -- {safe_title}"',
             f'url: "{url}"',
             "---",
@@ -231,6 +244,30 @@ def run_delegate(cmd: list[str], *, as_json: bool, kind: str) -> int:
     return completed.returncode
 
 
+def validate_note_quality(note: str) -> dict[str, bool]:
+    required_markers = [
+        "id:",
+        "type:",
+        "layer:",
+        "status:",
+        "confidence:",
+        "source_urls:",
+        "source_sessions:",
+        "last_verified:",
+        "links:",
+    ]
+    required_fields_present = all(marker in note for marker in required_markers)
+    provenance_present = "source_urls:" in note and "source_sessions:" in note
+    relation_scaffold_present = all(
+        rel in note for rel in ["supports:", "contradicts:", "supersedes:", "derived_from:"]
+    )
+    return {
+        "required_fields_present": required_fields_present,
+        "provenance_present": provenance_present,
+        "relation_scaffold_present": relation_scaffold_present,
+    }
+
+
 def run_link_capture(args: argparse.Namespace) -> int:
     assert args.input is not None
     title = args.title or detect_title_from_url(args.input)
@@ -241,6 +278,9 @@ def run_link_capture(args: argparse.Namespace) -> int:
     if args.apply:
         note_path.write_text(note, encoding="utf-8")
 
+    quality_gate = validate_note_quality(note)
+    schema_valid = all(quality_gate.values())
+
     if args.json:
         payload = {
             "ok": True,
@@ -249,6 +289,8 @@ def run_link_capture(args: argparse.Namespace) -> int:
             "input_kind": "link",
             "title": title,
             "apply": args.apply,
+            "schema_valid": schema_valid,
+            "quality_gate": quality_gate,
             "note_path": str(note_path),
             "preview": note,
         }

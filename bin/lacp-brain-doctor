@@ -12,7 +12,7 @@ Usage: lacp-brain-doctor [--json] [--fix-hints]
 Validates the Obsidian brain ecosystem health:
   - Vault symlinks (sessions, skills, knowledge, docs, automation-scripts)
   - QMD collections (6 expected)
-  - MCP servers (memory, smart-connections, qmd)
+  - MCP servers (memory, qmd, and optionally smart-connections)
   - Today's daily note
   - Voice pipeline (whisper venv, ffmpeg)
   - Session extraction freshness
@@ -49,6 +49,7 @@ INBOX_DIR="${VAULT_ROOT}/inbox"
 REAL_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT}"
 VOICE_SCRIPT="${REAL_AUTOMATION_ROOT}/scripts/voice_daily_note.py"
 SC_MCP_DIR="${HOME}/.local/share/smart-connections-mcp"
+SMART_OPTIONAL="${LACP_BRAIN_SMART_CONNECTIONS_OPTIONAL:-false}"
 
 checks_tmp="$(mktemp)"
 hints_tmp="$(mktemp)"
@@ -111,7 +112,7 @@ for name in servers:
     print(name)
 " "${CLAUDE_SETTINGS}" 2>/dev/null || true)"
 
-  expected_mcp="memory smart-connections qmd"
+  expected_mcp="memory qmd"
   for srv in ${expected_mcp}; do
     if echo "${mcp_servers}" | grep -qx "${srv}"; then
       add_check "brain:mcp:${srv}" "PASS" "configured in settings.local.json"
@@ -120,6 +121,17 @@ for name in servers:
       add_hint "Add MCP server '${srv}' to ~/.claude/settings.local.json"
     fi
   done
+
+  if echo "${mcp_servers}" | grep -qx "smart-connections"; then
+    add_check "brain:mcp:smart-connections" "PASS" "configured in settings.local.json"
+  else
+    if [[ "${SMART_OPTIONAL}" == "true" ]]; then
+      add_check "brain:mcp:smart-connections" "PASS" "optional (LACP_BRAIN_SMART_CONNECTIONS_OPTIONAL=true)"
+    else
+      add_check "brain:mcp:smart-connections" "WARN" "not configured in settings.local.json"
+      add_hint "Add MCP server 'smart-connections' to ~/.claude/settings.local.json or set LACP_BRAIN_SMART_CONNECTIONS_OPTIONAL=true for QMD-only mode"
+    fi
+  fi
 else
   add_check "brain:mcp:settings" "WARN" "${CLAUDE_SETTINGS} not found"
 fi
@@ -158,16 +170,22 @@ else
 fi
 
 # MCP probe: smart-connections
-if [[ -f "${SC_MCP_DIR}/server.py" && -f "${SC_MCP_DIR}/.venv/bin/python" ]]; then
-  add_check "brain:mcp:sc_files" "PASS" "server.py + venv present"
+if [[ "${SMART_OPTIONAL}" == "true" ]] && ! echo "${mcp_servers:-}" | grep -qx "smart-connections"; then
+  add_check "brain:mcp:sc_files" "PASS" "skipped (QMD-only mode)"
 else
-  add_check "brain:mcp:sc_files" "WARN" "smart-connections MCP missing files"
-  add_hint "Setup smart-connections MCP: see ~/.local/share/smart-connections-mcp/"
+  if [[ -f "${SC_MCP_DIR}/server.py" && -f "${SC_MCP_DIR}/.venv/bin/python" ]]; then
+    add_check "brain:mcp:sc_files" "PASS" "server.py + venv present"
+  else
+    add_check "brain:mcp:sc_files" "WARN" "smart-connections MCP missing files"
+    add_hint "Setup smart-connections MCP: see ~/.local/share/smart-connections-mcp/"
+  fi
 fi
 
 # MCP probe: smart-connections Obsidian plugin
 OBSIDIAN_DIR_FOR_SC="${VAULT_ROOT}/.obsidian"
-if [[ -f "${OBSIDIAN_DIR_FOR_SC}/plugins/smart-connections/manifest.json" ]]; then
+if [[ "${SMART_OPTIONAL}" == "true" ]] && ! echo "${mcp_servers:-}" | grep -qx "smart-connections"; then
+  add_check "brain:plugin:smart_connections" "PASS" "skipped (QMD-only mode)"
+elif [[ -f "${OBSIDIAN_DIR_FOR_SC}/plugins/smart-connections/manifest.json" ]]; then
   add_check "brain:plugin:smart_connections" "PASS" "Obsidian plugin installed"
 else
   add_check "brain:plugin:smart_connections" "WARN" "Smart Connections Obsidian plugin not installed"
