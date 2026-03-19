@@ -455,6 +455,8 @@ LONG_RUN="false"
 REMOTE_PROVIDER_OVERRIDE="auto"
 DRY_RUN=0
 AS_JSON=0
+# Keep CMD defined even when no command is passed (e.g., --dry-run preflight checks)
+declare -a CMD=()
 CONFIRM_CRITICAL="false"
 ESTIMATED_COST_USD="0"
 CONFIRM_BUDGET="false"
@@ -557,6 +559,10 @@ if [[ "${DRY_RUN}" -eq 0 && $# -eq 0 ]]; then
 fi
 
 CMD=("$@")
+CMD_ARGS=()
+if [[ ${#CMD[@]} -gt 0 ]]; then
+  CMD_ARGS=("${CMD[@]}")
+fi
 ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
   --task "${TASK}" \
   --repo-trust "${REPO_TRUST}" \
@@ -607,7 +613,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   ACTUAL_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   ACTUAL_GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
-ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD[@]}")"
+ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD_ARGS[@]-}")"
 ACTUAL_SESSION_FINGERPRINT="$(build_session_fingerprint "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}")"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -628,7 +634,7 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
     fi
   fi
 
-  if command_is_mutating "${CMD[@]}" || [[ -n "${ACTUAL_REMOTE_HOST}" ]]; then
+  if command_is_mutating "${CMD_ARGS[@]-}" || [[ -n "${ACTUAL_REMOTE_HOST}" ]]; then
     CONTEXT_CONTRACT_REQUIRED="true"
   fi
 

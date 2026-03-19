@@ -19,7 +19,14 @@ All notable changes to this project will be documented in this file.
   - `verify` walks the full chain and detects tampered or broken links.
   - Receipts include `agent_id`, `session_fingerprint`, `project_slug`, `memory_hash`, and timestamps.
 - `bin/lacp` top-level dispatcher expanded with `agent-id` and `provenance`.
-- CI coverage: `scripts/ci/test-agent-id.sh`, `scripts/ci/test-provenance.sh`.
+- Canonical memory schema added at `config/memory/node-schema.json` (typed fields, confidence + provenance requirements, relation vocabulary).
+- `bin/lacp-brain-ingest` now emits schema-ready frontmatter (`layer`, `confidence`, `source_urls`, `source_sessions`, `last_verified`, relation scaffolding) and reports quality-gate status in JSON output.
+- `bin/lacp-memory-kpi` command to compute memory quality metrics (`required_schema_coverage_pct`, `source_backed_pct`, contradiction/stale counts).
+- `bin/lacp-brain-resolve` command to resolve contradiction/supersession/validation state by memory note id.
+- `bin/lacp-obsidian-memory-optimize` command to apply low-noise Obsidian graph defaults for memory workflows.
+- `bin/lacp-brain-stack status` now checks for memory resolver/KPI tooling availability.
+- `bin/lacp-status-report` now includes a `memory_kpi` block in JSON and a Memory Quality section in markdown output.
+- CI coverage: `scripts/ci/test-agent-id.sh`, `scripts/ci/test-provenance.sh`, `scripts/ci/test-memory-tools.sh`.
 
 ### Fixed
 - `bin/lacp-brain-stack` now uses Claude Code's native project slug naming (`/path` → `-path`) instead of `shasum`-based hashing for memory directory paths. Previously scaffolded memory files in a location Claude Code would never discover.

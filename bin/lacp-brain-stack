@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   lacp-brain-stack status [--json]
-  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--with-gitnexus] [--dry-run] [--json]
+  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--with-gitnexus] [--qmd-only] [--dry-run] [--json]
   lacp-brain-stack audit [--json]
   lacp-brain-stack scaffold-all [--min-sessions N] [--dry-run] [--json]
 
@@ -40,6 +40,7 @@ CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 AS_JSON=0
 DRY_RUN=0
 WITH_GITNEXUS=0
+QMD_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --claude-settings) CLAUDE_SETTINGS="$2"; shift 2 ;;
     --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
     --with-gitnexus) WITH_GITNEXUS=1; shift ;;
+    --qmd-only) QMD_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -56,7 +58,7 @@ done
 
 claude_project_dir() {
   local cwd="${1:-$(pwd)}"
-  # Claude Code naming: replace / with - (e.g., /Users/alice/repos/lacp -> -Users-alice-repos-lacp)
+  # Claude Code naming: replace path separators with '-' (absolute/project/path -> -absolute-project-path)
   local slug
   slug="$(printf '%s' "${cwd}" | tr '/' '-')"
   printf '%s/.claude/projects/%s' "${HOME}" "${slug}"
@@ -77,9 +79,11 @@ status_cmd() {
     --argjson settings_exists "$([[ -f "${CLAUDE_SETTINGS}" ]] && echo true || echo false)" \
     --argjson memory_exists "$([[ -d "${mem_root}" ]] && echo true || echo false)" \
     --argjson brain_ingest_exists "$([[ -x "${ROOT}/bin/lacp-brain-ingest" ]] && echo true || echo false)" \
+    --argjson brain_resolve_exists "$([[ -x "${ROOT}/bin/lacp-brain-resolve" ]] && echo true || echo false)" \
+    --argjson memory_kpi_exists "$([[ -x "${ROOT}/bin/lacp-memory-kpi" ]] && echo true || echo false)" \
     --argjson gitnexus_installed "$(command -v gitnexus >/dev/null 2>&1 && echo true || echo false)" \
     --argjson gitnexus_indexed "$([[ -d ".gitnexus" ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed}}')"
+    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,brain_resolve_exists:$brain_resolve_exists,memory_kpi_exists:$memory_kpi_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed}}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -107,12 +111,13 @@ init_cmd() {
     printf '{"mcpServers":{}}\n' > "${tmp_json}"
   fi
 
-  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}" "${WITH_GITNEXUS}"
+  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}" "${WITH_GITNEXUS}" "${QMD_ONLY}"
 import json, pathlib, sys
 settings_path = pathlib.Path(sys.argv[1])
 vault = pathlib.Path(sys.argv[2]).expanduser()
 memory_file = pathlib.Path(sys.argv[3]).expanduser()
 with_gitnexus = sys.argv[4] == '1'
+qmd_only = sys.argv[5] == '1'
 
 payload = json.loads(settings_path.read_text()) if settings_path.exists() else {}
 servers = payload.setdefault('mcpServers', {})
@@ -126,11 +131,14 @@ servers['memory'] = {
   'args': ['-y', '@modelcontextprotocol/server-memory'],
   'env': {'MEMORY_FILE_PATH': str(memory_file)}
 }
-servers['smart-connections'] = {
-  'command': sc_python,
-  'args': [sc_server],
-  'env': {'OBSIDIAN_VAULT_PATH': str(vault)}
-}
+if not qmd_only:
+  servers['smart-connections'] = {
+    'command': sc_python,
+    'args': [sc_server],
+    'env': {'OBSIDIAN_VAULT_PATH': str(vault)}
+  }
+else:
+  servers.pop('smart-connections', None)
 servers['qmd'] = {
   'command': 'qmd',
   'args': ['mcp'],
@@ -177,7 +185,8 @@ EOF
     --arg memory_file "${memory_file}" \
     --arg memory_root "${mem_root}" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,vault_root:$vault_root,claude_settings:$claude_settings,memory_file:$memory_file,memory_root:$memory_root}')"
+    --argjson qmd_only "$([[ "${QMD_ONLY}" -eq 1 ]] && echo true || echo false)" \
+    '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,qmd_only:$qmd_only,vault_root:$vault_root,claude_settings:$claude_settings,memory_file:$memory_file,memory_root:$memory_root}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -186,6 +195,7 @@ EOF
     echo "  claude settings: ${CLAUDE_SETTINGS}"
     echo "  memory root: ${mem_root}"
     echo "  memory file: ${memory_file}"
+    echo "  qmd-only: ${QMD_ONLY}"
     if [[ "${WITH_GITNEXUS}" -eq 1 ]]; then
       echo ""
       echo "  hint: run 'lacp-repos-index index' to index repos for cross-repo code intelligence"
@@ -197,7 +207,15 @@ EOF
     local _obs_args=()
     [[ "${DRY_RUN}" -eq 1 ]] && _obs_args+=(--dry-run)
     [[ "${AS_JSON}" -eq 1 ]] && _obs_args+=(--json)
-    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" 2>/dev/null || true
+    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" >/dev/null 2>&1 || true
+  fi
+
+  # Apply memory-centric graph defaults to reduce global graph hairball
+  if [[ -x "${ROOT}/bin/lacp-obsidian-memory-optimize" ]]; then
+    local _opt_args=(--vault "${VAULT_ROOT}")
+    [[ "${DRY_RUN}" -eq 1 ]] && _opt_args+=(--dry-run)
+    [[ "${AS_JSON}" -eq 1 ]] && _opt_args+=(--json)
+    "${ROOT}/bin/lacp-obsidian-memory-optimize" "${_opt_args[@]}" >/dev/null 2>&1 || true
   fi
 }
 

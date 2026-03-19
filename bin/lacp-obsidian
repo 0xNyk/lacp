@@ -89,7 +89,20 @@ for p in d:
 
   local installed_count=0
   if [[ -d "${OBSIDIAN_DIR}/plugins" ]]; then
-    installed_count="$(find "${OBSIDIAN_DIR}/plugins" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+    installed_count="$(python3 -c "
+import pathlib
+p = pathlib.Path('${OBSIDIAN_DIR}/plugins')
+count = 0
+for d in p.iterdir():
+    if not d.is_dir():
+        continue
+    name = d.name
+    if name.startswith('.') or '.backup.' in name:
+        continue
+    if (d / 'manifest.json').exists():
+        count += 1
+print(count)
+" 2>/dev/null || echo 0)"
   fi
 
   if [[ -f "${OBSIDIAN_DIR}/graph.json" ]]; then
@@ -360,16 +373,19 @@ plugins = []
 for d in sorted(plugins_dir.iterdir()):
     if not d.is_dir():
         continue
+    if d.name.startswith(".") or ".backup." in d.name:
+        continue
     manifest = d / "manifest.json"
+    if not manifest.exists():
+        continue
     name = d.name
     version = "unknown"
-    if manifest.exists():
-        try:
-            m = json.loads(manifest.read_text())
-            version = m.get("version", "unknown")
-            name = m.get("name", d.name)
-        except Exception:
-            pass
+    try:
+        m = json.loads(manifest.read_text())
+        version = m.get("version", "unknown")
+        name = m.get("name", d.name)
+    except Exception:
+        pass
     plugins.append({"id": d.name, "name": name, "version": version})
 
 if as_json:

@@ -54,13 +54,28 @@ assert_eq "$(sed -n '1p' "${DELEGATE_ARGS_FILE}")" "${media_file}" "media_delega
 link_json="$("${ROOT}/bin/lacp" brain-ingest "https://example.com/articles/lacp" --apply --json)"
 assert_eq "$(echo "${link_json}" | jq -r '.ok')" "true" "link_capture.ok"
 assert_eq "$(echo "${link_json}" | jq -r '.mode')" "link_note" "link_capture.mode"
+assert_eq "$(echo "${link_json}" | jq -r '.schema_valid')" "true" "link_capture.schema_valid"
+assert_eq "$(echo "${link_json}" | jq -r '.quality_gate.required_fields_present')" "true" "link_capture.quality_gate.required_fields_present"
+assert_eq "$(echo "${link_json}" | jq -r '.quality_gate.provenance_present')" "true" "link_capture.quality_gate.provenance_present"
 note_path="$(echo "${link_json}" | jq -r '.note_path')"
 if [[ ! -f "${note_path}" ]]; then
   echo "[brain-ingest-test] FAIL link_capture.note_missing: ${note_path}" >&2
   exit 1
 fi
 if ! rg -q 'source: link-ingest' "${note_path}"; then
-  echo "[brain-ingest-test] FAIL link_capture.note_content" >&2
+  echo "[brain-ingest-test] FAIL link_capture.note_content.source" >&2
+  exit 1
+fi
+if ! rg -q 'layer: 3' "${note_path}"; then
+  echo "[brain-ingest-test] FAIL link_capture.note_content.layer" >&2
+  exit 1
+fi
+if ! rg -q 'confidence: 0.6' "${note_path}"; then
+  echo "[brain-ingest-test] FAIL link_capture.note_content.confidence" >&2
+  exit 1
+fi
+if ! rg -q 'source_urls:' "${note_path}"; then
+  echo "[brain-ingest-test] FAIL link_capture.note_content.source_urls" >&2
   exit 1
 fi
 
