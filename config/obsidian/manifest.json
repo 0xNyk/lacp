@@ -47,6 +47,7 @@
     "obsidian-advanced-uri",
     "obsidian-git",
     "obsidian-linter",
+    "obsidian-local-rest-api",
     "obsidian-plugin-groups",
     "obsidian-tasks-plugin",
     "omnisearch",
@@ -57,25 +58,127 @@
   "graph_view": {
     "showOrphans": false,
     "hideUnresolved": true,
-    "search": "-path:.smart-env -path:_generated/extractions -path:_generated/sessions",
+    "search": "",
     "colorGroups": [
-      {"query": "path:knowledge/graph/research", "color": {"a": 1, "rgb": 48340}},
-      {"query": "path:knowledge/graph/articles", "color": {"a": 1, "rgb": 5025616}},
-      {"query": "path:knowledge/memory", "color": {"a": 1, "rgb": 9127187}},
-      {"query": "path:knowledge/data", "color": {"a": 1, "rgb": 6316128}},
-      {"query": "path:knowledge", "color": {"a": 1, "rgb": 4890367}},
-      {"query": "path:sessions", "color": {"a": 1, "rgb": 3377397}},
-      {"query": "path:docs", "color": {"a": 1, "rgb": 2533018}},
-      {"query": "path:00-home/daily", "color": {"a": 1, "rgb": 10233776}},
-      {"query": "path:00-home", "color": {"a": 1, "rgb": 8956671}},
-      {"query": "path:atlas", "color": {"a": 1, "rgb": 16757504}},
-      {"query": "path:inbox", "color": {"a": 1, "rgb": 16740419}},
-      {"query": "path:voice-notes", "color": {"a": 1, "rgb": 15588622}},
-      {"query": "path:_generated", "color": {"a": 1, "rgb": 10395294}},
-      {"query": "tag:#session", "color": {"a": 1, "rgb": 16776960}},
-      {"query": "tag:#agent", "color": {"a": 1, "rgb": 16724787}},
-      {"query": "tag:#project", "color": {"a": 1, "rgb": 13500415}},
-      {"query": "tag:#source", "color": {"a": 1, "rgb": 65535}}
+      {
+        "query": "path:knowledge/graph/research",
+        "color": {
+          "a": 1,
+          "rgb": 48340
+        }
+      },
+      {
+        "query": "path:knowledge/graph/articles",
+        "color": {
+          "a": 1,
+          "rgb": 5025616
+        }
+      },
+      {
+        "query": "path:knowledge/memory",
+        "color": {
+          "a": 1,
+          "rgb": 9127187
+        }
+      },
+      {
+        "query": "path:knowledge/data",
+        "color": {
+          "a": 1,
+          "rgb": 6316128
+        }
+      },
+      {
+        "query": "path:knowledge",
+        "color": {
+          "a": 1,
+          "rgb": 4890367
+        }
+      },
+      {
+        "query": "path:sessions",
+        "color": {
+          "a": 1,
+          "rgb": 3377397
+        }
+      },
+      {
+        "query": "path:docs",
+        "color": {
+          "a": 1,
+          "rgb": 2533018
+        }
+      },
+      {
+        "query": "path:00-home/daily",
+        "color": {
+          "a": 1,
+          "rgb": 10233776
+        }
+      },
+      {
+        "query": "path:00-home",
+        "color": {
+          "a": 1,
+          "rgb": 8956671
+        }
+      },
+      {
+        "query": "path:atlas",
+        "color": {
+          "a": 1,
+          "rgb": 16757504
+        }
+      },
+      {
+        "query": "path:inbox",
+        "color": {
+          "a": 1,
+          "rgb": 16740419
+        }
+      },
+      {
+        "query": "path:voice-notes",
+        "color": {
+          "a": 1,
+          "rgb": 15588622
+        }
+      },
+      {
+        "query": "path:_generated",
+        "color": {
+          "a": 1,
+          "rgb": 10395294
+        }
+      },
+      {
+        "query": "tag:#session",
+        "color": {
+          "a": 1,
+          "rgb": 16776960
+        }
+      },
+      {
+        "query": "tag:#agent",
+        "color": {
+          "a": 1,
+          "rgb": 16724787
+        }
+      },
+      {
+        "query": "tag:#project",
+        "color": {
+          "a": 1,
+          "rgb": 13500415
+        }
+      },
+      {
+        "query": "tag:#source",
+        "color": {
+          "a": 1,
+          "rgb": 65535
+        }
+      }
     ]
   }
 }
