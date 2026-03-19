@@ -56,8 +56,8 @@
     "templater-obsidian"
   ],
   "graph_view": {
-    "showOrphans": false,
-    "hideUnresolved": true,
+    "showOrphans": true,
+    "hideUnresolved": false,
     "search": "",
     "colorGroups": [
       {
