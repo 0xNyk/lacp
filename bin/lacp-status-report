@@ -96,6 +96,11 @@ else
   INTERVENTION_JSON="$(echo "${INTERVENTION_JSON}" | jq -c '.intervention_rate')"
 fi
 
+MEMORY_KPI_JSON="$("${ROOT}/bin/lacp-memory-kpi" --json 2>/dev/null || true)"
+if [[ -z "${MEMORY_KPI_JSON}" ]]; then
+  MEMORY_KPI_JSON='{"ok":false,"kind":"memory_kpi","kpis":{"total_notes":0,"canonical_notes":0,"required_schema_coverage_pct":0,"source_backed_pct":0,"contradiction_notes":0,"stale_notes":0}}'
+fi
+
 BENCH_SUMMARY="n/a"
 BENCH_GATE_JSON="null"
 BENCH_GATE_LABEL="unknown"
@@ -148,6 +153,7 @@ if [[ "${FORMAT}" == "json" ]]; then
     --arg latest_sandbox_run "${LATEST_SANDBOX_RUN}" \
     --arg latest_remote_smoke "${LATEST_REMOTE_SMOKE}" \
     --argjson intervention_rate "${INTERVENTION_JSON}" \
+    --argjson memory_kpi "${MEMORY_KPI_JSON}" \
     --arg brain_ok "${BRAIN_OK}" \
     --argjson brain_pass "${BRAIN_PASS_JSON}" \
     --argjson brain_warn "${BRAIN_WARN_JSON}" \
@@ -193,7 +199,8 @@ if [[ "${FORMAT}" == "json" ]]; then
         latest_sandbox_run: $latest_sandbox_run,
         latest_remote_smoke: $latest_remote_smoke
       },
-      intervention_rate: $intervention_rate
+      intervention_rate: $intervention_rate,
+      memory_kpi: $memory_kpi
     }'
   exit 0
 fi
@@ -224,6 +231,15 @@ Generated (UTC): \`${REPORT_TIME_UTC}\`
 - Current: \`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.intervened_runs')\` / \`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.total_runs')\` (\`$(echo "${INTERVENTION_JSON}" | jq -r '.current_window.intervention_rate_per_100')\` per 100)
 - Baseline: \`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.intervened_runs')\` / \`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.total_runs')\` (\`$(echo "${INTERVENTION_JSON}" | jq -r '.baseline_window.intervention_rate_per_100')\` per 100)
 - Delta: absolute \`$(echo "${INTERVENTION_JSON}" | jq -r '.delta.absolute')\`, percent \`$(echo "${INTERVENTION_JSON}" | jq -r '.delta.percent // "n/a"')\`
+
+## Memory Quality
+
+- Total notes: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.total_notes // 0')\`
+- Canonical notes: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.canonical_notes // 0')\`
+- Required schema coverage: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.required_schema_coverage_pct // 0')\`%
+- Source-backed coverage: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.source_backed_pct // 0')\`%
+- Contradiction notes: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.contradiction_notes // 0')\`
+- Stale notes: \`$(echo "${MEMORY_KPI_JSON}" | jq -r '.kpis.stale_notes // 0')\`
 
 ## Brain
 

@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+from dataclasses import dataclass
+from datetime import datetime, UTC
+from pathlib import Path
+from typing import Any
+
+
+@dataclass
+class Match:
+    path: Path
+    text: str
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Resolve contradiction/supersession state for canonical memory notes")
+    p.add_argument("--id", required=True, help="Canonical note id to resolve")
+    p.add_argument(
+        "--resolution",
+        required=True,
+        choices=["superseded", "contradiction_resolved", "validated", "stale", "archived"],
+        help="Resolution state to apply",
+    )
+    p.add_argument("--superseded-by", default="", help="ID of replacement note (for superseded resolution)")
+    p.add_argument("--reason", required=True, help="Resolution rationale")
+    p.add_argument("--vault", default=os.environ.get("LACP_OBSIDIAN_VAULT", ""), help="Obsidian vault root")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true")
+    return p
+
+
+def resolve_vault(path_arg: str) -> Path:
+    raw = path_arg.strip() if path_arg else ""
+    if not raw:
+        raw = "~/obsidian/vault"
+    return Path(raw).expanduser().resolve()
+
+
+def has_frontmatter(text: str) -> bool:
+    return text.startswith("---\n")
+
+
+def parse_frontmatter(text: str) -> tuple[str, str, str]:
+    if not has_frontmatter(text):
+        return "", text, ""
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return "", text, ""
+    fm = text[4:end]
+    body = text[end + 5 :]
+    return "---\n", fm, body
+
+
+def find_target_notes(vault: Path, node_id: str) -> list[Match]:
+    out: list[Match] = []
+    needle = f"id: {node_id}"
+    for p in vault.rglob("*.md"):
+        if "/.obsidian/" in p.as_posix():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if needle in text:
+            out.append(Match(path=p, text=text))
+    return out
+
+
+def upsert_scalar(frontmatter: str, key: str, value: str) -> str:
+    pat = re.compile(rf"(?m)^{re.escape(key)}:\s*.*$")
+    line = f"{key}: {value}"
+    if pat.search(frontmatter):
+        return pat.sub(line, frontmatter)
+    return frontmatter.rstrip() + "\n" + line + "\n"
+
+
+def upsert_multiline_list(frontmatter: str, key: str, item: str) -> str:
+    block_pat = re.compile(rf"(?ms)^{re.escape(key)}:\s*\n((?:\s{{2}}-\s.*\n)*)")
+    m = block_pat.search(frontmatter)
+    if m:
+        block = m.group(1)
+        entry = f'  - "{item}"\n'
+        if entry in block:
+            return frontmatter
+        replacement = f"{key}:\n{block}{entry}"
+        return frontmatter[: m.start()] + replacement + frontmatter[m.end() :]
+    return frontmatter.rstrip() + f"\n{key}:\n  - \"{item}\"\n"
+
+
+def apply_resolution(text: str, *, resolution: str, reason: str, superseded_by: str) -> str:
+    prefix, fm, body = parse_frontmatter(text)
+    if not prefix:
+        created = datetime.now(UTC).strftime("%Y-%m-%d")
+        fm = "\n".join([f"created: {created}", "type: concept", "layer: 2", "status: active"])
+        prefix = "---\n"
+
+    now = datetime.now(UTC).strftime("%Y-%m-%d")
+    fm = upsert_scalar(fm, "resolution_status", resolution)
+    fm = upsert_scalar(fm, "resolution_reason", json.dumps(reason))
+    fm = upsert_scalar(fm, "resolved_at", now)
+
+    if resolution == "superseded" and superseded_by:
+        fm = upsert_scalar(fm, "status", "stale")
+        fm = upsert_scalar(fm, "superseded_by", superseded_by)
+        fm = upsert_multiline_list(fm, "links.supersedes_ids", superseded_by)
+    elif resolution in {"archived", "stale"}:
+        fm = upsert_scalar(fm, "status", resolution)
+    elif resolution in {"validated", "contradiction_resolved"}:
+        fm = upsert_scalar(fm, "status", "active")
+
+    return f"{prefix}{fm}---\n{body}"
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+    if not vault.exists():
+        payload = {"ok": False, "kind": "brain_resolve", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2) if args.json else payload["error"])
+        return 2
+
+    matches = find_target_notes(vault, args.id)
+    if not matches:
+        payload = {"ok": False, "kind": "brain_resolve", "error": f"id_not_found:{args.id}", "vault": str(vault)}
+        print(json.dumps(payload, indent=2) if args.json else payload["error"])
+        return 3
+
+    updated_paths: list[str] = []
+    for m in matches:
+        new_text = apply_resolution(
+            m.text,
+            resolution=args.resolution,
+            reason=args.reason,
+            superseded_by=args.superseded_by,
+        )
+        if new_text != m.text:
+            updated_paths.append(str(m.path))
+            if not args.dry_run:
+                m.path.write_text(new_text, encoding="utf-8")
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "kind": "brain_resolve",
+        "vault": str(vault),
+        "id": args.id,
+        "resolution": args.resolution,
+        "superseded_by": args.superseded_by,
+        "reason": args.reason,
+        "dry_run": args.dry_run,
+        "updated_count": len(updated_paths),
+        "updated_paths": updated_paths,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"brain-resolve ok=true id={args.id} resolution={args.resolution} updated={len(updated_paths)}")
+        for p in updated_paths:
+            print(f"  - {p}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

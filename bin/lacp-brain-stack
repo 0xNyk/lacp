@@ -79,9 +79,11 @@ status_cmd() {
     --argjson settings_exists "$([[ -f "${CLAUDE_SETTINGS}" ]] && echo true || echo false)" \
     --argjson memory_exists "$([[ -d "${mem_root}" ]] && echo true || echo false)" \
     --argjson brain_ingest_exists "$([[ -x "${ROOT}/bin/lacp-brain-ingest" ]] && echo true || echo false)" \
+    --argjson brain_resolve_exists "$([[ -x "${ROOT}/bin/lacp-brain-resolve" ]] && echo true || echo false)" \
+    --argjson memory_kpi_exists "$([[ -x "${ROOT}/bin/lacp-memory-kpi" ]] && echo true || echo false)" \
     --argjson gitnexus_installed "$(command -v gitnexus >/dev/null 2>&1 && echo true || echo false)" \
     --argjson gitnexus_indexed "$([[ -d ".gitnexus" ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed}}')"
+    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,brain_resolve_exists:$brain_resolve_exists,memory_kpi_exists:$memory_kpi_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed}}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -205,7 +207,15 @@ EOF
     local _obs_args=()
     [[ "${DRY_RUN}" -eq 1 ]] && _obs_args+=(--dry-run)
     [[ "${AS_JSON}" -eq 1 ]] && _obs_args+=(--json)
-    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" 2>/dev/null || true
+    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" >/dev/null 2>&1 || true
+  fi
+
+  # Apply memory-centric graph defaults to reduce global graph hairball
+  if [[ -x "${ROOT}/bin/lacp-obsidian-memory-optimize" ]]; then
+    local _opt_args=(--vault "${VAULT_ROOT}")
+    [[ "${DRY_RUN}" -eq 1 ]] && _opt_args+=(--dry-run)
+    [[ "${AS_JSON}" -eq 1 ]] && _opt_args+=(--json)
+    "${ROOT}/bin/lacp-obsidian-memory-optimize" "${_opt_args[@]}" >/dev/null 2>&1 || true
   fi
 }
 
