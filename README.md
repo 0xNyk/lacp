@@ -546,6 +546,15 @@ bin/lacp brain-stack audit --json | jq
 # Scaffold memory for all projects with 5+ sessions that are missing it
 bin/lacp brain-stack scaffold-all --min-sessions 5 --json | jq
 
+# Validate memory quality KPIs for the current vault
+bin/lacp memory-kpi --json | jq
+
+# Resolve contradiction/supersession state for a memory note
+bin/lacp brain-resolve --id mem-abc123 --resolution superseded --superseded-by mem-def456 --reason "replaced by newer validated source" --json | jq
+
+# Apply graph optimization profile to reduce Obsidian hairball noise
+bin/lacp obsidian-memory-optimize --json | jq
+
 # Dry-run first to see what would be created
 bin/lacp brain-stack scaffold-all --min-sessions 5 --dry-run --json | jq
 ```
@@ -751,6 +760,9 @@ Profiles compose hooks into named configurations applied via `lacp claude-hooks 
   - treats plain web links as structured inbox capture notes for later triage/promotion
 - `bin/lacp-brain-doctor`: Obsidian brain ecosystem checks (vault symlinks, QMD, MCP, daily/session freshness)
 - `bin/lacp-brain-stack`: initialize/status/audit/scaffold official 5-layer memory stack (session memory scaffolding + MCP wiring + system-wide coverage)
+- `bin/lacp-memory-kpi`: compute memory quality metrics (schema coverage, provenance coverage, contradiction/stale counts)
+- `bin/lacp-brain-resolve`: resolve contradiction/supersession/validation states for canonical memory notes
+- `bin/lacp-obsidian-memory-optimize`: apply graph profile defaults to keep Obsidian memory views readable and low-noise
 - `bin/lacp-agent-id`: persistent agent identity registry (`show/list/register/revoke/touch`) — stable `agent-<hex8>` IDs per `(hostname, project)` pair
 - `bin/lacp-provenance`: cryptographic session provenance chain (`start/end/verify/log/export`) — SHA-256 hash-chained session receipts with tamper detection
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
