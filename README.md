@@ -165,6 +165,9 @@ Initialize the 5-layer memory stack for persistent knowledge across sessions:
 # Init the memory stack (session memory + knowledge graph + ingestion pipeline)
 lacp brain-stack init --json | jq
 
+# QMD-only mode (skip smart-connections MCP/plugin if you prefer a lean stack)
+lacp brain-stack init --qmd-only --json | jq
+
 # Check brain health
 lacp brain-doctor --json | jq
 
@@ -505,11 +508,11 @@ LACP treats memory as an explicit 5-layer stack:
 
 1. Layer 1: Session Memory
    - project memory scaffolding under `~/.claude/projects/<project-slug>/memory/`
-   - slug is the project path with `/` replaced by `-` (e.g., `/Users/alice/repos/lacp` → `-Users-alice-repos-lacp`)
+   - slug is the project path with `/` replaced by `-` (e.g., `/repo/lacp` → `-repo-lacp`)
    - seeded files: `MEMORY.md`, `debugging.md`, `patterns.md`, `architecture.md`, `preferences.md`
 2. Layer 2: Knowledge Graph
    - Obsidian vault as persistent graph (`$LACP_OBSIDIAN_VAULT`)
-   - MCP wiring for `memory`, `smart-connections`, `qmd`, and `obsidian`
+   - MCP wiring for `memory`, `qmd`, and `obsidian`; `smart-connections` is optional via `--qmd-only`
 3. Layer 3: Ingestion Pipeline
    - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
    - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
@@ -529,6 +532,9 @@ Bootstrap the stack:
 ```bash
 bin/lacp brain-stack init --json | jq
 bin/lacp brain-stack status --json | jq
+
+# QMD-only profile (does not wire smart-connections)
+bin/lacp brain-stack init --qmd-only --json | jq
 
 # Include GitNexus code intelligence (AST knowledge graph via MCP)
 bin/lacp brain-stack init --with-gitnexus --json | jq
