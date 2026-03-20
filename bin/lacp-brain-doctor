@@ -29,6 +29,7 @@ EOF
 AS_JSON=0
 FIX_HINTS=0
 ZONE_REPORT=0
+mcp_servers=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -93,7 +94,7 @@ if [[ "${qmd_output}" == "QMD_UNAVAILABLE" ]]; then
   add_check "brain:qmd:available" "FAIL" "qmd CLI not available"
   add_hint "Install QMD: npm install -g @tobilu/qmd"
 else
-  collection_count="$(echo "${qmd_output}" | grep -c '^[a-z]' || echo 0)"
+  collection_count="$(printf '%s\n' "${qmd_output}" | awk '/^[a-z]/{c++} END{print c+0}')"
   if [[ "${collection_count}" -ge 6 ]]; then
     add_check "brain:qmd:collections" "PASS" "${collection_count} collections"
   elif [[ "${collection_count}" -ge 1 ]]; then
@@ -272,7 +273,7 @@ if [[ -d "${INBOX_DIR}" ]]; then
     add_check "brain:inbox" "PASS" "${inbox_count} files"
   else
     add_check "brain:inbox" "WARN" "${inbox_count} files (>200, needs archival)"
-    add_hint "Archive old inbox items: python3 scripts/archive_inbox.py"
+    add_hint "Archive old inbox items: python3 ${REAL_AUTOMATION_ROOT}/scripts/archive_inbox.py --days 30 --apply"
   fi
 else
   add_check "brain:inbox" "WARN" "${INBOX_DIR} not found"
@@ -384,17 +385,28 @@ fi
 
 # --- Zone report (optional, requires external scripts) ---
 if [[ "${ZONE_REPORT}" -eq 1 ]]; then
-  zone_result="$(python3 - <<'ZONEPY' "${VAULT_ROOT}" 2>/dev/null || echo '{"error":"zone report unavailable"}'
+  zone_result="$(python3 - <<'ZONEPY' "${VAULT_ROOT}" "${REAL_AUTOMATION_ROOT}" 2>/dev/null || echo '{"error":"zone report unavailable"}'
 import json, sys
 from pathlib import Path
 vault = Path(sys.argv[1]).expanduser().resolve()
+automation_root = Path(sys.argv[2]).expanduser().resolve()
 try:
-    sys.path.insert(0, str(Path("~/.lacp/automation/scripts").expanduser()))
+    sys.path.insert(0, str((automation_root / "scripts").resolve()))
     from sync_research_knowledge import classify_zone
+    import time
     md_files = sorted(vault.rglob("*.md"))
     zones = {"active": 0, "stale": 0, "fading": 0, "archived": 0}
     for p in md_files:
-        zone = classify_zone(p)
+        age_days = max((time.time() - p.stat().st_mtime) / 86400.0, 0.0)
+        if age_days <= 7:
+            score = 0.8
+        elif age_days <= 30:
+            score = 0.45
+        elif age_days <= 90:
+            score = 0.15
+        else:
+            score = 0.05
+        zone = classify_zone(score)
         zones[zone] = zones.get(zone, 0) + 1
     print(json.dumps({"zones": zones, "total": len(md_files)}))
 except Exception as e:

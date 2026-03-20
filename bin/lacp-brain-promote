@@ -52,7 +52,7 @@ done
 
 [[ -n "${NOTE_PATH}" ]] || die "Note path required. Run with --help for usage."
 
-VAULT_ROOT="${LACP_OBSIDIAN_VAULT}"
+VAULT_ROOT="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
 
 # Resolve note path relative to vault if not absolute
 if [[ "${NOTE_PATH}" != /* ]]; then
