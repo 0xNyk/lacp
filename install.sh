@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_SLUG="${LACP_REPO_SLUG:-0xNyk/lacp}"
+# Hardcoded repo slug — do not accept from environment (M4: CWE-494)
+REPO_SLUG="0xNyk/lacp"
 REF="${LACP_REF:-main}"
 INSTALL_DIR="${LACP_INSTALL_DIR:-$HOME/.lacp}"
 WITH_VERIFY="${LACP_WITH_VERIFY:-1}"
@@ -70,6 +71,17 @@ fi
 
 echo "[lacp-install] downloading ${ARCHIVE_URL}"
 curl -fsSL "${ARCHIVE_URL}" -o "${TMP}/lacp.tar.gz"
+
+# Verify archive integrity if LACP_EXPECTED_SHA256 is set (M4: CWE-494)
+if [[ -n "${LACP_EXPECTED_SHA256:-}" ]]; then
+  actual_sha256="$(shasum -a 256 "${TMP}/lacp.tar.gz" | cut -d' ' -f1)"
+  if [[ "${actual_sha256}" != "${LACP_EXPECTED_SHA256}" ]]; then
+    echo "[lacp-install] FATAL: SHA-256 mismatch! Expected: ${LACP_EXPECTED_SHA256}, Got: ${actual_sha256}" >&2
+    exit 1
+  fi
+  echo "[lacp-install] SHA-256 verified: ${actual_sha256}"
+fi
+
 tar -xzf "${TMP}/lacp.tar.gz" -C "${TMP}"
 
 SRC_DIR="$(find "${TMP}" -maxdepth 1 -type d -name 'lacp-*' | head -n 1)"

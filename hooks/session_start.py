@@ -113,11 +113,13 @@ def _detect_test_command() -> str | None:
 
 
 def _cache_test_command(cmd: str) -> None:
-    """Write test command to /tmp for stop hook to pick up."""
+    """Write test command to session state dir for stop hook to pick up."""
     session_id = os.getenv("CLAUDE_SESSION_ID", "default")
-    path = Path(f"/tmp/lacp-session-test-cmd-{session_id}")
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", session_id)
+    state_dir = Path.home() / ".lacp" / "hooks" / "state" / safe_id
     try:
-        path.write_text(cmd)
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (state_dir / "test-cmd").write_text(cmd)
     except OSError:
         pass
 
@@ -183,6 +185,33 @@ def main() -> None:
         mode_content = _load_context_mode(mode)
         if mode_content:
             parts.append(mode_content)
+
+    # Write session start contract for stop hook and other consumers
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from hook_contracts import SessionStartOutput, write_contract as _write_contract
+        import time as _time
+
+        _branch = None
+        if _is_git_repo():
+            try:
+                _branch = subprocess.run(
+                    ["git", "branch", "--show-current"],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout.strip() or None
+            except Exception:
+                pass
+
+        _contract = SessionStartOutput(
+            test_cmd=test_cmd,
+            git_branch=_branch,
+            context_mode=mode if mode else None,
+            started_at=_time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            context_budget_hint=int(os.getenv("LACP_CONTEXT_BUDGET_HINT", "180000")),
+        )
+        _write_contract("session_start", _contract)
+    except Exception:
+        pass  # Contract writing is best-effort
 
     if parts:
         print(json.dumps({"systemMessage": "\n".join(parts)}))
