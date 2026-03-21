@@ -27,11 +27,16 @@ if [[ -z "${run_template}" ]]; then
   run_template='claude --worktree "{session}"{tmux_flag}{system_prompt_flag} --print "{command}"'
 fi
 
-rendered="${run_template//\{session\}/${session}}"
-rendered="${rendered//\{command\}/${command_text}}"
+# Escape values to prevent shell injection (C2: CWE-78)
+escaped_session="$(printf '%q' "${session}")"
+escaped_command="$(printf '%q' "${command_text}")"
+escaped_prompt_prefix="$(printf '%q' "${prompt_prefix}")"
+
+rendered="${run_template//\{session\}/${escaped_session}}"
+rendered="${rendered//\{command\}/${escaped_command}}"
 rendered="${rendered//\{tmux_flag\}/${tmux_flag}}"
 rendered="${rendered//\{system_prompt_flag\}/${system_prompt_flag}}"
-rendered="${rendered//\{prompt_prefix\}/${prompt_prefix}}"
+rendered="${rendered//\{prompt_prefix\}/${escaped_prompt_prefix}}"
 
 if [[ "${dry_run}" == "true" ]]; then
   jq -n \
@@ -54,5 +59,10 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 12
 fi
 
-/usr/bin/env bash -lc "${rendered}"
+if [[ "${LACP_RESULT_COLLECT:-0}" == "1" ]]; then
+  collector="$(dirname "${BASH_SOURCE[0]}")/result-collector.sh"
+  "${collector}" --runner claude_worktree --task-id "${session}" -- /usr/bin/env bash -lc "${rendered}"
+else
+  /usr/bin/env bash -lc "${rendered}"
+fi
 echo "[lacp] claude worktree command executed"

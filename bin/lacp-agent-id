@@ -68,8 +68,8 @@ ensure_registry() {
 }
 
 generate_agent_id() {
-  # Generate a short random ID: agent-<8 hex chars>
-  python3 -c "import secrets; print(f'agent-{secrets.token_hex(4)}')"
+  # Generate agent ID with 128 bits of entropy: agent-<32 hex chars>
+  python3 -c "import secrets; print(f'agent-{secrets.token_hex(16)}')"
 }
 
 lookup_agent() {
@@ -135,7 +135,7 @@ with open(lock_path, "w") as lock_fd:
             sys.exit(0)
 
     # Generate new agent
-    agent_id = f"agent-{secrets.token_hex(4)}"
+    agent_id = f"agent-{secrets.token_hex(16)}"
     entry = {
         "agent_id": agent_id,
         "hostname": hostname,

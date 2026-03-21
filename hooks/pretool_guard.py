@@ -266,7 +266,8 @@ def run_bash_guard(payload: dict) -> int:
             print(msg, file=sys.stderr)
             return 2
 
-    # Network exfiltration guard
+    # Network exfiltration guard (defense-in-depth: catches curl/wget --data patterns
+    # but is bypassable via nc, python3 -c, base64 encoding, etc. — not a security boundary)
     if re.search(r"\b(?:curl|wget)\b.*(?:-d|--data|--data-binary)\s+@[^\s]*(?:\.env|\.ssh|credentials|\.key|\.pem|secrets)", cmd, re.IGNORECASE):
         print("BLOCKED: potential data exfiltration from sensitive file", file=sys.stderr)
         return 2

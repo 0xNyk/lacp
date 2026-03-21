@@ -4,8 +4,24 @@ set -euo pipefail
 LACP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
-  # shellcheck disable=SC1091
-  source "${LACP_ROOT}/.env"
+  # Strict KEY=VALUE parser — does not execute .env as bash (H2: CWE-94)
+  while IFS='=' read -r key value; do
+    # Skip empty lines and comments
+    [[ -z "${key}" || "${key}" == \#* ]] && continue
+    # Strip inline comments (value after unquoted #)
+    value="${value%%\#*}"
+    # Strip surrounding whitespace and quotes
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#\"}" ; value="${value%\"}"
+    value="${value#\'}" ; value="${value%\'}"
+    # Validate key is a valid identifier
+    [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # Safe expansion: $HOME and ~ (no general variable/command expansion)
+    value="${value//\$HOME/${HOME}}"
+    value="${value/#\~\//${HOME}/}"
+    export "${key}=${value}"
+  done < "${LACP_ROOT}/.env"
 fi
 
 export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-$HOME/.lacp/automation}"

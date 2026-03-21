@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -33,8 +34,16 @@ DEBUG = os.getenv("LACP_QUALITY_GATE_DEBUG", "0") == "1"
 MAX_BLOCKS = int(os.getenv("LACP_QUALITY_GATE_MAX_BLOCKS", "3"))
 
 OLLAMA_BASE = OLLAMA_URL.rsplit("/api/chat", 1)[0] if "/api/chat" in OLLAMA_URL else OLLAMA_URL
-DEBUG_LOG = Path("/tmp/lacp-quality-gate.log")
+_LACP_STATE_DIR = Path.home() / ".lacp" / "hooks" / "state"
+DEBUG_LOG = _LACP_STATE_DIR / "quality-gate.log"
 RALPH_STATE_FILE = ".claude/ralph-loop.local.md"
+
+# Allowed test runner prefixes — commands must start with one of these
+_ALLOWED_TEST_RUNNERS = (
+    "bun test", "pnpm test", "yarn test", "npm test",
+    "make test", "cargo test", "python3 -m pytest",
+    "bin/lacp-test",
+)
 
 HOOKS_DIR = Path(__file__).parent
 
@@ -66,12 +75,29 @@ class Context:
     ralph_active: bool
 
 
+# -- Helpers --
+
+def _safe_session_id(session_id: str) -> str:
+    """Sanitize session_id for use in file paths (L1: CWE-22)."""
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", session_id) if session_id else "default"
+
+
+def _session_state_dir(session_id: str) -> Path:
+    """Return per-session state directory under ~/.lacp (H1: no more /tmp)."""
+    safe_id = _safe_session_id(session_id)
+    d = _LACP_STATE_DIR / safe_id
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return d
+
+
 # -- Debug logging --
 
 def _debug(msg: str) -> None:
     if DEBUG:
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with open(DEBUG_LOG, "a") as f:
+            os.chmod(DEBUG_LOG, 0o600)
             f.write(f"[{ts}] {msg}\n")
 
 
@@ -144,7 +170,7 @@ def check_circuit_breaker(ctx: Context) -> Optional[CheckResult]:
     """After MAX_BLOCKS blocks in same session, always allow."""
     if not ctx.session_id:
         return None
-    circuit_file = Path(f"/tmp/lacp-quality-gate-count-{ctx.session_id}")
+    circuit_file = _session_state_dir(ctx.session_id) / "block-count"
     if not circuit_file.exists():
         return None
     try:
@@ -229,18 +255,23 @@ TEST_CLAIM_PATTERNS = [
 ]
 
 
+def _is_allowed_test_runner(cmd: str) -> bool:
+    """Validate test command against allowlist of known runner prefixes (C1)."""
+    return any(cmd.startswith(prefix) for prefix in _ALLOWED_TEST_RUNNERS)
+
+
 def _detect_test_command() -> Optional[str]:
     """Find cached test command or auto-detect from project files."""
-    # Check cached test command from session_start
-    import glob as glob_mod
-    cached = sorted(glob_mod.glob("/tmp/lacp-session-test-cmd-*"), key=os.path.getmtime, reverse=True)
-    if cached:
-        try:
-            cmd = Path(cached[0]).read_text().strip()
-            if cmd:
+    # Try reading from session start contract first (safe: stored in ~/.lacp/)
+    try:
+        from hook_contracts import read_contract
+        contract = read_contract("session_start")
+        if contract and contract.get("test_cmd"):
+            cmd = contract["test_cmd"]
+            if _is_allowed_test_runner(cmd):
                 return cmd
-        except OSError:
-            pass
+    except Exception:
+        pass
 
     # Auto-detect from common project files
     cwd = os.getcwd()
@@ -250,7 +281,6 @@ def _detect_test_command() -> Optional[str]:
             pkg = json.loads(pkg_json.read_text())
             scripts = pkg.get("scripts", {})
             if "test" in scripts:
-                # Detect runner
                 for runner in ("bun", "pnpm", "yarn", "npm"):
                     if _cmd_exists(runner):
                         return f"{runner} test"
@@ -299,11 +329,15 @@ def check_test_verification(ctx: Context) -> Optional[CheckResult]:
         _debug("TEST_VERIFY: no test command found, skipping")
         return None
 
+    if not _is_allowed_test_runner(test_cmd):
+        _debug(f"TEST_VERIFY: command '{test_cmd}' not in allowlist, skipping")
+        return None
+
     _debug(f"TEST_VERIFY: running '{test_cmd}'")
     try:
         result = subprocess.run(
-            test_cmd,
-            shell=True,
+            shlex.split(test_cmd),
+            shell=False,
             capture_output=True,
             text=True,
             timeout=15,
@@ -326,6 +360,42 @@ def check_test_verification(ctx: Context) -> Optional[CheckResult]:
     reason = f"Tests actually FAILED (exit {result.returncode}). Fix before stopping:\n{last_lines}"
     _debug(f"TEST_VERIFY: BLOCK — {reason}")
     return CheckResult("block", reason=reason)
+
+
+# -- Context window awareness (Phase 4) --
+
+def check_context_pressure(ctx: Context) -> Optional[str]:
+    """Return a suggestion string if context pressure is high, else None."""
+    suggestions = []
+
+    # Duration-based heuristic
+    try:
+        from hook_contracts import read_contract
+        contract = read_contract("session_start")
+        if contract and contract.get("started_at"):
+            import time as _time
+            started = _time.strptime(contract["started_at"], "%Y-%m-%dT%H:%M:%SZ")
+            started_ts = _time.mktime(started)  # approximate, ignoring TZ
+            elapsed_min = (_time.time() - started_ts) / 60
+            if elapsed_min > 45:
+                suggestions.append(f"Session running {int(elapsed_min)}min — consider /compact to free context")
+    except Exception:
+        pass
+
+    # Tool-use count heuristic (proxy for context pressure)
+    if ctx.transcript_path and os.path.isfile(ctx.transcript_path):
+        try:
+            tool_count = 0
+            with open(ctx.transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if '"tool_use"' in line or '"type":"tool_use"' in line:
+                        tool_count += 1
+            if tool_count > 100:
+                suggestions.append(f"High tool usage ({tool_count} calls) — consider /compact")
+        except OSError:
+            pass
+
+    return "; ".join(suggestions) if suggestions else None
 
 
 # -- Ollama LLM evaluation --
@@ -474,7 +544,7 @@ def check_ralph_cooperation(ctx: Context, reason: str, heuristic_matched: list[s
 def _increment_circuit_breaker(session_id: str) -> int:
     if not session_id:
         return 1
-    circuit_file = Path(f"/tmp/lacp-quality-gate-count-{session_id}")
+    circuit_file = _session_state_dir(session_id) / "block-count"
     try:
         count = int(circuit_file.read_text().strip()) if circuit_file.exists() else 0
     except (ValueError, OSError):
@@ -529,6 +599,10 @@ def main() -> None:
             decision="skip",
             reason=f"heuristic fast path ({heuristic_hits} hits < {threshold})",
         )
+        ctx_hint = check_context_pressure(ctx)
+        if ctx_hint:
+            _debug(f"CONTEXT_PRESSURE: {ctx_hint}")
+            print(json.dumps({"decision": "allow", "systemMessage": ctx_hint}))
         return
 
     _debug(f"HEURISTIC: {heuristic_hits} hits ({' '.join(heuristic_matched)}), proceeding to evaluation")
@@ -563,6 +637,10 @@ def main() -> None:
             elapsed_ms=ollama_elapsed_ms,
             details={"heuristic_hits": str(heuristic_hits)},
         )
+        ctx_hint = check_context_pressure(ctx)
+        if ctx_hint:
+            _debug(f"CONTEXT_PRESSURE: {ctx_hint}")
+            print(json.dumps({"decision": "allow", "systemMessage": ctx_hint}))
         return
 
     # Ollama flagged rationalization — block

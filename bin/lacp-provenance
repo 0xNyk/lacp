@@ -79,7 +79,7 @@ memory_hash() {
   slug="$(project_slug)"
   local mem_file="${HOME}/.claude/projects/${slug}/memory/MEMORY.md"
   if [[ -f "${mem_file}" ]]; then
-    python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()[:24])" "${mem_file}" 2>/dev/null || echo "none"
+    python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "${mem_file}" 2>/dev/null || echo "none"
   else
     echo "none"
   fi
@@ -190,9 +190,7 @@ with open(lock_path, "w") as lock_fd:
 
     # Compute receipt_hash over the canonical JSON (without receipt_hash itself)
     canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
-    # Design choice: truncate SHA-256 to 24 hex chars (96 bits) — sufficient for
-    # integrity checking while keeping receipts compact. Not used for security.
-    receipt["receipt_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    receipt["receipt_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     # Append to chain
     with open(chain_path, "a") as f:
@@ -266,10 +264,13 @@ for i, line in enumerate(lines):
             "got": actual_prev
         })
 
-    # Verify receipt_hash
+    # Verify receipt_hash (backward-compat: match stored hash length for old truncated hashes)
     receipt_hash = entry.pop("receipt_hash", None)
     canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"))
-    computed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    full_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    # Compare at the stored length to support both old (24-char) and new (64-char) hashes
+    hash_len = len(receipt_hash) if receipt_hash else 64
+    computed = full_hash[:hash_len]
     if receipt_hash != computed:
         breaks.append({
             "index": i,
@@ -337,7 +338,9 @@ for i, line in enumerate(lines):
 
     receipt_hash = entry.pop("receipt_hash", None)
     canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"))
-    computed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+    full_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    hash_len = len(receipt_hash) if receipt_hash else 64
+    computed = full_hash[:hash_len]
     if receipt_hash != computed:
         breaks.append({"index": i, "receipt_id": entry.get("receipt_id", "?"), "error": "receipt_hash tampered"})
     entry["receipt_hash"] = receipt_hash

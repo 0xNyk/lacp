@@ -33,8 +33,12 @@ EOF
   exit 12
 fi
 
-rendered="${run_template//\{session\}/${session}}"
-rendered="${rendered//\{command\}/${command_text}}"
+# Escape values to prevent shell injection (C2: CWE-78)
+escaped_session="$(printf '%q' "${session}")"
+escaped_command="$(printf '%q' "${command_text}")"
+
+rendered="${run_template//\{session\}/${escaped_session}}"
+rendered="${rendered//\{command\}/${escaped_command}}"
 
 /usr/bin/env bash -lc "${rendered}"
 echo "[lacp] dmux command executed"
