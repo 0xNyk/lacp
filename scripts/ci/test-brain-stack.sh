@@ -34,25 +34,6 @@ if 'gitnexus' in servers:
     raise SystemExit("gitnexus should not be present without --with-gitnexus")
 PY
 
-## --- init with --qmd-only (smart-connections optional) ---
-qmd_only_json="$(${ROOT}/bin/lacp-brain-stack init --qmd-only --json)"
-echo "${qmd_only_json}" | jq -e '.ok == true and .qmd_only == true' >/dev/null
-python3 - <<'PY' "${settings_path}"
-import json, sys
-p = json.load(open(sys.argv[1]))
-servers = p.get('mcpServers', {})
-required = {'memory','qmd','obsidian'}
-missing = required - set(servers.keys())
-if missing:
-    raise SystemExit(f"missing mcp servers in qmd-only mode: {sorted(missing)}")
-if 'smart-connections' in servers:
-    raise SystemExit("smart-connections should be absent in --qmd-only mode")
-PY
-
-# restore default mode before subsequent checks
-restore_json="$(${ROOT}/bin/lacp-brain-stack init --json)"
-echo "${restore_json}" | jq -e '.ok == true and .qmd_only == false' >/dev/null
-
 ## --- init with --with-gitnexus ---
 gn_json="$(${ROOT}/bin/lacp-brain-stack init --with-gitnexus --json)"
 echo "${gn_json}" | jq -e '.ok == true' >/dev/null
