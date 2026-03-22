@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Nightly brain-expand wrapper with pre-flight checks, log rotation, and
+# failure notification. Designed to be called from cron or systemd timer.
+#
+# Usage:
+#   lacp-brain-nightly [--apply] [--install-cron] [--json]
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+AS_JSON=0
+APPLY=0
+INSTALL_CRON=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --json) AS_JSON=1 ;;
+    --apply) APPLY=1 ;;
+    --install-cron) INSTALL_CRON=1 ;;
+    -h|--help|help)
+      cat <<'EOF'
+Usage: lacp-brain-nightly [--apply] [--install-cron] [--json]
+
+Nightly wrapper for brain-expand with pre-flight checks.
+
+Options:
+  --apply          Actually apply changes (default: dry-run)
+  --install-cron   Add midnight cron entry for this script
+  --json           JSON output
+EOF
+      exit 0
+      ;;
+  esac
+done
+
+LOG_DIR="${HOME}/.lacp/logs"
+STATE_DIR="${HOME}/.lacp/state"
+mkdir -p "${LOG_DIR}" "${STATE_DIR}"
+
+LOG_FILE="${LOG_DIR}/nightly-$(date -u +%Y%m%d-%H%M%S).log"
+RESULT_FILE="${STATE_DIR}/nightly-last-result.json"
+
+# --- Install cron ---
+if [[ "${INSTALL_CRON}" -eq 1 ]]; then
+  CRON_CMD="0 0 * * * ${ROOT}/bin/lacp-brain-nightly --apply 2>&1 >> ${LOG_DIR}/nightly.log"
+  if crontab -l 2>/dev/null | grep -q "lacp-brain-nightly"; then
+    log "cron entry already exists"
+  else
+    (crontab -l 2>/dev/null || true; echo "${CRON_CMD}") | crontab -
+    log "installed cron: ${CRON_CMD}"
+  fi
+  exit 0
+fi
+
+# --- Pre-flight checks ---
+preflight_ok=true
+preflight_reasons=()
+
+# Disk space (need at least 500MB free in knowledge root)
+if command -v df >/dev/null 2>&1; then
+  free_kb="$(df -k "${LACP_KNOWLEDGE_ROOT}" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [[ -n "${free_kb}" && "${free_kb}" -lt 512000 ]]; then
+    preflight_ok=false
+    preflight_reasons+=("low disk: ${free_kb}KB free")
+  fi
+fi
+
+# GPU pressure (optional — skip if no nvidia-smi)
+if ! gpu_pressure_ok; then
+  preflight_ok=false
+  preflight_reasons+=("gpu pressure high")
+fi
+
+# Knowledge root exists
+if [[ ! -d "${LACP_KNOWLEDGE_ROOT}" ]]; then
+  preflight_ok=false
+  preflight_reasons+=("LACP_KNOWLEDGE_ROOT missing: ${LACP_KNOWLEDGE_ROOT}")
+fi
+
+if [[ "${preflight_ok}" != "true" ]]; then
+  reason_str="$(IFS=', '; echo "${preflight_reasons[*]}")"
+  log "nightly: pre-flight failed: ${reason_str}"
+  printf '{"ok": false, "error": "preflight_failed", "reasons": "%s", "ts": "%s"}\n' \
+    "${reason_str}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${RESULT_FILE}"
+  exit 1
+fi
+
+# --- Run brain-expand ---
+log "nightly: starting brain-expand"
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+EXPAND_ARGS=(--json)
+if [[ "${APPLY}" -eq 1 ]]; then
+  EXPAND_ARGS+=(--apply)
+fi
+
+expand_exit=0
+expand_output="$("${ROOT}/bin/lacp-brain-expand" "${EXPAND_ARGS[@]}" 2>&1 | tee "${LOG_FILE}")" || expand_exit=$?
+
+ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# --- Write result ---
+if [[ "${expand_exit}" -eq 0 ]]; then
+  ok="true"
+else
+  ok="false"
+fi
+
+cat > "${RESULT_FILE}" <<RESULT
+{
+  "ok": ${ok},
+  "exit_code": ${expand_exit},
+  "started_at": "${started_at}",
+  "ended_at": "${ended_at}",
+  "log_file": "${LOG_FILE}",
+  "apply": ${APPLY}
+}
+RESULT
+
+# --- Log rotation (keep last 30 logs) ---
+find "${LOG_DIR}" -name 'nightly-*.log' -type f | sort | head -n -30 | xargs rm -f 2>/dev/null || true
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  cat "${RESULT_FILE}"
+else
+  if [[ "${ok}" == "true" ]]; then
+    log "nightly: completed successfully (log: ${LOG_FILE})"
+  else
+    log "nightly: failed with exit ${expand_exit} (log: ${LOG_FILE})"
+  fi
+fi
+
+exit "${expand_exit}"

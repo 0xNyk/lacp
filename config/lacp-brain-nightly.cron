@@ -1,0 +1,9 @@
+# LACP nightly brain-expand cron template
+# Install with: lacp brain-nightly --install-cron
+# Or manually add to crontab -e:
+
+# Run brain-expand nightly at midnight, apply changes, log output
+0 0 * * * /path/to/lacp/bin/lacp-brain-nightly --apply 2>&1 >> ~/.lacp/logs/nightly.log
+
+# Alternative: run at 2am with GPU lock (for machines with GPU workloads)
+# 0 2 * * * /path/to/lacp/bin/lacp-brain-nightly --apply 2>&1 >> ~/.lacp/logs/nightly.log
