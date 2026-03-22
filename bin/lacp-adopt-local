@@ -9,12 +9,13 @@ usage() {
   cat <<'EOF'
 Usage: lacp-adopt-local [options]
 
-Install local wrapper commands for `claude` and `codex` so sessions route through `lacp run` by default.
+Install local wrapper commands for `claude`, `codex`, and `hermes` so sessions route through `lacp run` by default.
 
 Options:
   --bin-dir <dir>        Wrapper target directory (default: $HOME/.local/bin)
   --claude-native <path> Explicit native claude binary path
   --codex-native <path>  Explicit native codex binary path
+  --hermes-native <path> Explicit native hermes binary path
   --force                Overwrite existing wrappers even without LACP marker
   --dry-run              Print actions only
   --json                 Emit JSON summary
@@ -29,6 +30,7 @@ EOF
 BIN_DIR="${HOME}/.local/bin"
 CLAUDE_NATIVE=""
 CODEX_NATIVE=""
+HERMES_NATIVE=""
 FORCE=0
 DRY_RUN=0
 AS_JSON=0
@@ -38,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --bin-dir) BIN_DIR="$2"; shift 2 ;;
     --claude-native) CLAUDE_NATIVE="$2"; shift 2 ;;
     --codex-native) CODEX_NATIVE="$2"; shift 2 ;;
+    --hermes-native) HERMES_NATIVE="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) AS_JSON=1; shift ;;
@@ -156,7 +159,8 @@ adopt_one() {
   fi
 
   if [[ -z "${native_target}" ]]; then
-    die "Unable to determine native binary for ${cmd_name}. Pass --${cmd_name}-native <path>."
+    log_event "skip_missing_native:${cmd_name}"
+    return 0
   fi
 
   native_target="$(resolve_path "${native_target}")"
@@ -216,6 +220,7 @@ fi
 
 adopt_one "claude" "${CLAUDE_NATIVE}"
 adopt_one "codex" "${CODEX_NATIVE}"
+adopt_one "hermes" "${HERMES_NATIVE}"
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \

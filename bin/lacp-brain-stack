@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   lacp-brain-stack status [--json]
-  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--with-gitnexus] [--qmd-only] [--dry-run] [--json]
+  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--with-gitnexus] [--with-ori-mnemos] [--dry-run] [--json]
   lacp-brain-stack audit [--json]
   lacp-brain-stack scaffold-all [--min-sessions N] [--dry-run] [--json]
 
@@ -40,7 +40,7 @@ CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 AS_JSON=0
 DRY_RUN=0
 WITH_GITNEXUS=0
-QMD_ONLY=0
+WITH_ORI_MNEMOS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     --claude-settings) CLAUDE_SETTINGS="$2"; shift 2 ;;
     --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
     --with-gitnexus) WITH_GITNEXUS=1; shift ;;
-    --qmd-only) QMD_ONLY=1; shift ;;
+    --with-ori-mnemos) WITH_ORI_MNEMOS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -58,7 +58,7 @@ done
 
 claude_project_dir() {
   local cwd="${1:-$(pwd)}"
-  # Claude Code naming: replace path separators with '-' (absolute/project/path -> -absolute-project-path)
+  # Claude Code naming: replace / with - (e.g., /repo/lacp -> -repo-lacp)
   local slug
   slug="$(printf '%s' "${cwd}" | tr '/' '-')"
   printf '%s/.claude/projects/%s' "${HOME}" "${slug}"
@@ -79,11 +79,10 @@ status_cmd() {
     --argjson settings_exists "$([[ -f "${CLAUDE_SETTINGS}" ]] && echo true || echo false)" \
     --argjson memory_exists "$([[ -d "${mem_root}" ]] && echo true || echo false)" \
     --argjson brain_ingest_exists "$([[ -x "${ROOT}/bin/lacp-brain-ingest" ]] && echo true || echo false)" \
-    --argjson brain_resolve_exists "$([[ -x "${ROOT}/bin/lacp-brain-resolve" ]] && echo true || echo false)" \
-    --argjson memory_kpi_exists "$([[ -x "${ROOT}/bin/lacp-memory-kpi" ]] && echo true || echo false)" \
     --argjson gitnexus_installed "$(command -v gitnexus >/dev/null 2>&1 && echo true || echo false)" \
     --argjson gitnexus_indexed "$([[ -d ".gitnexus" ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,brain_resolve_exists:$brain_resolve_exists,memory_kpi_exists:$memory_kpi_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed}}')"
+    --argjson ori_mnemos_configured "$(python3 -c "import json; d=json.load(open('${CLAUDE_SETTINGS}')) if __import__('os').path.isfile('${CLAUDE_SETTINGS}') else {}; print('true' if 'ori-mnemos' in d.get('mcpServers',{}) else 'false')" 2>/dev/null || echo false)" \
+    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed,ori_mnemos_configured:$ori_mnemos_configured}}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -111,13 +110,13 @@ init_cmd() {
     printf '{"mcpServers":{}}\n' > "${tmp_json}"
   fi
 
-  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}" "${WITH_GITNEXUS}" "${QMD_ONLY}"
+  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}" "${WITH_GITNEXUS}" "${WITH_ORI_MNEMOS}"
 import json, pathlib, sys
 settings_path = pathlib.Path(sys.argv[1])
 vault = pathlib.Path(sys.argv[2]).expanduser()
 memory_file = pathlib.Path(sys.argv[3]).expanduser()
 with_gitnexus = sys.argv[4] == '1'
-qmd_only = sys.argv[5] == '1'
+with_ori_mnemos = sys.argv[5] == '1'
 
 payload = json.loads(settings_path.read_text()) if settings_path.exists() else {}
 servers = payload.setdefault('mcpServers', {})
@@ -131,14 +130,11 @@ servers['memory'] = {
   'args': ['-y', '@modelcontextprotocol/server-memory'],
   'env': {'MEMORY_FILE_PATH': str(memory_file)}
 }
-if not qmd_only:
-  servers['smart-connections'] = {
-    'command': sc_python,
-    'args': [sc_server],
-    'env': {'OBSIDIAN_VAULT_PATH': str(vault)}
-  }
-else:
-  servers.pop('smart-connections', None)
+servers['smart-connections'] = {
+  'command': sc_python,
+  'args': [sc_server],
+  'env': {'OBSIDIAN_VAULT_PATH': str(vault)}
+}
 servers['qmd'] = {
   'command': 'qmd',
   'args': ['mcp'],
@@ -153,6 +149,13 @@ if with_gitnexus:
   servers['gitnexus'] = {
     'command': 'npx',
     'args': ['-y', 'gitnexus@latest', 'mcp']
+  }
+
+if with_ori_mnemos:
+  servers['ori-mnemos'] = {
+    'command': 'npx',
+    'args': ['-y', 'ori-mnemos@latest', 'serve', '--mcp'],
+    'env': {'ORI_VAULT': str(vault)}
   }
 
 print(json.dumps(payload, indent=2) + '\n')
@@ -185,8 +188,7 @@ EOF
     --arg memory_file "${memory_file}" \
     --arg memory_root "${mem_root}" \
     --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
-    --argjson qmd_only "$([[ "${QMD_ONLY}" -eq 1 ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,qmd_only:$qmd_only,vault_root:$vault_root,claude_settings:$claude_settings,memory_file:$memory_file,memory_root:$memory_root}')"
+    '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,vault_root:$vault_root,claude_settings:$claude_settings,memory_file:$memory_file,memory_root:$memory_root}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -195,10 +197,13 @@ EOF
     echo "  claude settings: ${CLAUDE_SETTINGS}"
     echo "  memory root: ${mem_root}"
     echo "  memory file: ${memory_file}"
-    echo "  qmd-only: ${QMD_ONLY}"
     if [[ "${WITH_GITNEXUS}" -eq 1 ]]; then
       echo ""
       echo "  hint: run 'lacp-repos-index index' to index repos for cross-repo code intelligence"
+    fi
+    if [[ "${WITH_ORI_MNEMOS}" -eq 1 ]]; then
+      echo ""
+      echo "  hint: ori-mnemos provides graph-aware retrieval with ACT-R decay + RRF fusion via MCP"
     fi
   fi
 
@@ -207,15 +212,7 @@ EOF
     local _obs_args=()
     [[ "${DRY_RUN}" -eq 1 ]] && _obs_args+=(--dry-run)
     [[ "${AS_JSON}" -eq 1 ]] && _obs_args+=(--json)
-    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" >/dev/null 2>&1 || true
-  fi
-
-  # Apply memory-centric graph defaults to reduce global graph hairball
-  if [[ -x "${ROOT}/bin/lacp-obsidian-memory-optimize" ]]; then
-    local _opt_args=(--vault "${VAULT_ROOT}")
-    [[ "${DRY_RUN}" -eq 1 ]] && _opt_args+=(--dry-run)
-    [[ "${AS_JSON}" -eq 1 ]] && _opt_args+=(--json)
-    "${ROOT}/bin/lacp-obsidian-memory-optimize" "${_opt_args[@]}" >/dev/null 2>&1 || true
+    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" 2>/dev/null || true
   fi
 }
 

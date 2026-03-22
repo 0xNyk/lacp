@@ -57,6 +57,7 @@ md_files = sorted([p for p in root.rglob("*.md") if p.is_file()])
 note_titles = {p.stem: p for p in md_files}
 backlinks = {str(p): 0 for p in md_files}
 outlinks = {str(p): 0 for p in md_files}
+adj: dict[str, list[str]] = {str(p): [] for p in md_files}
 
 frontmatter_missing = []
 frontmatter_malformed = []
@@ -126,6 +127,8 @@ for path in md_files:
         if target in note_titles:
             backlinks[str(note_titles[target])] += 1
             outlinks[str(path)] += 1
+            adj[str(path)].append(str(note_titles[target]))
+            adj.setdefault(str(note_titles[target]), []).append(str(path))
         else:
             unresolved_links.append({"file": str(path), "target": target})
 
@@ -181,6 +184,61 @@ if not has_yaml:
 else:
     add_check("yaml_parser", "PASS", "PyYAML available")
 
+# --- Graph topology metrics ---
+hub_count = sum(1 for v in backlinks.values() if v > 5)
+total_inbound = sum(backlinks.values())
+avg_indegree = round(total_inbound / max(len(md_files), 1), 2)
+
+# Connected components via BFS
+visited_cc: set[str] = set()
+component_count = 0
+for p in md_files:
+    sp = str(p)
+    if sp not in visited_cc:
+        component_count += 1
+        queue = [sp]
+        while queue:
+            node = queue.pop()
+            if node in visited_cc:
+                continue
+            visited_cc.add(node)
+            queue.extend(adj.get(node, []))
+
+# Tarjan's articulation points
+disc: dict[str, int] = {}
+low: dict[str, int] = {}
+parent: dict[str, str | None] = {}
+ap_set: set[str] = set()
+timer_val = [0]
+
+def tarjan_ap(u: str) -> None:
+    disc[u] = low[u] = timer_val[0]
+    timer_val[0] += 1
+    children = 0
+    for v in adj.get(u, []):
+        if v not in disc:
+            children += 1
+            parent[v] = u
+            tarjan_ap(v)
+            low[u] = min(low[u], low[v])
+            if parent.get(u) is None and children > 1:
+                ap_set.add(u)
+            if parent.get(u) is not None and low[v] >= disc[u]:
+                ap_set.add(u)
+        elif v != parent.get(u):
+            low[u] = min(low[u], disc[v])
+
+for p in md_files:
+    sp = str(p)
+    if sp not in disc:
+        parent[sp] = None
+        tarjan_ap(sp)
+
+add_check("hubs", "PASS" if hub_count > 0 else "WARN", f"count={hub_count} (nodes with >5 inbound links)")
+add_check("articulation_points", "PASS", f"count={len(ap_set)}")
+add_check("connected_components", "PASS" if component_count <= 3 else "WARN", f"count={component_count}")
+add_check("avg_indegree", "PASS" if avg_indegree >= 1.0 else "WARN", f"value={avg_indegree}")
+
 payload = {
     "ok": fail_count == 0,
     "summary": {
@@ -196,6 +254,12 @@ payload = {
         "unresolved_links": unresolved_links[:200],
         "hard_orphans": hard_orphans[:200],
         "likely_orphans": likely_orphans[:200],
+        "topology": {
+            "hub_count": hub_count,
+            "articulation_point_count": len(ap_set),
+            "connected_components": component_count,
+            "avg_indegree": avg_indegree,
+        },
     },
 }
 

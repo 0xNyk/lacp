@@ -260,6 +260,230 @@ payload = {
 out.write_text(json.dumps(payload, indent=2) + "\n")
 print("{}")
 '
+
+  write_stub_if_needed "$(automation_script run_session_sync.sh)" "755" '#!/usr/bin/env bash
+set -euo pipefail
+
+SESSIONS_ROOT="${LACP_SESSIONS_ROOT:-$HOME/.lacp/sessions}"
+SOURCE_ROOT="${LACP_SESSION_SYNC_SOURCE_ROOT:-$HOME/control/sessions}"
+DRY_RUN=0
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help)
+      cat <<'"'"'EOF'"'"'
+Usage: run_session_sync.sh [--dry-run] [--json]
+
+Mirror extracted agent session markdown notes from an external sessions root
+into $LACP_SESSIONS_ROOT so the Obsidian vault sessions symlink has content.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "[lacp-session-sync] ERROR unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+mkdir -p "${SESSIONS_ROOT}"
+copied=0
+agents_with_content=0
+
+for agent in claude codex hermes; do
+  src_dir="${SOURCE_ROOT}/${agent}"
+  dest_dir="${SESSIONS_ROOT}/${agent}"
+  mkdir -p "${dest_dir}"
+  agent_copied=0
+
+  [[ -d "${src_dir}" ]] || continue
+
+  while IFS= read -r -d "" src; do
+    base="$(basename "${src}")"
+    dest="${dest_dir}/${base}"
+    if [[ -f "${dest}" && "${src}" -ot "${dest}" ]]; then
+      continue
+    fi
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      cp -p "${src}" "${dest}"
+    fi
+    copied=$((copied + 1))
+    agent_copied=$((agent_copied + 1))
+  done < <(find "${src_dir}" -type f -name "*.md" -print0 2>/dev/null)
+
+  if [[ "${agent_copied}" -gt 0 ]]; then
+    agents_with_content=$((agents_with_content + 1))
+  fi
+done
+
+python3 - <<'"'"'PY'"'"' "${SESSIONS_ROOT}" "${SOURCE_ROOT}" "${copied}" "${agents_with_content}" "${DRY_RUN}" "${AS_JSON}"
+import json
+import sys
+
+payload = {
+    "ok": True,
+    "sessions_root": sys.argv[1],
+    "source_root": sys.argv[2],
+    "copied": int(sys.argv[3]),
+    "agents_with_content": int(sys.argv[4]),
+    "dry_run": sys.argv[5] == "1",
+}
+
+if sys.argv[6] == "1":
+    print(json.dumps(payload, indent=2))
+else:
+    print(json.dumps(payload))
+PY
+'
+
+  write_stub_if_needed "$(automation_script route_inbox.py)" "755" '#!/usr/bin/env python3
+import argparse
+import json
+import shutil
+from pathlib import Path
+
+TYPE_DIRS = {
+    "decision": "knowledge/decisions",
+    "insight": "knowledge/insights",
+    "learning": "knowledge/learnings",
+    "blocker": "knowledge/blockers",
+    "opportunity": "knowledge/opportunities",
+    "idea": "knowledge/ideas",
+}
+
+TYPE_KEYWORDS = {
+    "decision": ["decided", "decision", "chose", "trade-off", "tradeoff"],
+    "insight": ["realized", "insight", "discovered", "aha", "takeaway"],
+    "blocker": ["blocked", "blocker", "stuck", "failing", "broken", "error"],
+    "opportunity": ["opportunity", "potential", "promising", "worth exploring"],
+    "learning": ["learned", "learning", "guide", "reference", "tutorial"],
+    "idea": ["idea", "brainstorm", "proposal", "concept", "what if"],
+}
+
+
+def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}, text
+    frontmatter = {}
+    raw = text[4:end]
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        frontmatter[key.strip()] = value.strip().strip("\"").strip("'"'"'")
+    return frontmatter, text[end + 5 :]
+
+
+def classify_type(frontmatter: dict[str, str], body: str) -> str | None:
+    note_type = frontmatter.get("type", "").strip().lower()
+    if note_type:
+        return note_type
+    text = body.lower()
+    scores = {key: 0 for key in TYPE_KEYWORDS}
+    for key, keywords in TYPE_KEYWORDS.items():
+        scores[key] = sum(1 for keyword in keywords if keyword in text)
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else None
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--apply", action="store_true")
+parser.add_argument("--json", action="store_true")
+args = parser.parse_args()
+
+vault_root = Path(Path.home() / "obsidian" / "vault")
+vault_root = Path(Path(__import__("os").environ.get("LACP_OBSIDIAN_VAULT", str(vault_root))).expanduser())
+inbox_dir = vault_root / "inbox"
+
+routed = []
+if inbox_dir.exists():
+    for note_path in sorted(inbox_dir.glob("*.md")):
+        text = note_path.read_text(encoding="utf-8", errors="replace")
+        frontmatter, body = parse_frontmatter(text)
+        note_type = classify_type(frontmatter, body)
+        if not note_type:
+            continue
+        rel_dest = TYPE_DIRS.get(note_type, "knowledge/general")
+        dest_dir = vault_root / rel_dest
+        dest_path = dest_dir / note_path.name
+        routed.append({
+            "source": str(note_path),
+            "destination": str(dest_path),
+            "type": note_type,
+        })
+        if args.apply:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(note_path), str(dest_path))
+
+payload = {
+    "ok": True,
+    "inbox": str(inbox_dir),
+    "routed_count": len(routed),
+    "dry_run": not args.apply,
+    "routed": routed,
+}
+
+if args.json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(json.dumps(payload))
+'
+
+  write_stub_if_needed "$(automation_script archive_inbox.py)" "755" '#!/usr/bin/env python3
+import argparse
+import json
+import shutil
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--days", type=int, default=30)
+parser.add_argument("--apply", action="store_true")
+parser.add_argument("--json", action="store_true")
+args = parser.parse_args()
+
+vault_root = Path(Path.home() / "obsidian" / "vault")
+vault_root = Path(Path(__import__("os").environ.get("LACP_OBSIDIAN_VAULT", str(vault_root))).expanduser())
+inbox_dir = vault_root / "inbox"
+archive_root = inbox_dir / "archive"
+cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+
+archived = []
+if inbox_dir.exists():
+    for note_path in sorted(inbox_dir.glob("*.md")):
+        modified = datetime.fromtimestamp(note_path.stat().st_mtime, tz=timezone.utc)
+        if modified >= cutoff:
+            continue
+        dated_dir = archive_root / modified.strftime("%Y") / modified.strftime("%m")
+        dest_path = dated_dir / note_path.name
+        archived.append({
+            "source": str(note_path),
+            "destination": str(dest_path),
+        })
+        if args.apply:
+            dated_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(note_path), str(dest_path))
+
+payload = {
+    "ok": True,
+    "inbox": str(inbox_dir),
+    "archive_root": str(archive_root),
+    "archived_count": len(archived),
+    "dry_run": not args.apply,
+    "archived": archived,
+}
+
+if args.json:
+    print(json.dumps(payload, indent=2))
+else:
+    print(json.dumps(payload))
+'
 fi
 
 ONBOARD_ARGS=()

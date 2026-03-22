@@ -66,8 +66,8 @@ Ops:
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
-  adopt-local   Install local claude/codex wrappers that route through LACP
-  unadopt-local Remove LACP-managed local claude/codex wrappers
+  adopt-local   Install local claude/codex/hermes wrappers that route through LACP
+  unadopt-local Remove LACP-managed local claude/codex/hermes wrappers
   route         Show routing decision
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
@@ -81,9 +81,7 @@ Knowledge:
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
   brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
   brain-stack        Bootstrap official 5-layer memory stack (MCP + memory scaffolding)
-  brain-resolve      Resolve contradiction/supersession state for canonical memory nodes
-  memory-kpi         Compute memory-quality KPIs (coverage/provenance/contradiction/staleness)
-  obsidian-memory-optimize Apply memory-centric graph defaults (reduce hairball, improve categorization)
+  brain-promote      Promote inbox notes to permanent vault locations
   agent-id           Persistent agent identity registry (show/list/register/revoke/touch)
   provenance         Cryptographic session provenance chain (start/end/verify/log/export)
   repo-research-sync Mirror repo docs/research notes into Obsidian knowledge graph
@@ -146,14 +144,8 @@ case "${cmd}" in
   brain-stack)
     exec "${ROOT}/bin/lacp-brain-stack" "$@"
     ;;
-  brain-resolve)
-    exec "${ROOT}/bin/lacp-brain-resolve" "$@"
-    ;;
-  memory-kpi)
-    exec "${ROOT}/bin/lacp-memory-kpi" "$@"
-    ;;
-  obsidian-memory-optimize)
-    exec "${ROOT}/bin/lacp-obsidian-memory-optimize" "$@"
+  brain-promote)
+    exec "${ROOT}/bin/lacp-brain-promote" "$@"
     ;;
   agent-id)
     exec "${ROOT}/bin/lacp-agent-id" "$@"

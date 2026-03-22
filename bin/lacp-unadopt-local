@@ -9,7 +9,7 @@ usage() {
   cat <<'EOF'
 Usage: lacp-unadopt-local [options]
 
-Remove LACP-managed local wrappers for `claude` and `codex`.
+Remove LACP-managed local wrappers for `claude`, `codex`, and `hermes`.
 
 Options:
   --bin-dir <dir>  Wrapper directory (default: $HOME/.local/bin)
@@ -81,6 +81,7 @@ restore_one() {
 
 restore_one "claude"
 restore_one "codex"
+restore_one "hermes"
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \

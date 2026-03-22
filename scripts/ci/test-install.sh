@@ -34,6 +34,9 @@ assert_file "${AUTOMATION_ROOT}/scripts/run_shared_memory.sh" "stub.run_shared_m
 assert_file "${AUTOMATION_ROOT}/scripts/run_memory_pipeline.sh" "stub.run_memory_pipeline"
 assert_file "${AUTOMATION_ROOT}/scripts/run_memory_benchmark_suite.sh" "stub.run_memory_benchmark_suite"
 assert_file "${AUTOMATION_ROOT}/scripts/capture_snapshot.py" "stub.capture_snapshot"
+assert_file "${AUTOMATION_ROOT}/scripts/run_session_sync.sh" "stub.run_session_sync"
+assert_file "${AUTOMATION_ROOT}/scripts/route_inbox.py" "stub.route_inbox"
+assert_file "${AUTOMATION_ROOT}/scripts/archive_inbox.py" "stub.archive_inbox"
 
 first_benchmark="$(python3 - <<'PY' "${KNOWLEDGE_ROOT}"
 import pathlib

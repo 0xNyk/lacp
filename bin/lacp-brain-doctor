@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-brain-doctor [--json] [--fix-hints]
+Usage: lacp-brain-doctor [--json] [--fix-hints] [--zone-report]
 
 Validates the Obsidian brain ecosystem health:
   - Vault symlinks (sessions, skills, knowledge, docs, automation-scripts)
@@ -28,11 +28,14 @@ EOF
 
 AS_JSON=0
 FIX_HINTS=0
+ZONE_REPORT=0
+mcp_servers=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) AS_JSON=1; shift ;;
     --fix-hints) FIX_HINTS=1; shift ;;
+    --zone-report) ZONE_REPORT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument: $1" ;;
   esac
@@ -43,6 +46,7 @@ CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 SESSIONS_ROOT="${LACP_SESSIONS_ROOT:-${HOME}/.lacp/sessions}"
 SESSIONS_DIR="${SESSIONS_ROOT}/claude"
 CODEX_SESSIONS_DIR="${SESSIONS_ROOT}/codex"
+HERMES_SESSIONS_DIR="${SESSIONS_ROOT}/hermes"
 DAILY_DIR="${VAULT_ROOT}/00-home/daily"
 ATLAS_DIR="${VAULT_ROOT}/atlas"
 INBOX_DIR="${VAULT_ROOT}/inbox"
@@ -90,7 +94,7 @@ if [[ "${qmd_output}" == "QMD_UNAVAILABLE" ]]; then
   add_check "brain:qmd:available" "FAIL" "qmd CLI not available"
   add_hint "Install QMD: npm install -g @tobilu/qmd"
 else
-  collection_count="$(echo "${qmd_output}" | grep -c '^[a-z]' || echo 0)"
+  collection_count="$(printf '%s\n' "${qmd_output}" | awk '/^[a-z]/{c++} END{print c+0}')"
   if [[ "${collection_count}" -ge 6 ]]; then
     add_check "brain:qmd:collections" "PASS" "${collection_count} collections"
   elif [[ "${collection_count}" -ge 1 ]]; then
@@ -192,6 +196,13 @@ else
   add_hint "Install: lacp-obsidian install-plugins"
 fi
 
+# MCP probe: ori-mnemos (optional)
+if echo "${mcp_servers}" | grep -qx "ori-mnemos" 2>/dev/null; then
+  add_check "brain:mcp:ori_mnemos" "PASS" "configured in settings.local.json"
+else
+  add_check "brain:mcp:ori_mnemos" "PASS" "not configured (optional: --with-ori-mnemos)"
+fi
+
 # --- 4. Daily note ---
 today="$(date +%Y-%m-%d)"
 daily_note="${DAILY_DIR}/${today}.md"
@@ -232,7 +243,7 @@ else
 fi
 
 # --- 6. Session extraction ---
-for agent_name in claude codex; do
+for agent_name in claude codex hermes; do
   agent_dir="${SESSIONS_ROOT}/${agent_name}"
   if [[ -d "${agent_dir}" ]]; then
     agent_count="$(find "${agent_dir}" -name '*.md' -type f 2>/dev/null | wc -l | tr -d ' ')"
@@ -262,7 +273,7 @@ if [[ -d "${INBOX_DIR}" ]]; then
     add_check "brain:inbox" "PASS" "${inbox_count} files"
   else
     add_check "brain:inbox" "WARN" "${inbox_count} files (>200, needs archival)"
-    add_hint "Archive old inbox items: python3 scripts/archive_inbox.py"
+    add_hint "Archive old inbox items: python3 ${REAL_AUTOMATION_ROOT}/scripts/archive_inbox.py --days 30 --apply"
   fi
 else
   add_check "brain:inbox" "WARN" "${INBOX_DIR} not found"
@@ -370,6 +381,44 @@ PY
   fi
 else
   add_check "brain:obsidian_config" "WARN" "obsidian manifest not configured"
+fi
+
+# --- Zone report (optional, requires external scripts) ---
+if [[ "${ZONE_REPORT}" -eq 1 ]]; then
+  zone_result="$(python3 - <<'ZONEPY' "${VAULT_ROOT}" "${REAL_AUTOMATION_ROOT}" 2>/dev/null || echo '{"error":"zone report unavailable"}'
+import json, sys
+from pathlib import Path
+vault = Path(sys.argv[1]).expanduser().resolve()
+automation_root = Path(sys.argv[2]).expanduser().resolve()
+try:
+    sys.path.insert(0, str((automation_root / "scripts").resolve()))
+    from sync_research_knowledge import classify_zone
+    import time
+    md_files = sorted(vault.rglob("*.md"))
+    zones = {"active": 0, "stale": 0, "fading": 0, "archived": 0}
+    for p in md_files:
+        age_days = max((time.time() - p.stat().st_mtime) / 86400.0, 0.0)
+        if age_days <= 7:
+            score = 0.8
+        elif age_days <= 30:
+            score = 0.45
+        elif age_days <= 90:
+            score = 0.15
+        else:
+            score = 0.05
+        zone = classify_zone(score)
+        zones[zone] = zones.get(zone, 0) + 1
+    print(json.dumps({"zones": zones, "total": len(md_files)}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+ZONEPY
+  )"
+  zone_err="$(printf '%s' "${zone_result}" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [[ -z "${zone_err}" ]]; then
+    add_check "brain:zone_report" "PASS" "$(printf '%s' "${zone_result}" | jq -c '.zones')"
+  else
+    add_check "brain:zone_report" "WARN" "${zone_err}"
+  fi
 fi
 
 # --- Summary ---
