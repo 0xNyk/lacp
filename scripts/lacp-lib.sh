@@ -64,7 +64,12 @@ export LACP_RUNTIME_MIN_FORK_HEADROOM="${LACP_RUNTIME_MIN_FORK_HEADROOM:-64}"
 export LACP_RUNTIME_BACKOFF_SEC="${LACP_RUNTIME_BACKOFF_SEC:-2}"
 export LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS="${LACP_RUNTIME_BACKOFF_MAX_ATTEMPTS:-3}"
 export LACP_RUNTIME_PRESSURE_OVERRIDE="${LACP_RUNTIME_PRESSURE_OVERRIDE:-auto}"
+export LACP_RUNTIME_MIN_GPU_HEADROOM_MB="${LACP_RUNTIME_MIN_GPU_HEADROOM_MB:-2048}"
+export LACP_RUNTIME_GPU_LOCK_FILE="${LACP_RUNTIME_GPU_LOCK_FILE:-$HOME/.lacp/state/gpu.lock}"
 export LACP_EPISODE_WAIT_SEC="${LACP_EPISODE_WAIT_SEC:-30}"
+export LACP_MEMORY_DECAY_IDENTITY="${LACP_MEMORY_DECAY_IDENTITY:-0.1}"
+export LACP_MEMORY_DECAY_KNOWLEDGE="${LACP_MEMORY_DECAY_KNOWLEDGE:-1.0}"
+export LACP_MEMORY_DECAY_OPERATIONS="${LACP_MEMORY_DECAY_OPERATIONS:-3.0}"
 export LACP_DIGEST_MAX_TOKENS="${LACP_DIGEST_MAX_TOKENS:-2000}"
 
 log() {
@@ -365,4 +370,71 @@ lacp_wait_for_runtime_capacity() {
     i=$((i + 1))
   done
   return 1
+}
+
+gpu_pressure_ok() {
+  # Check GPU VRAM availability. Returns 0 if enough free VRAM or no GPU present.
+  # Skips gracefully on machines without nvidia-smi (e.g. macOS with Metal).
+  local min_mb="${LACP_RUNTIME_MIN_GPU_HEADROOM_MB}"
+
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    return 0  # No nvidia GPU — not a blocker
+  fi
+
+  local free_mb
+  free_mb="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')"
+  if [[ -z "${free_mb}" ]]; then
+    return 0  # nvidia-smi failed — don't block
+  fi
+
+  if [[ "${free_mb}" -lt "${min_mb}" ]]; then
+    log "gpu-pressure: only ${free_mb}MB free VRAM (need ${min_mb}MB)"
+    return 1
+  fi
+  return 0
+}
+
+acquire_gpu_lock() {
+  # Acquire GPU lock. Uses flock on Linux, mkdir-based lock on macOS.
+  local lock_file="${LACP_RUNTIME_GPU_LOCK_FILE}"
+  mkdir -p "$(dirname "${lock_file}")"
+
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"${lock_file}"
+    if ! flock -n 9; then
+      log "gpu-lock: already held by another process"
+      return 1
+    fi
+  else
+    # macOS fallback: mkdir is atomic
+    local lock_dir="${lock_file}.d"
+    if ! mkdir "${lock_dir}" 2>/dev/null; then
+      # Check if stale (older than 1 hour)
+      if [[ -d "${lock_dir}" ]]; then
+        local lock_age
+        if [[ "$(uname)" == "Darwin" ]]; then
+          lock_age=$(( ($(date +%s) - $(stat -f %m "${lock_dir}")) ))
+        else
+          lock_age=$(( ($(date +%s) - $(stat -c %Y "${lock_dir}")) ))
+        fi
+        if [[ "${lock_age}" -gt 3600 ]]; then
+          rmdir "${lock_dir}" 2>/dev/null || true
+          mkdir "${lock_dir}" 2>/dev/null || { log "gpu-lock: already held"; return 1; }
+        else
+          log "gpu-lock: already held by another process"
+          return 1
+        fi
+      fi
+    fi
+  fi
+  return 0
+}
+
+release_gpu_lock() {
+  if command -v flock >/dev/null 2>&1; then
+    flock -u 9 2>/dev/null || true
+  else
+    local lock_dir="${LACP_RUNTIME_GPU_LOCK_FILE}.d"
+    rmdir "${lock_dir}" 2>/dev/null || true
+  fi
 }
