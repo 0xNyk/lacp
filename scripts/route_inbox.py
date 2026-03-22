@@ -23,6 +23,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from brain_utils import parse_frontmatter
+
 KNOWLEDGE_ROOT = os.environ.get("LACP_KNOWLEDGE_ROOT", "")
 GRAPH_ROOT = os.environ.get("LACP_KNOWLEDGE_GRAPH_ROOT", "")
 INBOX_DIR = os.path.join(KNOWLEDGE_ROOT, "inbox") if KNOWLEDGE_ROOT else ""
@@ -39,20 +41,6 @@ DOMAIN_MAP = {
     "agent": "meta",
     "ai": "research",
 }
-
-def parse_frontmatter(text):
-    """Pull YAML frontmatter into a dict."""
-    fm = {}
-    if not text.startswith("---"):
-        return fm
-    end = text.find("---", 3)
-    if end < 0:
-        return fm
-    for line in text[3:end].strip().splitlines():
-        if ":" in line:
-            key, val = line.split(":", 1)
-            fm[key.strip()] = val.strip().strip('"').strip("'")
-    return fm
 
 def extract_tags(fm):
     """Get tags as a list from frontmatter."""
@@ -96,6 +84,9 @@ def route_inbox():
     unroutable = 0
 
     for p in sorted(Path(INBOX_DIR).glob("*.md")):
+        if ".." in p.name:
+            continue
+
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except Exception:

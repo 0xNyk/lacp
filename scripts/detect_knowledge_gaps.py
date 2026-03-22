@@ -13,8 +13,10 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
+
+from brain_utils import utcnow
 
 KNOWLEDGE_ROOT = os.environ.get("LACP_KNOWLEDGE_ROOT", "")
 GRAPH_ROOT = os.environ.get("LACP_KNOWLEDGE_GRAPH_ROOT", "")
@@ -42,7 +44,7 @@ def detect_gaps(root):
     link_targets = set()
     inbound = {stem: 0 for stem in all_stems}
     gaps = []
-    now = datetime.utcnow()
+    now = utcnow()
 
     for path, p in files.items():
         try:
@@ -58,7 +60,7 @@ def detect_gaps(root):
                 inbound[target] += 1
 
         # check staleness
-        mtime = datetime.utcfromtimestamp(p.stat().st_mtime)
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
         age = (now - mtime).days
         if age > STALE_DAYS:
             gaps.append({
@@ -98,7 +100,7 @@ def main():
     out_path = os.path.join(out_dir, "gaps.json")
 
     report = {
-        "generated": datetime.utcnow().isoformat() + "Z",
+        "generated": utcnow().isoformat(),
         "root": root,
         "total_gaps": len(gaps),
         "gaps": sorted(gaps, key=lambda g: -g["score"])

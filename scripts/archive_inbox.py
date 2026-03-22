@@ -13,8 +13,10 @@ import json
 import os
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+from brain_utils import parse_frontmatter, utcnow
 
 KNOWLEDGE_ROOT = os.environ.get("LACP_KNOWLEDGE_ROOT", "")
 INBOX_DIR = os.path.join(KNOWLEDGE_ROOT, "inbox") if KNOWLEDGE_ROOT else ""
@@ -30,31 +32,20 @@ for i, arg in enumerate(sys.argv):
         except ValueError:
             pass
 
-def parse_frontmatter(text):
-    """Pull YAML frontmatter into a dict."""
-    fm = {}
-    if not text.startswith("---"):
-        return fm
-    end = text.find("---", 3)
-    if end < 0:
-        return fm
-    for line in text[3:end].strip().splitlines():
-        if ":" in line:
-            key, val = line.split(":", 1)
-            fm[key.strip()] = val.strip().strip('"').strip("'")
-    return fm
-
 def archive_inbox():
     """Move stale inbox notes to archive."""
     if not INBOX_DIR or not os.path.isdir(INBOX_DIR):
         print(json.dumps({"ok": True, "archived": 0, "kept": 0}))
         return
 
-    now = datetime.utcnow()
+    now = utcnow()
     archived = 0
     kept = 0
 
     for p in sorted(Path(INBOX_DIR).glob("*.md")):
+        if ".." in p.name:
+            continue
+
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -69,7 +60,7 @@ def archive_inbox():
             kept += 1
             continue
 
-        mtime = datetime.utcfromtimestamp(p.stat().st_mtime)
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
         age_days = (now - mtime).days
 
         if age_days < DAYS:

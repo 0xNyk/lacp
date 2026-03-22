@@ -7,7 +7,7 @@
 # This is the bridge between ephemeral agent sessions and the knowledge graph.
 # The inbox serves as a staging area; route_inbox.py handles the sorting later.
 
-set -uo pipefail
+set -euo pipefail
 
 KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-}"
 INBOX_DIR="${KNOWLEDGE_ROOT}/inbox"
@@ -95,4 +95,4 @@ if [[ -d "$SESSIONS_DIR" ]]; then
   done
 fi
 
-echo "Synced ${synced} session artifacts to inbox"
+echo '{"ok": true, "synced": '"${synced}"'}'

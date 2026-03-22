@@ -14,26 +14,14 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+from brain_utils import parse_frontmatter, utcnow
 
 KNOWLEDGE_ROOT = os.environ.get("LACP_KNOWLEDGE_ROOT", "")
 INBOX_DIR = os.path.join(KNOWLEDGE_ROOT, "inbox") if KNOWLEDGE_ROOT else ""
 MIN_AGE_HOURS = 24
-
-def parse_frontmatter(text):
-    """Pull YAML frontmatter into a dict. Handles simple key: value pairs."""
-    fm = {}
-    if not text.startswith("---"):
-        return fm
-    end = text.find("---", 3)
-    if end < 0:
-        return fm
-    for line in text[3:end].strip().splitlines():
-        if ":" in line:
-            key, val = line.split(":", 1)
-            fm[key.strip()] = val.strip().strip('"').strip("'")
-    return fm
 
 def scan_inbox(inbox_dir):
     """Find inbox notes that are old enough and not yet routed."""
@@ -41,7 +29,7 @@ def scan_inbox(inbox_dir):
         return []
 
     items = []
-    now = datetime.utcnow()
+    now = utcnow()
 
     for p in sorted(Path(inbox_dir).glob("*.md")):
         try:
@@ -57,7 +45,7 @@ def scan_inbox(inbox_dir):
             continue
 
         # check age
-        mtime = datetime.utcfromtimestamp(p.stat().st_mtime)
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
         age_hours = (now - mtime).total_seconds() / 3600
         if age_hours < MIN_AGE_HOURS:
             continue
@@ -83,7 +71,7 @@ def write_queue(items, out_path):
     lines = [
         "# Review Queue",
         "",
-        f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
+        f"Generated: {utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
         f"Items pending: {len(items)}",
         "",
     ]
