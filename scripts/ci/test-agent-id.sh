@@ -18,7 +18,7 @@ mkdir -p "${LACP_OBSIDIAN_VAULT}" "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_RO
 reg_json="$(${ROOT}/bin/lacp-agent-id register --json)"
 echo "${reg_json}" | jq -e '.ok == true' >/dev/null
 agent_id="$(echo "${reg_json}" | jq -r '.agent_id')"
-[[ "${agent_id}" =~ ^agent-[a-f0-9]{8}$ ]] || { echo "[agent-id-test] bad agent_id format: ${agent_id}" >&2; exit 1; }
+[[ "${agent_id}" =~ ^agent-[a-f0-9]{32}$ ]] || { echo "[agent-id-test] bad agent_id format: ${agent_id}" >&2; exit 1; }
 
 ## --- agent-id show (should return same ID) ---
 show_json="$(${ROOT}/bin/lacp-agent-id show --json)"
