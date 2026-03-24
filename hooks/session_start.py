@@ -179,6 +179,24 @@ def main() -> None:
             "Verify build/test commands before making changes."
         )
 
+    # Focus brief injection
+    focus_file = Path(os.getenv("LACP_FOCUS_FILE", Path.home() / ".lacp" / "focus.md"))
+    if focus_file.is_file():
+        try:
+            focus_content = focus_file.read_text().strip()
+            if focus_content:
+                # Check staleness (warn if >7 days old)
+                import time as _t
+                age_days = int((_t.time() - focus_file.stat().st_mtime) / 86400)
+                stale_note = ""
+                if age_days > 7:
+                    stale_note = (
+                        f" (STALE: {age_days} days old — run `lacp-focus edit` to refresh)"
+                    )
+                parts.append(f"Focus brief{stale_note}:\n{focus_content}")
+        except OSError:
+            pass
+
     # LACP context mode
     mode = os.getenv("LACP_CONTEXT_MODE", "").strip()
     if mode:
