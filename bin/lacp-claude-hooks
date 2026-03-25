@@ -10,8 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
-  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate] [--dry-run] [--json]
-  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -31,6 +31,7 @@ Profiles:
   session-start Install unified Python SessionStart hook with test cmd caching.
   pretool-guard Install Python PreToolUse guard (co-author, scp/root, rm -rf, etc.).
   write-validate Install PostToolUse(Write) hook for YAML frontmatter validation.
+  thinking-partner Install thinking-protocol nudge (UserPromptSubmit) + set context mode.
 EOF
 }
 
@@ -406,8 +407,8 @@ cmd_apply_profile() {
   done
 
   case "${profile}" in
-    minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate) ;;
-    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate" ;;
+    minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner) ;;
+    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner" ;;
   esac
 
   local result
@@ -1143,6 +1144,79 @@ if profile == "pretool-guard":
         "status": "changed",
         "action": "apply_pretool_guard_hooks",
         "command": f"python3 {dst}",
+    })
+
+if profile == "thinking-partner":
+    # Install thinking nudge hook for UserPromptSubmit.
+    import shutil as _shutil_tp
+
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    src = lacp_root / "hooks" / "thinking_nudge.py"
+    dst = hooks_dir / "thinking_nudge.py"
+
+    if src.exists():
+        actions.append({
+            "status": "changed",
+            "action": "install_thinking_nudge",
+            "from": str(src),
+            "to": str(dst),
+        })
+        if not dry_run:
+            _shutil_tp.copy2(src, dst)
+            dst.chmod(0o755)
+    elif not dst.exists():
+        actions.append({
+            "status": "error",
+            "action": "install_thinking_nudge",
+            "reason": "source not found and no existing install",
+        })
+
+    # Remove existing thinking_nudge hooks
+    ups_blocks = hooks_cfg.get("UserPromptSubmit", [])
+    if not isinstance(ups_blocks, list):
+        ups_blocks = []
+    kept_ups = []
+    removed_ups = 0
+    for block in ups_blocks:
+        if not isinstance(block, dict):
+            kept_ups.append(block)
+            continue
+        block_hooks = block.get("hooks", [])
+        if not isinstance(block_hooks, list):
+            kept_ups.append(block)
+            continue
+        has_nudge = any(
+            isinstance(h, dict) and "thinking_nudge" in str(h.get("command", ""))
+            for h in block_hooks
+        )
+        if has_nudge:
+            removed_ups += 1
+            continue
+        kept_ups.append(block)
+    hooks_cfg["UserPromptSubmit"] = kept_ups
+
+    if removed_ups:
+        actions.append({
+            "status": "changed",
+            "action": "prune_old_thinking_nudge",
+            "removed": removed_ups,
+        })
+
+    # Add the hook
+    append_command_hook("UserPromptSubmit", f"python3 {dst}")
+    actions.append({
+        "status": "changed",
+        "action": "apply_thinking_nudge_hook",
+        "command": f"python3 {dst}",
+    })
+
+    # Set LACP_CONTEXT_MODE env hint (informational only — user sets in .env)
+    actions.append({
+        "status": "info",
+        "action": "set_context_mode_hint",
+        "hint": "Set LACP_CONTEXT_MODE=thinking-partner in your .env for full thinking-partner experience",
     })
 
 if actions and not dry_run:
