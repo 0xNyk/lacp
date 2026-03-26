@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize]
+Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize] [--with-ollama]
 
 Initial setup helper:
 - creates .env from config/lacp.env.example when missing
@@ -15,6 +15,7 @@ Initial setup helper:
 - runs bootstrap checks
 - adopts local claude/codex/hermes wrappers when binaries are present (default-on)
 - repairs/applies Claude hook profile when local Claude config exists (default-on)
+- optionally installs Ollama + recommended models for quality gate
 - optionally runs a full verify cycle
 EOF
 }
