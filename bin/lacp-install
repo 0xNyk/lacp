@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--no-auto-hook-optimize] [--with-ollama]
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--no-auto-hook-optimize] [--with-ollama] [--with-mcp]
 
 Bootstraps LACP for first-time users.
 
@@ -24,6 +24,7 @@ Notes:
   - Obsidian vault bootstrap is enabled by default and creates/syncs core vault links used by brain tooling.
   - Set LACP_OBSIDIAN_VAULT to override the vault path (default: ~/obsidian/vault).
   - --with-ollama installs Ollama and pulls recommended models for the quality gate.
+  - --with-mcp installs recommended MCP servers (Context7, Tavily, Playwright).
 EOF
 }
 
@@ -38,6 +39,7 @@ OBSIDIAN_SETUP=1
 AUTO_ADOPT=1
 AUTO_HOOK_OPTIMIZE=1
 WITH_OLLAMA=0
+WITH_MCP=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -92,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-ollama)
       WITH_OLLAMA=1
+      shift
+      ;;
+    --with-mcp)
+      WITH_MCP=1
       shift
       ;;
     -h|--help)
@@ -532,6 +538,60 @@ if [[ "${WITH_OLLAMA}" -eq 1 ]]; then
       fi
     done
     log "Ollama setup complete"
+  fi
+fi
+
+# Optional MCP server setup
+if [[ "${WITH_MCP}" -eq 1 ]]; then
+  if ! command -v claude >/dev/null 2>&1; then
+    log "MCP setup requires Claude Code CLI. Install it first: https://docs.anthropic.com/en/docs/claude-code"
+  else
+    log "Setting up recommended MCP servers..."
+    log ""
+    log "  Recommended MCP servers:"
+    log "    context7 — live library docs, prevents hallucinated APIs"
+    log "    playwright — browser automation for UI verification"
+    log "    tavily-search — structured web search for research tasks"
+    log ""
+
+    # Context7 — prevents hallucinated API methods
+    if claude mcp list 2>/dev/null | grep -q "context7"; then
+      log "context7 already configured"
+    else
+      log "Adding context7 (live library docs)..."
+      claude mcp add context7 -- npx -y @upstash/context7-mcp 2>/dev/null && \
+        log "context7 added" || \
+        log "context7 setup failed — add manually: claude mcp add context7 -- npx -y @upstash/context7-mcp"
+    fi
+
+    # Playwright — browser automation
+    if claude mcp list 2>/dev/null | grep -q "playwright"; then
+      log "playwright already configured"
+    else
+      log "Adding playwright (browser automation)..."
+      claude mcp add playwright -- npx -y @playwright/mcp@latest 2>/dev/null && \
+        log "playwright added" || \
+        log "playwright setup failed — add manually: claude mcp add playwright -- npx -y @playwright/mcp@latest"
+    fi
+
+    # Tavily — structured web search (requires API key)
+    if claude mcp list 2>/dev/null | grep -q "tavily"; then
+      log "tavily already configured"
+    else
+      tavily_key="${TAVILY_API_KEY:-}"
+      if [[ -n "${tavily_key}" ]]; then
+        log "Adding tavily-search (structured web search)..."
+        claude mcp add tavily-search -e TAVILY_API_KEY="${tavily_key}" -- npx -y tavily-mcp 2>/dev/null && \
+          log "tavily-search added" || \
+          log "tavily-search setup failed — add manually"
+      else
+        log "Skipping tavily-search: TAVILY_API_KEY not set"
+        log "  Get a key at https://tavily.com then run:"
+        log "  claude mcp add tavily-search -e TAVILY_API_KEY=tvly-xxx -- npx -y tavily-mcp"
+      fi
+    fi
+
+    log "MCP setup complete"
   fi
 fi
 
