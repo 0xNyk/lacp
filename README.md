@@ -361,6 +361,19 @@ If you find this project useful, consider supporting the open-source work:
 
 **Solana:** `BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
 
+
+---
+
+<div align="center">
+
+**Need agent infrastructure, trading systems, or Solana applications built for your team?**
+
+[Builderz](https://builderz.dev) ships production AI systems — 32+ products across 15 countries.
+
+[Get in touch](https://builderz.dev) | [@nyk_builderz](https://x.com/nyk_builderz)
+
+</div>
+
 ## License
 
 [MIT](LICENSE) © 2026 [0xNyk](https://github.com/0xNyk)
