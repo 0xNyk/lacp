@@ -7,7 +7,7 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--no-auto-hook-optimize]
+Usage: lacp-install [--profile starter|existing] [--with-verify] [--hours N] [--force-scaffold] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--with-obsidian-setup] [--no-obsidian-setup] [--no-auto-adopt] [--no-auto-hook-optimize] [--with-ollama]
 
 Bootstraps LACP for first-time users.
 
@@ -23,6 +23,7 @@ Notes:
   - On macOS, dependency auto-detection is enabled by default and can install missing Homebrew formulas/casks plus npm global packages (including qmd).
   - Obsidian vault bootstrap is enabled by default and creates/syncs core vault links used by brain tooling.
   - Set LACP_OBSIDIAN_VAULT to override the vault path (default: ~/obsidian/vault).
+  - --with-ollama installs Ollama and pulls recommended models for the quality gate.
 EOF
 }
 
@@ -36,6 +37,7 @@ AUTO_DEPS_FORCE=0
 OBSIDIAN_SETUP=1
 AUTO_ADOPT=1
 AUTO_HOOK_OPTIMIZE=1
+WITH_OLLAMA=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,6 +88,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-hook-optimize)
       AUTO_HOOK_OPTIMIZE=0
+      shift
+      ;;
+    --with-ollama)
+      WITH_OLLAMA=1
       shift
       ;;
     -h|--help)
@@ -484,6 +490,49 @@ if args.json:
 else:
     print(json.dumps(payload))
 '
+fi
+
+# Optional Ollama setup
+if [[ "${WITH_OLLAMA}" -eq 1 ]]; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      log "Installing Ollama via Homebrew..."
+      brew install ollama
+    else
+      log "Ollama not found and Homebrew unavailable. Install manually: https://ollama.com"
+    fi
+  else
+    log "Ollama already installed: $(command -v ollama)"
+  fi
+
+  if command -v ollama >/dev/null 2>&1; then
+    # Start Ollama if not running
+    if ! curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+      log "Starting Ollama..."
+      ollama serve &>/dev/null &
+      sleep 3
+    fi
+
+    # Pull recommended models
+    log "Pulling recommended models (this may take a few minutes on first run)..."
+    log ""
+    log "  Quality gate (rationalization detection):"
+    log "    llama3.1:8b — fast, good at structured JSON eval (~4.7GB)"
+    log ""
+    log "  Embeddings (brain-expand, knowledge search):"
+    log "    mxbai-embed-large — high-quality embeddings (~670MB)"
+    log ""
+
+    for model in "llama3.1:8b" "mxbai-embed-large"; do
+      if ollama list 2>/dev/null | grep -q "${model}"; then
+        log "Model ${model} already pulled"
+      else
+        log "Pulling ${model}..."
+        ollama pull "${model}"
+      fi
+    done
+    log "Ollama setup complete"
+  fi
 fi
 
 ONBOARD_ARGS=()
