@@ -34,7 +34,6 @@ DEBUG = os.getenv("LACP_QUALITY_GATE_DEBUG", "0") == "1"
 MAX_BLOCKS = int(os.getenv("LACP_QUALITY_GATE_MAX_BLOCKS", "3"))
 
 BLIND_SPOT_ENABLED = os.getenv("LACP_BLIND_SPOT_ENABLED", "0") == "1"
-BLIND_SPOT_TIMEOUT = int(os.getenv("LACP_BLIND_SPOT_TIMEOUT", "15"))
 
 OLLAMA_BASE = OLLAMA_URL.rsplit("/api/chat", 1)[0] if "/api/chat" in OLLAMA_URL else OLLAMA_URL
 _LACP_STATE_DIR = Path.home() / ".lacp" / "hooks" / "state"
@@ -511,29 +510,21 @@ def check_ollama_evaluation(ctx: Context) -> Optional[CheckResult]:
     return CheckResult("block", reason=reason)
 
 
-# -- Blind spot analysis --
+# -- Blind spot analysis (prompt-based, no external LLM) --
 
-BLIND_SPOT_SYSTEM = (
-    "You are a meta-cognitive analyst. Given a summary of work done in an AI session, "
-    "identify 1-2 assumptions that were NOT challenged and 1 question the user is likely avoiding. "
-    "Be specific and concrete, not generic. Respond with ONLY a JSON object."
+BLIND_SPOT_PROMPT = (
+    "Before this session ends, reflect on what was NOT examined. "
+    "Identify 1-2 assumptions in this session's work that were accepted without challenge. "
+    "State one question the user is most likely avoiding. "
+    "Be specific to the work done, not generic. Keep each point under 30 words."
 )
-
-BLIND_SPOT_USER_TEMPLATE = """This AI session just completed. Here is the final message summarizing work done:
-
-{text}
-
-Respond with JSON only:
-{{"blind_spots": ["specific assumption or angle not examined"], "avoided_question": "the one question they are probably avoiding"}}
-
-Rules:
-- Be specific to THIS work, not generic advice.
-- If the work is trivial (greeting, short answer), respond: {{"blind_spots": [], "avoided_question": ""}}
-- Maximum 2 blind spots. Each under 30 words."""
 
 
 def check_blind_spots(ctx: Context) -> Optional[str]:
-    """Surface blind spots via Ollama. Returns feedback string or None."""
+    """Inject a blind-spot reflection prompt as systemMessage.
+
+    This is prompt-based — Claude itself reflects, no external LLM needed.
+    """
     if not BLIND_SPOT_ENABLED:
         return None
 
@@ -541,74 +532,8 @@ def check_blind_spots(ctx: Context) -> Optional[str]:
         _debug("BLIND_SPOT: message too short, skipping")
         return None
 
-    # Health check
-    health_url = f"{OLLAMA_BASE}/api/tags"
-    try:
-        req = urllib.request.Request(health_url)
-        urllib.request.urlopen(req, timeout=3)
-    except Exception:
-        _debug("BLIND_SPOT: ollama unreachable, skipping")
-        return None
-
-    text = ctx.last_message[-2000:] if len(ctx.last_message) > 2000 else ctx.last_message
-    user_msg = BLIND_SPOT_USER_TEMPLATE.format(text=text)
-
-    payload = json.dumps({
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": BLIND_SPOT_SYSTEM},
-            {"role": "user", "content": user_msg},
-        ],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.3, "num_predict": 256},
-    }).encode("utf-8")
-
-    start = time.time()
-    try:
-        req = urllib.request.Request(
-            OLLAMA_URL,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=BLIND_SPOT_TIMEOUT) as resp:
-            raw = resp.read().decode("utf-8")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        _debug(f"BLIND_SPOT: timeout/error (elapsed={time.time() - start:.1f}s)")
-        return None
-
-    _debug(f"BLIND_SPOT: response in {time.time() - start:.1f}s")
-
-    try:
-        response = json.loads(raw)
-        model_text = response.get("message", {}).get("content", "")
-    except (json.JSONDecodeError, AttributeError):
-        return None
-
-    if not model_text:
-        return None
-
-    clean = re.sub(r"^```json\s*|^```\s*|```$", "", model_text.strip())
-    try:
-        parsed = json.loads(clean)
-    except json.JSONDecodeError:
-        return None
-
-    spots = parsed.get("blind_spots", [])
-    avoided = parsed.get("avoided_question", "")
-
-    if not spots and not avoided:
-        return None
-
-    parts = []
-    if spots:
-        parts.append("Blind spots: " + "; ".join(s for s in spots if s))
-    if avoided:
-        parts.append(f"Question you may be avoiding: {avoided}")
-
-    feedback = "What you might not be seeing — " + " | ".join(parts)
-    _debug(f"BLIND_SPOT: {feedback}")
-    return feedback
+    _debug("BLIND_SPOT: injecting reflection prompt")
+    return BLIND_SPOT_PROMPT
 
 
 # -- Ralph cooperation --
