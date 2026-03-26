@@ -598,7 +598,20 @@ fi
 if curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
   add_check "health:ollama" "PASS" "http://127.0.0.1:11434/api/version"
 else
-  add_check "health:ollama" "WARN" "unreachable"
+  add_check "health:ollama" "WARN" "unreachable (optional — run: lacp-install --with-ollama)"
+fi
+
+# Recommended MCP servers
+if command -v claude >/dev/null 2>&1; then
+  mcp_list="$(claude mcp list 2>/dev/null || true)"
+  for mcp_name in context7 playwright; do
+    if echo "${mcp_list}" | grep -q "${mcp_name}"; then
+      add_check "mcp:${mcp_name}" "PASS" "configured"
+    else
+      add_check "mcp:${mcp_name}" "WARN" "not configured (run: lacp-install --with-mcp)"
+      add_hint "lacp-install --with-mcp"
+    fi
+  done
 fi
 
 latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
