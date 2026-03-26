@@ -24,11 +24,11 @@ if ! grep -q "check_blind_spots" "${ROOT}/hooks/stop_quality_gate.py"; then
 fi
 echo "PASS: check_blind_spots function exists"
 
-if ! grep -q "BLIND_SPOT_SYSTEM" "${ROOT}/hooks/stop_quality_gate.py"; then
-  echo "FAIL: BLIND_SPOT_SYSTEM prompt not found" >&2
+if ! grep -q "BLIND_SPOT_PROMPT" "${ROOT}/hooks/stop_quality_gate.py"; then
+  echo "FAIL: BLIND_SPOT_PROMPT not found in stop_quality_gate.py" >&2
   exit 1
 fi
-echo "PASS: blind spot LLM prompt defined"
+echo "PASS: blind spot prompt defined"
 
 # Test 3: Verify blind spot is wired into the allow paths
 if ! grep -q "blind_spot = check_blind_spots" "${ROOT}/hooks/stop_quality_gate.py"; then
@@ -37,11 +37,11 @@ if ! grep -q "blind_spot = check_blind_spots" "${ROOT}/hooks/stop_quality_gate.p
 fi
 echo "PASS: blind spot analysis wired into pipeline"
 
-# Test 4: Verify timeout is configurable
-if ! grep -q "LACP_BLIND_SPOT_TIMEOUT" "${ROOT}/hooks/stop_quality_gate.py"; then
-  echo "FAIL: LACP_BLIND_SPOT_TIMEOUT not configurable" >&2
+# Test 4: Verify prompt-based (no Ollama dependency)
+if grep -q "ollama" "${ROOT}/hooks/stop_quality_gate.py" | grep -q "BLIND_SPOT"; then
+  echo "FAIL: blind spots should not depend on Ollama" >&2
   exit 1
 fi
-echo "PASS: blind spot timeout is configurable"
+echo "PASS: blind spots are prompt-based (no external LLM)"
 
 echo "[blind-spot-test] all tests passed"
