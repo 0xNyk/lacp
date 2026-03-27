@@ -18,6 +18,19 @@ LACP is a harness-first execution framework with policy-gated operations, verifi
 
 > **Stable Release** — LACP is stable for daily local-first operations. Defaults, command contracts, and core workflows are backward-compatible. If something regresses, [open an issue](https://github.com/0xNyk/lacp/issues).
 
+## Contents
+
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Install Options](#install-options)
+- [Who It's For](#who-its-for)
+- [Testing](#testing)
+- [Security](#security)
+- [Contributing](#contributing)
+
 ### What LACP is (by harness definition)
 
 LACP is an **agent harness** with **control-plane governance**:
@@ -60,6 +73,8 @@ lacp doctor --json | jq '.ok,.summary'
 
 After bootstrap: `.env` is created, dependencies installed, directories scaffolded, Obsidian vault wired, and verification artifacts produced.
 
+For the full setup and daily operator flow, start with the [Runbook](docs/runbook.md) and [Local Dev Loop](docs/local-dev-loop.md).
+
 ### First Gated Command
 
 ```bash
@@ -70,24 +85,27 @@ lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
 lacp adopt-local --json | jq
 ```
 
-For the full walkthrough (brain setup, multi-agent sessions, release discipline), see the **[Starter Guide](docs/starter-guide.md)**.
-
 ---
 
 ## Documentation
 
 | Guide | What You'll Learn |
 |-------|-------------------|
-| [Starter Guide](docs/starter-guide.md) | Install, bootstrap, first gated command, brain setup — 10 minutes |
-| [Daily Workflow](docs/daily-workflow.md) | Health checks, operating modes, parallel sessions, pre-merge validation |
-| [Memory Architecture](docs/memory-architecture.md) | 5-layer stack, brain-ingest, brain-expand, mycelium consolidation |
-| [Hook Pipeline](docs/hook-pipeline.md) | SessionStart, PreToolUse guard, Stop quality gate, hook profiles |
-| [Orchestration](docs/orchestration.md) | dmux sessions, worktrees, swarm workflows, batch manifests |
-| [Security Model](docs/security-model.md) | Risk tiers, budget gates, context contracts, remote approval TTL |
-| [Harness Contracts](docs/harness-contracts.md) | Task schemas, sandbox profiles, verification policies, e2e evidence |
-| [Remote Setup](docs/remote-setup.md) | Daytona and E2B provider onboarding |
-| [Obsidian Management](docs/obsidian-management.md) | Config-as-code, manifest, optimization profiles, vault health |
-| [Troubleshooting](docs/troubleshooting.md) | Common errors, doctor diagnostics, fix-hints |
+| [Runbook](docs/runbook.md) | Daily operator workflow, command map, troubleshooting entry points |
+| [Local Dev Loop](docs/local-dev-loop.md) | Fast build/test/verify loop for contributors |
+| [Framework Scope](docs/framework-scope.md) | What LACP is, what it is not, and design boundaries |
+| [Implementation Path](docs/implementation-path-2026.md) | Step-by-step rollout plan for full harness adoption |
+| [Memory Quality Workflow](docs/memory-quality-workflow.md) | How memory ingestion, expansion, and validation are run safely |
+| [Incident Response](docs/incident-response.md) | Triage and recovery flow when policy gates fail |
+| [Release Checklist](docs/release-checklist.md) | Pre-release, release, and post-release controls |
+| [Troubleshooting](docs/troubleshooting.md) | Common errors, doctor diagnostics, fix hints |
+
+### Project health files
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution and PR expectations
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure process
+- [CHANGELOG.md](CHANGELOG.md) — release history
+- [LICENSE](LICENSE) — MIT
 
 ---
 
