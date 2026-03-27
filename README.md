@@ -6,8 +6,12 @@
 
 LACP is a harness-first execution framework with policy-gated operations, verification/evidence loops, 5-layer memory, and auditable agent workflows — all local-first, zero external dependencies.
 
+[![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/network/members)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stable](https://img.shields.io/badge/Status-stable%20v0.3.x-brightgreen)](https://github.com/0xNyk/lacp/releases)
+[![Last commit](https://img.shields.io/github/last-commit/0xNyk/lacp)](https://github.com/0xNyk/lacp/commits/main)
+[![Open issues](https://img.shields.io/github/issues/0xNyk/lacp)](https://github.com/0xNyk/lacp/issues)
 [![Shell](https://img.shields.io/badge/Shell-bash%20%2B%20python3-blue)](https://github.com/0xNyk/lacp)
 
 ![LACP Banner](docs/assets/readme-banner.png)
@@ -21,6 +25,8 @@ LACP is a harness-first execution framework with policy-gated operations, verifi
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Why teams adopt LACP](#why-teams-adopt-lacp)
+- [Use-case recipes](#use-case-recipes)
 - [Documentation](#documentation)
 - [Architecture](#architecture)
 - [Features](#features)
@@ -83,6 +89,49 @@ lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
 
 # Make claude/codex/hermes default to LACP routing (reversible)
 lacp adopt-local --json | jq
+```
+
+## Why teams adopt LACP
+
+- Predictable execution: every run passes through deterministic policy and budget gates.
+- Auditability by default: artifacts, provenance, and verification logs are first-class outputs.
+- Local-first security posture: remote execution is opt-in and secrets stay environment-scoped.
+- Multi-agent without chaos: worktree/session isolation keeps parallel runs reproducible.
+
+## Use-case recipes
+
+### 1) Harden local agent usage in under 5 minutes
+
+```bash
+lacp bootstrap-system --profile starter --with-verify
+lacp adopt-local --json | jq
+lacp posture --strict
+```
+
+### 2) Run one risky command with explicit policy controls
+
+```bash
+lacp run \
+  --task "dependency update with tests" \
+  --repo-trust trusted \
+  --context-profile default \
+  -- pnpm up && pnpm test
+```
+
+### 3) Generate PR-ready evidence before opening a PR
+
+```bash
+lacp e2e smoke --workdir . --init-template --command "npx playwright test --grep @smoke"
+lacp api-e2e smoke --workdir . --init-template --command "npx schemathesis run --checks all"
+lacp pr-preflight --changed-files ./changed-files.txt --checks-json ./checks.json
+```
+
+### 4) Run parallel agents safely on isolated worktrees
+
+```bash
+lacp worktree create --repo-root . --name feature-a --base HEAD
+lacp up --session feature-a --instances 3 --command "claude"
+lacp swarm launch --manifest ./swarm.json
 ```
 
 ---
