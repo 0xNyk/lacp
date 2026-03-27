@@ -2,9 +2,9 @@
 
 # LACP
 
-**Local Agent Control Plane for Claude, Codex & Hermes.**
+**Control-plane-grade agent harness for Claude, Codex & Hermes.**
 
-Policy-gated execution, 5-layer memory, reproducible onboarding, and auditable agent operations — all local-first, zero external dependencies.
+LACP is a harness-first execution framework with policy-gated operations, verification/evidence loops, 5-layer memory, and auditable agent workflows — all local-first, zero external dependencies.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stable](https://img.shields.io/badge/Status-stable%20v0.3.x-brightgreen)](https://github.com/0xNyk/lacp/releases)
@@ -17,6 +17,14 @@ Policy-gated execution, 5-layer memory, reproducible onboarding, and auditable a
 ---
 
 > **Stable Release** — LACP is stable for daily local-first operations. Defaults, command contracts, and core workflows are backward-compatible. If something regresses, [open an issue](https://github.com/0xNyk/lacp/issues).
+
+### What LACP is (by harness definition)
+
+LACP is an **agent harness** with **control-plane governance**:
+- **Harness layer:** tasks, verification contracts, evidence manifests, replayable run loops
+- **Control-plane layer:** risk tiers, budget gates, context/session contracts, approvals, provenance
+
+This keeps the core value clear: not just generating output, but producing **auditable, policy-compliant outcomes**.
 
 <table>
 <tr><td><b>Policy gates</b></td><td>Risk tiers (safe/review/critical), budget ceilings, context contracts, and session fingerprints — every agent invocation is gated and auditable.</td></tr>
