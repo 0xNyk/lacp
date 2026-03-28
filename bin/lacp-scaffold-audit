@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-scaffold-audit [--days N] [--json] [--threshold N]
+
+Analyzes hook telemetry to identify pipeline stages that are no longer
+load-bearing. Flags stages that activate below threshold as potentially
+removable scaffolding.
+
+Options:
+  --days N        Analysis window in days (default: 30)
+  --threshold N   Activation rate % below which to flag (default: 1)
+  --json          Output as JSON
+EOF
+}
+
+AS_JSON=0
+DAYS=30
+THRESHOLD=1
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)      shift; DAYS="$1"; shift ;;
+    --threshold) shift; THRESHOLD="$1"; shift ;;
+    --json)      AS_JSON=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
+    *)           die "Unknown argument: $1" ;;
+  esac
+done
+
+TELEMETRY_FILE="${HOME}/.local/share/claude-hooks/telemetry.jsonl"
+
+if [[ ! -f "$TELEMETRY_FILE" ]]; then
+  if [[ "$AS_JSON" -eq 1 ]]; then
+    echo '{"error":"no_telemetry_file","stages":[]}'
+  else
+    log "No telemetry file found at ${TELEMETRY_FILE}"
+  fi
+  exit 1
+fi
+
+# Use Python for JSONL analysis — stdlib only
+python3 - "$TELEMETRY_FILE" "$DAYS" "$THRESHOLD" "$AS_JSON" <<'PYTHON'
+import json
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+telemetry_file = sys.argv[1]
+days = int(sys.argv[2])
+threshold_pct = float(sys.argv[3])
+as_json = sys.argv[4] == "1"
+
+cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+# Counters
+total_stop_events = 0
+stage_activations = Counter()  # stage_name -> count of times it triggered a decision
+stage_decisions = defaultdict(Counter)  # stage_name -> {allow: N, block: N, skip: N}
+
+# Read telemetry
+for line_path in [telemetry_file] + [f"{telemetry_file}.{i}" for i in range(1, 4)]:
+    p = Path(line_path)
+    if not p.exists():
+        continue
+    try:
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            # Filter by date
+            ts_str = entry.get("ts", "")
+            try:
+                ts = datetime.fromisoformat(ts_str)
+                if ts < cutoff:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+            hook = entry.get("hook", "")
+            if hook != "stop":
+                continue
+
+            total_stop_events += 1
+            decision = entry.get("decision", "")
+            reason = entry.get("reason", "")
+            details = entry.get("details", {})
+            source = details.get("source", "")
+            eval_type = details.get("eval_type", "")
+
+            # Classify which pipeline stage made this decision
+            if "heuristic fast path" in reason:
+                stage_activations["heuristic_prefilter"] += 1
+                stage_decisions["heuristic_prefilter"][decision] += 1
+            elif source == "test_verification":
+                stage_activations["test_verification"] += 1
+                stage_decisions["test_verification"][decision] += 1
+            elif "scoring" in reason or eval_type == "criteria_scoring":
+                stage_activations["ollama_scoring"] += 1
+                stage_decisions["ollama_scoring"][decision] += 1
+            elif "ollama" in reason:
+                stage_activations["ollama_evaluation"] += 1
+                stage_decisions["ollama_evaluation"][decision] += 1
+            elif "circuit_breaker" in reason.lower() or "circuit" in reason.lower():
+                stage_activations["circuit_breaker"] += 1
+                stage_decisions["circuit_breaker"][decision] += 1
+
+    except OSError:
+        continue
+
+# Compute rates
+all_stages = [
+    "heuristic_prefilter",
+    "test_verification",
+    "ollama_scoring",
+    "ollama_evaluation",
+    "circuit_breaker",
+]
+
+results = []
+for stage in all_stages:
+    count = stage_activations.get(stage, 0)
+    rate = (count / total_stop_events * 100) if total_stop_events > 0 else 0
+    blocks = stage_decisions.get(stage, {}).get("block", 0)
+    block_rate = (blocks / total_stop_events * 100) if total_stop_events > 0 else 0
+    flagged = rate > 0 and block_rate < threshold_pct
+    # Stages that never fired at all are also flagged
+    if count == 0 and total_stop_events > 0:
+        flagged = True
+
+    results.append({
+        "stage": stage,
+        "activations": count,
+        "activation_rate_pct": round(rate, 2),
+        "blocks": blocks,
+        "block_rate_pct": round(block_rate, 2),
+        "flagged": flagged,
+    })
+
+if as_json:
+    print(json.dumps({
+        "window_days": days,
+        "total_stop_events": total_stop_events,
+        "threshold_pct": threshold_pct,
+        "stages": results,
+    }, indent=2))
+else:
+    print(f"Scaffold Audit — {days}d window, {total_stop_events} stop events")
+    print(f"Flagging stages that block < {threshold_pct}% of stops")
+    print()
+    for r in results:
+        flag = " ← POTENTIALLY REMOVABLE" if r["flagged"] else ""
+        print(f"  {r['stage']:25s}  "
+              f"activations={r['activations']:4d} ({r['activation_rate_pct']:5.1f}%)  "
+              f"blocks={r['blocks']:4d} ({r['block_rate_pct']:5.1f}%)"
+              f"{flag}")
+    print()
+
+    flagged = [r for r in results if r["flagged"]]
+    if flagged:
+        print(f"  {len(flagged)} stage(s) flagged as potentially removable scaffolding.")
+        print("  Review before removing — low activation may still be load-bearing for edge cases.")
+    else:
+        print("  All stages are actively contributing. No scaffolding to remove.")
+PYTHON

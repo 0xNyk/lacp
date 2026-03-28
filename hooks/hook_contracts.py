@@ -74,6 +74,52 @@ def read_contract(name: str, session_id: str | None = None) -> dict | None:
         return None
 
 
+@dataclass
+class SprintContract:
+    acceptance_criteria: list[str]
+    expected_files: list[str]
+    expected_tests: list[str]
+    agreed_at: str = ""
+
+
+@dataclass
+class EvalCheckpoint:
+    write_count: int = 0
+    last_check_at: str = ""
+    last_result: str = ""  # "pass", "fail", or ""
+    fail_count: int = 0
+
+
+@dataclass
+class HandoffArtifact:
+    task_summary: str = ""
+    files_modified: list[str] = None
+    open_issues: list[str] = None
+    next_steps: list[str] = None
+    test_status: str = "unknown"  # "pass", "fail", "unknown"
+    git_branch: str = ""
+    git_diff_summary: str = ""
+    created_at: str = ""
+
+    def __post_init__(self):
+        if self.files_modified is None:
+            self.files_modified = []
+        if self.open_issues is None:
+            self.open_issues = []
+        if self.next_steps is None:
+            self.next_steps = []
+
+
+@dataclass
+class TaskPlan:
+    subtasks: list[dict] = None  # [{name, files, depends_on, status, scope}]
+    created_at: str = ""
+
+    def __post_init__(self):
+        if self.subtasks is None:
+            self.subtasks = []
+
+
 def cleanup_contracts(session_id: str | None = None) -> int:
     """Remove all contracts for a session. Returns count of files removed."""
     sid = session_id or os.getenv("CLAUDE_SESSION_ID", "default")
@@ -89,3 +135,57 @@ def cleanup_contracts(session_id: str | None = None) -> int:
     except OSError:
         pass
     return count
+
+
+def cleanup_stale_contracts(max_age_hours: int = 48) -> int:
+    """Remove contract directories older than max_age_hours. Returns count removed."""
+    import time as _time
+    contracts_root = Path.home() / ".lacp" / "hooks" / "contracts"
+    if not contracts_root.is_dir():
+        return 0
+    cutoff = _time.time() - (max_age_hours * 3600)
+    removed = 0
+    try:
+        for d in contracts_root.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                mtime = max(f.stat().st_mtime for f in d.iterdir()) if any(d.iterdir()) else d.stat().st_mtime
+                if mtime < cutoff:
+                    for f in d.iterdir():
+                        f.unlink()
+                    d.rmdir()
+                    removed += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return removed
+
+
+def cleanup_stale_state(max_age_hours: int = 48) -> int:
+    """Remove session state directories older than max_age_hours. Returns count removed."""
+    import time as _time
+    state_root = Path.home() / ".lacp" / "hooks" / "state"
+    if not state_root.is_dir():
+        return 0
+    cutoff = _time.time() - (max_age_hours * 3600)
+    removed = 0
+    try:
+        for d in state_root.iterdir():
+            if not d.is_dir():
+                continue
+            if d.name == "quality-gate.log":
+                continue  # skip the debug log file
+            try:
+                mtime = max(f.stat().st_mtime for f in d.iterdir()) if any(d.iterdir()) else d.stat().st_mtime
+                if mtime < cutoff:
+                    for f in d.iterdir():
+                        f.unlink()
+                    d.rmdir()
+                    removed += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return removed

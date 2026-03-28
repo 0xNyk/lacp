@@ -10,8 +10,8 @@ usage() {
 Usage:
   lacp-claude-hooks audit [--claude-dir <path>] [--strict] [--json]
   lacp-claude-hooks repair [--claude-dir <path>] [--dry-run] [--json]
-  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner] [--dry-run] [--json]
-  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner] [--dry-run] [--json]
+  lacp-claude-hooks apply-profile [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner|hardened-session] [--dry-run] [--json]
+  lacp-claude-hooks optimize [--claude-dir <path>] [--profile minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner|hardened-session] [--dry-run] [--json]
 
 Audit and repair local Claude hook/plugin state.
 
@@ -32,6 +32,7 @@ Profiles:
   pretool-guard Install Python PreToolUse guard (co-author, scp/root, rm -rf, etc.).
   write-validate Install PostToolUse(Write) hook for YAML frontmatter validation.
   thinking-partner Install thinking-protocol nudge (UserPromptSubmit) + set context mode.
+  hardened-session Composite: quality-gate-v2 + session-start + pretool-guard + write-validate.
 EOF
 }
 
@@ -407,9 +408,22 @@ cmd_apply_profile() {
   done
 
   case "${profile}" in
-    minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner) ;;
-    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner" ;;
+    minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner|hardened-session) ;;
+    *) die "--profile must be minimal-stop|balanced|hardened-exec|quality-gate|quality-gate-v2|orient|session-start|pretool-guard|write-validate|thinking-partner|hardened-session" ;;
   esac
+
+  # Composite profile: hardened-session = quality-gate-v2 + session-start + pretool-guard + write-validate
+  if [[ "${profile}" == "hardened-session" ]]; then
+    local composite_args=()
+    [[ -n "${claude_dir_arg:-}" ]] && composite_args+=(--claude-dir "${claude_dir_arg}")
+    [[ "${dry_run}" -eq 1 ]] && composite_args+=(--dry-run)
+    [[ "${json}" -eq 1 ]] && composite_args+=(--json)
+    for sub_profile in quality-gate-v2 session-start pretool-guard write-validate; do
+      log "Applying sub-profile: ${sub_profile}"
+      cmd_apply_profile --profile "${sub_profile}" "${composite_args[@]}" || true
+    done
+    return 0
+  fi
 
   local result
   result="$(python3 - "${claude_dir}" "${dry_run}" "${profile}" "${ROOT}" <<'PY'
