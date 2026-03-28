@@ -83,9 +83,35 @@ def write_epoch(epoch: Epoch) -> None:
         f.write(json.dumps(asdict(epoch), default=str) + "\n")
 
 
-def read_episodes(days: int = 30, min_significance: float = 0.0) -> list[dict]:
-    """Read episodes within time window, filtered by significance."""
+def _decay_significance(raw_significance: float, age_days: float) -> float:
+    """Apply time-based decay to significance (FSRS-inspired).
+
+    Rathbone: memories cluster around identity transitions (high significance).
+    Routine memories decay faster. Highly significant memories decay slowly.
+    """
+    if raw_significance >= 0.8:
+        # Identity-defining moments decay very slowly (half-life ~90 days)
+        decay_rate = 0.0077
+    elif raw_significance >= 0.6:
+        # Important events decay moderately (half-life ~30 days)
+        decay_rate = 0.023
+    else:
+        # Routine events decay quickly (half-life ~7 days)
+        decay_rate = 0.099
+
+    decayed = raw_significance * (0.5 ** (age_days * decay_rate))
+    return max(0.01, decayed)  # never fully zero
+
+
+def read_episodes(days: int = 30, min_significance: float = 0.0,
+                  apply_decay: bool = True) -> list[dict]:
+    """Read episodes within time window, filtered by significance.
+
+    When apply_decay=True, significance scores are adjusted for age
+    (Rathbone: identity-defining moments persist, routine fades).
+    """
     cutoff = time.time() - (days * 86400)
+    now = time.time()
     episodes = []
     ep_file = _episodes_file()
     if not ep_file.is_file():
@@ -105,6 +131,13 @@ def read_episodes(days: int = 30, min_significance: float = 0.0) -> list[dict]:
                 continue
         except (ValueError, TypeError):
             continue
+
+        if apply_decay:
+            age_days = (now - ts) / 86400
+            raw_sig = ep.get("significance", 0.3)
+            ep["significance"] = round(_decay_significance(raw_sig, age_days), 3)
+            ep["raw_significance"] = raw_sig
+
         if ep.get("significance", 0) >= min_significance:
             episodes.append(ep)
     return episodes
@@ -197,6 +230,24 @@ def goal_relevance_score(memory_text: str, working_self: dict) -> float:
     memory_words = set(w.lower() for w in memory_text.split() if len(w) > 3)
     overlap = len(goal_words & memory_words)
     return min(1.0, overlap / max(len(goal_words) * 0.3, 1))
+
+
+def goal_filtered_query(query: str) -> str:
+    """Prepend goal context to a search query for goal-relevant retrieval.
+
+    Conway's working self: retrieval is gated by current goals.
+    Instead of modifying the MCP server, we modify the query itself
+    to bias results toward goal-relevant content.
+    """
+    ws = read_working_self()
+    problem = ws.get("current_problem", "").strip()
+    # Strip template placeholders
+    if "<!-- Replace" in problem or not problem or len(problem) < 10:
+        return query  # No goal context available
+
+    # Extract key terms from current problem (first sentence)
+    first_sentence = problem.split("\n")[0].strip()[:100]
+    return f"{query} (context: {first_sentence})"
 
 
 # -- Principle 3: Emotional/Significance Weighting --
@@ -374,6 +425,65 @@ def build_session_context(agent_id: str = "", project: str = "") -> str:
             parts.append("Note: Recent work has been high-significance. Extra care warranted.")
 
     return "\n".join(parts) if parts else ""
+
+
+# -- Principle 5: Self-Model Auto-Update --
+
+def update_self_model_from_session(
+    session_summary: str,
+    files_changed: int,
+    had_test_failures: bool,
+    was_blocked: bool,
+    significance: float,
+) -> None:
+    """Update self-model from session outcomes (co-emergent identity loop).
+
+    Klein & Nichols: identity and memory bootstrap each other.
+    After each session, infer patterns and update the self-model.
+    """
+    sm = read_self_model()
+    if sm is None:
+        sm = SelfModel(agent_id="auto")
+
+    lower = session_summary.lower() if session_summary else ""
+
+    # Infer success/failure patterns from session signals
+    if had_test_failures and significance > 0.5:
+        pattern = "test failures during high-significance work"
+        if pattern not in sm.failure_patterns:
+            sm.failure_patterns.append(pattern)
+            # Keep list bounded
+            sm.failure_patterns = sm.failure_patterns[-10:]
+
+    if was_blocked and significance > 0.5:
+        pattern = "blocked during important work"
+        if pattern not in sm.failure_patterns:
+            sm.failure_patterns.append(pattern)
+            sm.failure_patterns = sm.failure_patterns[-10:]
+
+    if files_changed > 15 and not had_test_failures:
+        pattern = "large successful changes (15+ files, tests pass)"
+        if pattern not in sm.success_patterns:
+            sm.success_patterns.append(pattern)
+            sm.success_patterns = sm.success_patterns[-10:]
+
+    if files_changed > 0 and not had_test_failures and significance >= 0.6:
+        pattern = "productive high-significance session"
+        if pattern not in sm.success_patterns:
+            sm.success_patterns.append(pattern)
+            sm.success_patterns = sm.success_patterns[-10:]
+
+    # Infer approach preferences from content
+    if "test" in lower and "first" in lower:
+        pref = "test-first"
+        if pref not in sm.preferred_approaches:
+            sm.preferred_approaches.append(pref)
+    if "incremental" in lower or "step by step" in lower:
+        pref = "incremental implementation"
+        if pref not in sm.preferred_approaches:
+            sm.preferred_approaches.append(pref)
+
+    write_self_model(sm)
 
 
 # -- CLI entry point for testing --

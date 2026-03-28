@@ -24,6 +24,7 @@ Core:
   watch         Real-time session monitoring dashboard
   handoff       View/manage session handoff artifacts
   scaffold-audit Identify pipeline stages no longer load-bearing
+  research      Autoresearch — autonomous self-improvement experiments
   sms           Self-Memory System — psychology-informed agent memory
   tools         Machine-readable catalog of all LACP commands
   console       Interactive LACP shell with slash commands
@@ -128,6 +129,9 @@ case "${cmd}" in
     ;;
   scaffold-audit)
     exec "${ROOT}/bin/lacp-scaffold-audit" "$@"
+    ;;
+  research)
+    exec "${ROOT}/bin/lacp-research" "$@"
     ;;
   sms)
     exec "${ROOT}/bin/lacp-sms" "$@"

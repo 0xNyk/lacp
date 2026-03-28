@@ -564,6 +564,17 @@ def _record_sms_episode(ctx: Context) -> None:
 
         write_episode(episode)
         _debug(f"SMS: episode recorded (significance={significance:.2f}, files={len(files_modified)})")
+
+        # Principle 5: Co-emergent self-model update
+        from self_memory_system import update_self_model_from_session
+        update_self_model_from_session(
+            session_summary=ctx.stripped[:500] if ctx.stripped else "",
+            files_changed=len(files_modified),
+            had_test_failures=had_test_failures,
+            was_blocked=False,
+            significance=significance,
+        )
+        _debug("SMS: self-model updated from session")
     except Exception as e:
         _debug(f"SMS: failed to record episode: {e}")
 

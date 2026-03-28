@@ -313,6 +313,23 @@ fi
 run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 
+# 10.5) SMS epoch synthesis (psychology-informed memory consolidation)
+if python3 -c "
+import sys; sys.path.insert(0, '${ROOT}/hooks')
+from self_memory_system import read_episodes, synthesize_epoch, write_epoch
+episodes = read_episodes(days=${DAYS}, min_significance=0.3)
+if len(episodes) >= 3:
+    epoch = synthesize_epoch('Weekly synthesis (brain-expand)', days=${DAYS})
+    write_epoch(epoch)
+    print(f'SMS epoch synthesized: {epoch.episode_count} episodes, {len(epoch.key_decisions)} decisions')
+else:
+    print(f'SMS: {len(episodes)} episodes (need 3+ for synthesis)')
+" >> "${LOG_FILE}" 2>&1; then
+  log_step "PASS" "sms_epoch_synthesis" "SMS epoch synthesis complete"
+else
+  log_step "WARN" "sms_epoch_synthesis" "SMS epoch synthesis skipped or failed"
+fi
+
 if [[ "${AS_JSON}" -eq 1 ]]; then
   python3 - <<'PY' "${STEPS_FILE}" "${LOG_FILE}" "${RUN_TS}" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${DAYS}" "${APPLY}" "${STRICT}" "${ACTIVATE}" "${CONSOLIDATE}"
 import json
