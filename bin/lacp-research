@@ -88,6 +88,8 @@ cfg = surfaces[surface_name]
 params = cfg.get("parameters", [])
 run_cmd = cfg.get("eval_command", "")
 baseline_cmd = cfg.get("baseline_command", "")
+metric_jq = cfg.get("metric_jq", "")
+metric_direction = cfg.get("metric_direction", "maximize")  # "maximize" or "minimize"
 
 if param_filter:
     params = [p for p in params if p["name"] == param_filter]
@@ -102,15 +104,54 @@ def run_check(cmd):
     except (subprocess.TimeoutExpired, OSError):
         return 1, ""
 
+def extract_metric(output, jq_expr):
+    """Extract a numeric metric from JSON output using jq expression."""
+    if not jq_expr or not output:
+        return None
+    try:
+        r = subprocess.run(
+            ["jq", "-r", jq_expr],
+            input=output, capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            val = r.stdout.strip()
+            if val == "null":
+                return None
+            return float(val)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return None
+
+def is_improvement(old_metric, new_metric, direction):
+    """Check if new metric is better than old based on direction."""
+    if old_metric is None or new_metric is None:
+        return None  # Can't compare, fall back to exit-code
+    if direction == "minimize":
+        return new_metric < old_metric
+    return new_metric > old_metric  # maximize (default)
+
 def log_exp(entry):
     with open(experiments_log, "a") as f:
         f.write(json.dumps(entry, default=str) + "\n")
 
+# Run baseline check
 if not dry_run and baseline_cmd:
     rc, _ = run_check(baseline_cmd)
     if rc != 0:
         print("Baseline check failed. Fix before researching.", file=sys.stderr)
         raise SystemExit(1)
+
+# Capture baseline metric before any changes
+baseline_metric = None
+if not dry_run and metric_jq:
+    rc, output = run_check(run_cmd)
+    if rc == 0:
+        baseline_metric = extract_metric(output, metric_jq)
+        if not as_json and baseline_metric is not None:
+            print(f"  Baseline metric ({metric_jq}): {baseline_metric}")
+            print(f"  Direction: {metric_direction}\n")
+
+current_best_metric = baseline_metric
 
 results = []
 for i in range(iterations):
@@ -144,20 +185,43 @@ for i in range(iterations):
             print(f"  [{i+1}/{iterations}] {pname}: {current} -> {new_val} (dry run)")
         continue
 
+    # Apply variant
     env_var = param.get("env", "")
     if env_var:
         os.environ[env_var] = str(new_val)
 
+    # Run evaluation
     rc, output = run_check(run_cmd)
+
     if rc != 0:
         entry["decision"] = "revert"
         entry["reason"] = f"check failed (exit {rc})"
         if env_var:
             os.environ[env_var] = str(current)
     else:
-        entry["decision"] = "accept"
-        entry["reason"] = f"check passed with {pname}={new_val}"
-        param["default"] = new_val
+        # Extract metric and compare
+        new_metric = extract_metric(output, metric_jq) if metric_jq else None
+        entry["metric_before"] = current_best_metric
+        entry["metric_after"] = new_metric
+
+        improved = is_improvement(current_best_metric, new_metric, metric_direction)
+
+        if improved is None:
+            # No metric extraction — fall back to exit-code acceptance
+            entry["decision"] = "accept"
+            entry["reason"] = f"check passed (no metric comparison) {pname}={new_val}"
+            param["default"] = new_val
+        elif improved:
+            entry["decision"] = "accept"
+            delta = new_metric - (current_best_metric or 0)
+            entry["reason"] = f"metric improved: {current_best_metric} -> {new_metric} (delta={delta:+.3f})"
+            param["default"] = new_val
+            current_best_metric = new_metric
+        else:
+            entry["decision"] = "revert"
+            entry["reason"] = f"metric not improved: {current_best_metric} -> {new_metric} ({metric_direction})"
+            if env_var:
+                os.environ[env_var] = str(current)
 
     entry["check_exit_code"] = rc
     entry["output_preview"] = output[:200] if output else ""
@@ -166,13 +230,22 @@ for i in range(iterations):
 
     if not as_json:
         m = "+" if entry["decision"] == "accept" else "-"
-        print(f"  {m} [{i+1}/{iterations}] {pname}: {current} -> {new_val} -- {entry['decision']}: {entry['reason'][:60]}")
+        metric_info = ""
+        if entry.get("metric_after") is not None:
+            metric_info = f" metric={entry['metric_after']}"
+        print(f"  {m} [{i+1}/{iterations}] {pname}: {current} -> {new_val}{metric_info} -- {entry['reason'][:70]}")
 
 if as_json:
-    print(json.dumps({"surface": surface_name, "iterations": len(results), "results": results}, indent=2))
+    summary = {"surface": surface_name, "iterations": len(results), "results": results,
+               "baseline_metric": baseline_metric, "final_metric": current_best_metric,
+               "metric_jq": metric_jq, "metric_direction": metric_direction}
+    print(json.dumps(summary, indent=2))
 elif not dry_run:
     accepted = sum(1 for r in results if r["decision"] == "accept")
     print(f"\n  {accepted}/{len(results)} experiments accepted")
+    if baseline_metric is not None and current_best_metric is not None:
+        delta = current_best_metric - baseline_metric
+        print(f"  Metric: {baseline_metric} -> {current_best_metric} (delta={delta:+.3f}, {metric_direction})")
 PYTHON
 }
 
