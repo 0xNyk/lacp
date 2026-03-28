@@ -160,9 +160,20 @@ def main() -> None:
 
     output = (result.stdout or "") + (result.stderr or "")
     last_lines = "\n".join(output.strip().splitlines()[-8:])
+
+    # Think-mode enhancement: inject thinking prompt alongside failure report
+    think_prompt = ""
+    if os.getenv("LACP_CONTEXT_MODE", "") in ("think", "tdd", "debugging"):
+        think_prompt = (
+            "\n\nBefore making changes, think about: "
+            "What changed since tests last passed? "
+            "Which specific file most likely caused this failure? "
+            "What is the minimal fix (not a rewrite)?"
+        )
+
     msg = (
         f"Checkpoint ({count} writes): tests failing (exit {result.returncode}). "
-        f"Fix before continuing:\n{last_lines}"
+        f"Fix before continuing:\n{last_lines}{think_prompt}"
     )
     print(json.dumps({"systemMessage": msg}))
 

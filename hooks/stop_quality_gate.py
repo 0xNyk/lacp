@@ -542,18 +542,39 @@ def _record_sms_episode(ctx: Context) -> None:
             was_blocked=False,  # We're in the stop hook, not blocked
         )
 
+        # Build contextual prefix (Contextual Retrieval pattern)
+        ctx_parts = []
+        git_branch = ""
+        context_mode = ""
+        try:
+            contract = read_contract("session_start", ctx.session_id)
+            if contract:
+                git_branch = contract.get("git_branch", "")
+                context_mode = contract.get("context_mode", "")
+        except Exception:
+            pass
+        if git_branch:
+            ctx_parts.append(f"branch={git_branch}")
+        if context_mode:
+            ctx_parts.append(f"mode={context_mode}")
+        if files_modified:
+            ctx_parts.append(f"{len(files_modified)} files")
+        ctx_prefix = f"[{', '.join(ctx_parts)}] " if ctx_parts else ""
+
+        raw_summary = ctx.stripped[:200] if ctx.stripped else ""
+        summary = f"{ctx_prefix}{raw_summary}" if ctx_prefix else raw_summary
+
         episode = Episode(
             session_id=ctx.session_id or "unknown",
             project=ctx.cwd or "",
             started_at="",  # Will be filled from session_start contract
-            summary=ctx.stripped[:200] if ctx.stripped else "",
+            summary=summary,
             files_touched=files_modified,
             significance=significance,
         )
 
         # Try to get started_at from session start contract
         try:
-            contract = read_contract("session_start", ctx.session_id)
             if contract and contract.get("started_at"):
                 episode.started_at = contract["started_at"]
         except Exception:

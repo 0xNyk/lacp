@@ -141,7 +141,7 @@ fi
 # -- Enable eval checkpoint for discipline modes --
 
 case "${CONTEXT_MODE}" in
-  tdd|sprint|debugging|verification|orchestrate)
+  tdd|sprint|debugging|verification|orchestrate|think)
     export LACP_EVAL_CHECKPOINT_ENABLED=1
     ;;
 esac

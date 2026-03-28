@@ -272,6 +272,75 @@ def run_bash_guard(payload: dict) -> int:
         print("BLOCKED: potential data exfiltration from sensitive file", file=sys.stderr)
         return 2
 
+    # Optional LLM classifier for ambiguous commands (Anthropic auto-mode pattern)
+    # Two-stage: regex passed → check if command needs contextual review → Ollama classifies
+    if os.getenv("LACP_PRETOOL_CLASSIFIER_ENABLED", "0") == "1":
+        result = _llm_classify_command(cmd, payload)
+        if result == 2:
+            return 2
+
+    return 0
+
+
+# Patterns that passed regex but warrant contextual LLM review
+_NEEDS_REVIEW_PATTERNS = [
+    re.compile(r"\bcurl\b.*(?:-X\s+(?:POST|PUT|DELETE|PATCH)|-d\s)", re.IGNORECASE),
+    re.compile(r"\bdocker\s+run\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+push\b", re.IGNORECASE),
+    re.compile(r"\bnpm\s+(?:exec|run)\b.*--", re.IGNORECASE),
+    re.compile(r"\bchmod\b", re.IGNORECASE),
+    re.compile(r"\bsudo\b", re.IGNORECASE),
+]
+
+
+def _llm_classify_command(cmd: str, payload: dict) -> int:
+    """Classify ambiguous commands via local Ollama (auto-mode pattern).
+
+    Key insight from Anthropic: strip assistant messages to prevent self-persuasion.
+    Only evaluate the command itself in context of cwd/branch.
+    Returns 0 (allow) or 2 (block). Fail-open on any error.
+    """
+    import urllib.request
+    import urllib.error
+
+    # Only classify commands matching review patterns
+    if not any(rx.search(cmd) for rx in _NEEDS_REVIEW_PATTERNS):
+        return 0
+
+    ollama_url = os.getenv("LACP_QUALITY_GATE_URL", "http://localhost:11434/api/chat")
+    ollama_model = os.getenv("LACP_QUALITY_GATE_MODEL", "llama3.1:8b")
+
+    cwd = payload.get("cwd", "")
+    # Intentionally do NOT include assistant message (auto-mode insight: prevent self-persuasion)
+    prompt = (
+        f"Is this shell command safe to run autonomously?\n"
+        f"Command: {cmd}\n"
+        f"Working directory: {cwd}\n\n"
+        f"Answer ONLY with JSON: {{\"safe\": true}} or {{\"safe\": false, \"reason\": \"...\"}}\n"
+        f"Default: safe=true. Block ONLY if the command could destroy data, exfiltrate secrets, "
+        f"or affect systems outside the working directory."
+    )
+
+    body = json.dumps({
+        "model": ollama_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False, "format": "json",
+        "options": {"temperature": 0, "num_predict": 64},
+    }).encode()
+
+    try:
+        req = urllib.request.Request(ollama_url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            raw = json.loads(resp.read().decode())
+        text = raw.get("message", {}).get("content", "")
+        parsed = json.loads(re.sub(r"^```json\s*|```$", "", text.strip()))
+        if parsed.get("safe") is False:
+            reason = parsed.get("reason", "LLM classifier flagged as unsafe")
+            print(f"BLOCKED (classifier): {reason}", file=sys.stderr)
+            return 2
+    except Exception:
+        pass  # Fail-open: any error → allow
+
     return 0
 
 

@@ -23,7 +23,7 @@ Usage:
 Notes:
   - Manifests are JSON and dmux-first by default.
   - launch delegates execution through `lacp-orchestrate run --batch`, so all LACP gates remain active.
-  - reservations are advisory (no hard lock); collisions are surfaced in plan warnings/artifacts.
+  - reservations use file-based locks with 30-minute TTL; collisions are surfaced in plan warnings.
 USAGE
 }
 
@@ -689,6 +689,96 @@ PY
     ' "${target}"
     log "artifact=${target}"
   fi
+}
+
+# -- File-based lock protocol (C compiler parallel pattern) --
+
+LOCK_TTL_SEC="${LACP_SWARM_LOCK_TTL:-1800}"  # 30 minutes default
+
+locks_dir() {
+  local swarm_id="$1"
+  printf '%s/data/swarms/locks/%s' "${LACP_KNOWLEDGE_ROOT}" "${swarm_id}"
+}
+
+acquire_lock() {
+  local swarm_id="$1" session="$2" file_path="$3"
+  local lock_dir
+  lock_dir="$(locks_dir "${swarm_id}")"
+  mkdir -p "${lock_dir}"
+  local safe_path
+  safe_path="$(printf '%s' "${file_path}" | tr '/' '_')"
+  local lock_file="${lock_dir}/${safe_path}.lock"
+
+  # Check for existing lock
+  if [[ -f "${lock_file}" ]]; then
+    local lock_ts lock_holder
+    lock_holder="$(jq -r '.session // "?"' "${lock_file}" 2>/dev/null)"
+    lock_ts="$(jq -r '.ts // 0' "${lock_file}" 2>/dev/null)"
+    local age=$(( $(date +%s) - ${lock_ts:-0} ))
+    if [[ "${age}" -lt "${LOCK_TTL_SEC}" ]]; then
+      echo "CONFLICT: ${file_path} locked by ${lock_holder} (${age}s ago)" >&2
+      return 1
+    fi
+    # Expired lock — take over
+  fi
+
+  jq -n --arg session "${session}" --arg file "${file_path}" --argjson ts "$(date +%s)" \
+    '{session: $session, file: $file, ts: $ts}' > "${lock_file}"
+  return 0
+}
+
+release_lock() {
+  local swarm_id="$1" session="$2" file_path="$3"
+  local lock_dir
+  lock_dir="$(locks_dir "${swarm_id}")"
+  local safe_path
+  safe_path="$(printf '%s' "${file_path}" | tr '/' '_')"
+  local lock_file="${lock_dir}/${safe_path}.lock"
+  if [[ -f "${lock_file}" ]]; then
+    local holder
+    holder="$(jq -r '.session // ""' "${lock_file}" 2>/dev/null)"
+    if [[ "${holder}" == "${session}" ]]; then
+      rm -f "${lock_file}"
+    fi
+  fi
+}
+
+release_all_locks() {
+  local swarm_id="$1" session="$2"
+  local lock_dir
+  lock_dir="$(locks_dir "${swarm_id}")"
+  [[ -d "${lock_dir}" ]] || return 0
+  local f
+  for f in "${lock_dir}"/*.lock; do
+    [[ -f "${f}" ]] || continue
+    local holder
+    holder="$(jq -r '.session // ""' "${f}" 2>/dev/null)"
+    if [[ "${holder}" == "${session}" ]]; then
+      rm -f "${f}"
+    fi
+  done
+}
+
+check_locks() {
+  local swarm_id="$1"
+  local lock_dir
+  lock_dir="$(locks_dir "${swarm_id}")"
+  [[ -d "${lock_dir}" ]] || return 0
+  local count=0
+  local f
+  for f in "${lock_dir}"/*.lock; do
+    [[ -f "${f}" ]] || continue
+    local lock_ts holder file_path
+    holder="$(jq -r '.session // "?"' "${f}" 2>/dev/null)"
+    lock_ts="$(jq -r '.ts // 0' "${f}" 2>/dev/null)"
+    file_path="$(jq -r '.file // "?"' "${f}" 2>/dev/null)"
+    local age=$(( $(date +%s) - ${lock_ts:-0} ))
+    if [[ "${age}" -lt "${LOCK_TTL_SEC}" ]]; then
+      echo "  LOCKED: ${file_path} by ${holder} (${age}s ago)"
+      count=$((count + 1))
+    fi
+  done
+  echo "${count} active locks"
 }
 
 episodes_dir() {
