@@ -23,6 +23,7 @@ Options:
   --surface <name>   Optimization surface
   --iterations N     Number of experiments (default: 5)
   --param <name>     Specific parameter to tune
+  --baseline-trials N Number of baseline runs for noise estimation (default: 1)
   --dry-run          Show what would change
   --json             Machine-readable output
 EOF
@@ -35,13 +36,14 @@ EXPERIMENTS_LOG="${EXPERIMENTS_DIR}/experiments.jsonl"
 if [[ $# -lt 1 ]]; then usage; exit 0; fi
 
 CMD="$1"; shift || true
-SURFACE="" ITERATIONS=5 PARAM="" DRY_RUN=0 AS_JSON=0
+SURFACE="" ITERATIONS=5 PARAM="" BASELINE_TRIALS=1 DRY_RUN=0 AS_JSON=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --surface)    SURFACE="$2"; shift 2 ;;
     --iterations) ITERATIONS="$2"; shift 2 ;;
     --param)      PARAM="$2"; shift 2 ;;
+    --baseline-trials) BASELINE_TRIALS="$2"; shift 2 ;;
     --dry-run)    DRY_RUN=1; shift ;;
     --json)       AS_JSON=1; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -69,13 +71,14 @@ cmd_run() {
   [[ -n "${SURFACE}" ]] || die "--surface is required"
   mkdir -p "${EXPERIMENTS_DIR}"
 
-  python3 - "${SURFACES_FILE}" "${SURFACE}" "${ITERATIONS}" "${PARAM}" "${DRY_RUN}" "${AS_JSON}" "${EXPERIMENTS_LOG}" "${ROOT}" <<'PYTHON'
+  python3 - "${SURFACES_FILE}" "${SURFACE}" "${ITERATIONS}" "${PARAM}" "${DRY_RUN}" "${AS_JSON}" "${EXPERIMENTS_LOG}" "${ROOT}" "${BASELINE_TRIALS}" <<'PYTHON'
 import json, os, random, subprocess, sys, time
 
 surfaces_file, surface_name = sys.argv[1], sys.argv[2]
 iterations = int(sys.argv[3])
 param_filter, dry_run = sys.argv[4], sys.argv[5] == "1"
 as_json, experiments_log, lacp_root = sys.argv[6] == "1", sys.argv[7], sys.argv[8]
+baseline_trials = int(sys.argv[9]) if len(sys.argv) > 9 else 1
 
 with open(surfaces_file) as f:
     surfaces = json.load(f)
@@ -122,13 +125,16 @@ def extract_metric(output, jq_expr):
         pass
     return None
 
-def is_improvement(old_metric, new_metric, direction):
-    """Check if new metric is better than old based on direction."""
+def is_improvement(old_metric, new_metric, direction, stddev=0.0):
+    """Check if new metric is better than old, accounting for noise.
+
+    With noise awareness: only accept if improvement exceeds 1 stddev.
+    """
     if old_metric is None or new_metric is None:
         return None  # Can't compare, fall back to exit-code
     if direction == "minimize":
-        return new_metric < old_metric
-    return new_metric > old_metric  # maximize (default)
+        return new_metric < (old_metric - stddev)
+    return new_metric > (old_metric + stddev)  # maximize (default)
 
 def log_exp(entry):
     with open(experiments_log, "a") as f:
@@ -141,14 +147,32 @@ if not dry_run and baseline_cmd:
         print("Baseline check failed. Fix before researching.", file=sys.stderr)
         raise SystemExit(1)
 
-# Capture baseline metric before any changes
+# Capture baseline metric with noise estimation (multiple trials)
+import math
 baseline_metric = None
+noise_stddev = 0.0
+
 if not dry_run and metric_jq:
-    rc, output = run_check(run_cmd)
-    if rc == 0:
-        baseline_metric = extract_metric(output, metric_jq)
-        if not as_json and baseline_metric is not None:
-            print(f"  Baseline metric ({metric_jq}): {baseline_metric}")
+    baseline_samples = []
+    for trial in range(baseline_trials):
+        rc, output = run_check(run_cmd)
+        if rc == 0:
+            m = extract_metric(output, metric_jq)
+            if m is not None:
+                baseline_samples.append(m)
+
+    if baseline_samples:
+        baseline_metric = sum(baseline_samples) / len(baseline_samples)
+        if len(baseline_samples) > 1:
+            variance = sum((x - baseline_metric) ** 2 for x in baseline_samples) / (len(baseline_samples) - 1)
+            noise_stddev = math.sqrt(variance)
+
+        if not as_json:
+            print(f"  Baseline metric ({metric_jq}): {baseline_metric:.3f}")
+            if noise_stddev > 0:
+                print(f"  Noise (stddev from {baseline_trials} trials): {noise_stddev:.3f}")
+                print(f"  Improvement threshold: {baseline_metric + noise_stddev:.3f}" if metric_direction == "maximize"
+                      else f"  Improvement threshold: {baseline_metric - noise_stddev:.3f}")
             print(f"  Direction: {metric_direction}\n")
 
 current_best_metric = baseline_metric
@@ -204,7 +228,7 @@ for i in range(iterations):
         entry["metric_before"] = current_best_metric
         entry["metric_after"] = new_metric
 
-        improved = is_improvement(current_best_metric, new_metric, metric_direction)
+        improved = is_improvement(current_best_metric, new_metric, metric_direction, noise_stddev)
 
         if improved is None:
             # No metric extraction — fall back to exit-code acceptance
