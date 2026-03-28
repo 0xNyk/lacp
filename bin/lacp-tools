@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp tools [options]
+
+Machine-readable catalog of all LACP commands with structured metadata.
+Useful for agent discovery, MCP tool generation, and CLI documentation.
+
+Options:
+  --filter <pattern>   Filter by name or description (case-insensitive)
+  --mcp                Emit MCP-compatible tool definitions
+  --json               JSON output (default)
+  --text               Human-readable text output
+  -h, --help           Show help
+
+Examples:
+  lacp tools                          # full catalog as JSON
+  lacp tools --filter route           # commands matching "route"
+  lacp tools --mcp                    # MCP tool definitions
+  lacp tools --text                   # human-readable listing
+EOF
+}
+
+FILTER=""
+MCP_MODE=0
+TEXT_MODE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --filter)   FILTER="$2"; shift 2 ;;
+    --mcp)      MCP_MODE=1; shift ;;
+    --json)     shift ;;  # default
+    --text)     TEXT_MODE=1; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *)          die "Unknown argument: $1" ;;
+  esac
+done
+
+# Parse the lacp router's help text to extract command descriptions
+python3 - "${ROOT}/bin/lacp" "${FILTER}" "${MCP_MODE}" "${TEXT_MODE}" "${ROOT}/bin" <<'PYTHON'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+router_path = sys.argv[1]
+filter_pattern = sys.argv[2].lower() if sys.argv[2] else ""
+mcp_mode = sys.argv[3] == "1"
+text_mode = sys.argv[4] == "1"
+bin_dir = Path(sys.argv[5])
+
+# Parse the router's usage text
+commands = []
+current_category = ""
+
+with open(router_path, "r") as f:
+    in_usage = False
+    for line in f:
+        if line.strip() == "cat <<'EOF'":
+            in_usage = True
+            continue
+        if line.strip() == "EOF":
+            in_usage = False
+            continue
+        if not in_usage:
+            continue
+
+        stripped = line.rstrip()
+
+        # Category headers (no leading spaces, end with colon)
+        if stripped and not stripped.startswith(" ") and stripped.endswith(":"):
+            current_category = stripped.rstrip(":").lower()
+            continue
+
+        # Command entries (leading spaces, format: "  name  description")
+        match = re.match(r"^\s{2,}(\S+)\s{2,}(.+)$", stripped)
+        if match:
+            name = match.group(1)
+            description = match.group(2).strip()
+
+            # Check if the bin file exists and supports --json
+            bin_file = bin_dir / f"lacp-{name}"
+            json_support = False
+            if bin_file.exists():
+                try:
+                    content = bin_file.read_text(errors="replace")
+                    json_support = "--json" in content
+                except OSError:
+                    pass
+
+            commands.append({
+                "name": name,
+                "description": description,
+                "category": current_category,
+                "json_output": json_support,
+                "binary": f"lacp-{name}",
+            })
+
+# Apply filter
+if filter_pattern:
+    commands = [
+        c for c in commands
+        if filter_pattern in c["name"].lower() or filter_pattern in c["description"].lower()
+    ]
+
+if text_mode:
+    current_cat = ""
+    for cmd in commands:
+        if cmd["category"] != current_cat:
+            current_cat = cmd["category"]
+            print(f"\n{current_cat.title()}:")
+        json_flag = " [json]" if cmd["json_output"] else ""
+        print(f"  {cmd['name']:25s} {cmd['description']}{json_flag}")
+    print(f"\n{len(commands)} commands total")
+elif mcp_mode:
+    # Emit MCP-compatible tool definitions
+    tools = []
+    for cmd in commands:
+        tool = {
+            "name": f"lacp_{cmd['name'].replace('-', '_')}",
+            "description": f"LACP: {cmd['description']}",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "string",
+                        "description": f"Arguments to pass to lacp {cmd['name']}",
+                    },
+                },
+            },
+        }
+        if cmd["json_output"]:
+            tool["description"] += " (supports --json output)"
+        tools.append(tool)
+    print(json.dumps({"tools": tools}, indent=2))
+else:
+    print(json.dumps(commands, indent=2))
+PYTHON

@@ -110,6 +110,16 @@ class HandoffArtifact:
             self.next_steps = []
 
 
+@dataclass
+class TaskPlan:
+    subtasks: list[dict] = None  # [{name, files, depends_on, status, scope}]
+    created_at: str = ""
+
+    def __post_init__(self):
+        if self.subtasks is None:
+            self.subtasks = []
+
+
 def cleanup_contracts(session_id: str | None = None) -> int:
     """Remove all contracts for a session. Returns count of files removed."""
     sid = session_id or os.getenv("CLAUDE_SESSION_ID", "default")

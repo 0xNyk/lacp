@@ -553,21 +553,40 @@ RESPONSE TO EVALUATE:
 
 
 def _build_sprint_criteria_section(ctx: Context) -> str:
-    """If a sprint contract exists, add criteria to the scoring prompt."""
+    """If a sprint contract or task plan exists, add criteria to the scoring prompt."""
+    sections = []
     try:
         from hook_contracts import read_contract
         sprint = read_contract("sprint_contract", ctx.session_id)
         if sprint and sprint.get("acceptance_criteria"):
             criteria = sprint["acceptance_criteria"]
             criteria_text = "\n".join(f"  - {c}" for c in criteria)
-            return (
+            sections.append(
                 "SPRINT CONTRACT — The agent agreed to these criteria before starting:\n"
                 f"{criteria_text}\n"
-                "Score completeness against these specific criteria.\n\n"
+                "Score completeness against these specific criteria.\n"
             )
     except Exception:
         pass
-    return ""
+
+    try:
+        from hook_contracts import read_contract as _rc2
+        plan = _rc2("task_plan", ctx.session_id)
+        if plan and plan.get("subtasks"):
+            subtasks = plan["subtasks"]
+            plan_text = "\n".join(
+                f"  - {s.get('name', '?')} ({s.get('status', 'unknown')})"
+                for s in subtasks
+            )
+            sections.append(
+                "TASK PLAN — The agent decomposed work into these subtasks:\n"
+                f"{plan_text}\n"
+                "Score completeness against subtask completion status.\n"
+            )
+    except Exception:
+        pass
+
+    return "\n".join(sections) + "\n" if sections else ""
 
 
 def _parse_scoring_result(model_text: str) -> Optional[ScoringResult]:

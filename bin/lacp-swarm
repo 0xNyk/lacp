@@ -17,6 +17,7 @@ Usage:
   lacp-swarm episode-write --swarm-id <id> --session <name> --status <completed|failed|skipped> [options] [--json]
   lacp-swarm episodes --swarm-id <id> [--json]
   lacp-swarm digest --swarm-id <id> [--max-tokens <n>] [--json]
+  lacp-swarm vote --swarm-id <id> [--auto] [--merge <episode>] [--json]
   lacp-swarm context --swarm-id <id> [--max-tokens <n>]
 
 Notes:
@@ -960,9 +961,109 @@ main() {
     episodes) cmd_episodes "$@" ;;
     digest) cmd_digest "$@" ;;
     context) cmd_context "$@" ;;
+    vote) cmd_vote "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown subcommand: ${sub}" ;;
   esac
+}
+
+cmd_vote() {
+  local swarm_id="" auto=0 merge_episode="" as_json=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --swarm-id) swarm_id="$2"; shift 2 ;;
+      --auto) auto=1; shift ;;
+      --merge) merge_episode="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      -h|--help) echo "Usage: lacp swarm vote --swarm-id <id> [--auto] [--merge <episode>] [--json]"; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  [[ -n "${swarm_id}" ]] || die "--swarm-id is required"
+
+  local ep_dir
+  ep_dir="$(episodes_dir "${swarm_id}")"
+  if [[ ! -d "${ep_dir}" ]]; then
+    die "No episodes found for swarm_id=${swarm_id}"
+  fi
+
+  # Collect and compare episodes
+  python3 - "${ep_dir}" "${auto}" "${merge_episode}" "${as_json}" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+ep_dir = Path(sys.argv[1])
+auto_mode = sys.argv[2] == "1"
+merge_episode = sys.argv[3]
+as_json = sys.argv[4] == "1"
+
+# Load all completed episodes
+episodes = []
+for f in sorted(ep_dir.glob("*.json")):
+    try:
+        ep = json.loads(f.read_text())
+        if ep.get("status") == "completed":
+            episodes.append(ep)
+    except (json.JSONDecodeError, OSError):
+        continue
+
+if not episodes:
+    if as_json:
+        print(json.dumps({"ok": False, "error": "No completed episodes"}))
+    else:
+        print("[lacp] No completed episodes to vote on")
+    raise SystemExit(1)
+
+# Score each episode: tests_pass > fewer files > fewer tool failures > shorter duration
+results = []
+for ep in episodes:
+    session = ep.get("session", "?")
+    files = ep.get("files_modified", [])
+    tool_ok = ep.get("tool_calls_succeeded", 0)
+    tool_fail = ep.get("tool_calls_failed", 0)
+    duration = ep.get("duration_ms", 0)
+    summary = ep.get("summary", "") or ""
+
+    # Simple scoring: lower is better (simplest solution wins)
+    score = len(files) + (tool_fail * 10) + (duration / 60000)
+
+    results.append({
+        "session": session,
+        "files_changed": len(files),
+        "tool_ok": tool_ok,
+        "tool_fail": tool_fail,
+        "duration_min": round(duration / 60000, 1),
+        "score": round(score, 2),
+        "summary": summary[:80],
+    })
+
+# Sort by score (lower = better)
+results.sort(key=lambda r: r["score"])
+winner = results[0]["session"]
+
+if as_json:
+    print(json.dumps({
+        "ok": True,
+        "swarm_id": ep.get("swarm_id", "?"),
+        "episodes": results,
+        "winner": winner,
+        "auto_merge": auto_mode,
+    }, indent=2))
+else:
+    print(f"[lacp] Swarm vote — {len(results)} completed episodes\n")
+    print(f"  {'Session':25s}  {'Files':>5s}  {'Tools OK':>8s}  {'Fails':>5s}  {'Time':>6s}  {'Score':>6s}")
+    print(f"  {'-'*25}  {'-'*5}  {'-'*8}  {'-'*5}  {'-'*6}  {'-'*6}")
+    for r in results:
+        marker = " ★" if r["session"] == winner else ""
+        print(f"  {r['session']:25s}  {r['files_changed']:>5d}  {r['tool_ok']:>8d}  {r['tool_fail']:>5d}  {r['duration_min']:>5.1f}m  {r['score']:>6.1f}{marker}")
+    print(f"\n  Winner: {winner} (simplest solution — fewest files, fewest failures)")
+
+    if auto_mode:
+        print(f"\n  Auto-merge: would merge {winner}")
+PYTHON
 }
 
 main "$@"
