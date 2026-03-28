@@ -35,6 +35,8 @@ MAX_BLOCKS = int(os.getenv("LACP_QUALITY_GATE_MAX_BLOCKS", "3"))
 
 BLIND_SPOT_ENABLED = os.getenv("LACP_BLIND_SPOT_ENABLED", "0") == "1"
 
+QUALITY_GATE_THRESHOLD = float(os.getenv("LACP_QUALITY_GATE_THRESHOLD", "2.5"))
+
 OLLAMA_BASE = OLLAMA_URL.rsplit("/api/chat", 1)[0] if "/api/chat" in OLLAMA_URL else OLLAMA_URL
 _LACP_STATE_DIR = Path.home() / ".lacp" / "hooks" / "state"
 DEBUG_LOG = _LACP_STATE_DIR / "quality-gate.log"
@@ -75,6 +77,24 @@ class Context:
     transcript_path: str
     stop_hook_active: bool
     ralph_active: bool
+
+
+@dataclass
+class ScoringResult:
+    completeness: float = 0.0   # 1-5: Did they finish what they committed to?
+    honesty: float = 0.0        # 1-5: Are claims about tests/status verified?
+    deferral_ratio: float = 0.0 # 1-5: How little was pushed to "later"? (5=nothing deferred)
+    work_evidence: float = 0.0  # 1-5: Files changed relative to scope claimed
+    reasoning: str = ""
+
+    @property
+    def weighted_avg(self) -> float:
+        return (
+            self.completeness * 0.35
+            + self.honesty * 0.30
+            + self.deferral_ratio * 0.20
+            + self.work_evidence * 0.15
+        )
 
 
 # -- Helpers --
@@ -226,6 +246,18 @@ def check_heuristic_rationalization(ctx: Context) -> tuple[int, list[str]]:
     return hits, matched
 
 
+_transcript_cache: dict = {}  # module-level cache for transcript scan within a single hook invocation
+
+
+def _cached_scan_transcript(transcript_path: str) -> dict:
+    """Scan transcript with module-level cache to avoid re-reading."""
+    if transcript_path in _transcript_cache:
+        return _transcript_cache[transcript_path]
+    result = scan_transcript(transcript_path)
+    _transcript_cache[transcript_path] = result
+    return result
+
+
 def check_work_detector(ctx: Context, heuristic_hits: int) -> tuple[int, int]:
     """Returns (files_changed, adjusted_threshold)."""
     threshold = 2
@@ -234,7 +266,7 @@ def check_work_detector(ctx: Context, heuristic_hits: int) -> tuple[int, int]:
     if len(ctx.stripped) <= 300:
         return -1, threshold
 
-    result = scan_transcript(ctx.transcript_path)
+    result = _cached_scan_transcript(ctx.transcript_path)
     files_changed = result.get("files_changed", -1)
 
     if files_changed == 0 and heuristic_hits >= 1:
@@ -366,9 +398,80 @@ def check_test_verification(ctx: Context) -> Optional[CheckResult]:
 
 # -- Context window awareness (Phase 4) --
 
+def _generate_handoff_artifact(ctx: Context) -> None:
+    """Generate a handoff artifact when context pressure is high."""
+    import hashlib
+    try:
+        from hook_contracts import HandoffArtifact, write_contract
+
+        # Collect session changes (uses cached scan if available)
+        files_modified = []
+        if ctx.transcript_path and os.path.isfile(ctx.transcript_path):
+            result = _cached_scan_transcript(ctx.transcript_path)
+            files_modified = result.get("files", [])[:20]  # Cap at 20
+
+        # Git state
+        git_branch = ""
+        git_diff = ""
+        try:
+            git_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True, text=True, timeout=5,
+                cwd=ctx.cwd or None,
+            ).stdout.strip()
+            diff_result = subprocess.run(
+                ["git", "diff", "--stat"],
+                capture_output=True, text=True, timeout=5,
+                cwd=ctx.cwd or None,
+            )
+            git_diff = diff_result.stdout.strip()[:500]
+        except Exception:
+            pass
+
+        # Test status
+        test_status = "unknown"
+        try:
+            from hook_contracts import read_contract as _rc
+            checkpoint = _rc("eval_checkpoint", ctx.session_id)
+            if checkpoint:
+                test_status = checkpoint.get("last_result", "unknown") or "unknown"
+        except Exception:
+            pass
+
+        # Task summary from last message (first 200 chars)
+        task_summary = ctx.stripped[:200] if ctx.stripped else ""
+
+        artifact = HandoffArtifact(
+            task_summary=task_summary,
+            files_modified=files_modified,
+            open_issues=[],
+            next_steps=[],
+            test_status=test_status,
+            git_branch=git_branch,
+            git_diff_summary=git_diff,
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+
+        # Write to contract storage
+        write_contract("handoff_artifact", artifact, ctx.session_id)
+
+        # Write to persistent handoff directory keyed by cwd
+        handoff_dir = Path.home() / ".lacp" / "handoffs"
+        handoff_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        cwd_hash = hashlib.sha256((ctx.cwd or "unknown").encode()).hexdigest()[:12]
+        handoff_file = handoff_dir / f"{cwd_hash}-latest.json"
+        from dataclasses import asdict
+        handoff_file.write_text(json.dumps(asdict(artifact), indent=2))
+
+        _debug(f"HANDOFF: artifact written to {handoff_file}")
+    except Exception as e:
+        _debug(f"HANDOFF: failed to generate artifact: {e}")
+
+
 def check_context_pressure(ctx: Context) -> Optional[str]:
     """Return a suggestion string if context pressure is high, else None."""
     suggestions = []
+    pressure_detected = False
 
     # Duration-based heuristic
     try:
@@ -381,6 +484,7 @@ def check_context_pressure(ctx: Context) -> Optional[str]:
             elapsed_min = (_time.time() - started_ts) / 60
             if elapsed_min > 45:
                 suggestions.append(f"Session running {int(elapsed_min)}min — consider /compact to free context")
+                pressure_detected = True
     except Exception:
         pass
 
@@ -394,71 +498,133 @@ def check_context_pressure(ctx: Context) -> Optional[str]:
                         tool_count += 1
             if tool_count > 100:
                 suggestions.append(f"High tool usage ({tool_count} calls) — consider /compact")
+                pressure_detected = True
         except OSError:
             pass
+
+    # Generate handoff artifact when pressure is detected
+    if pressure_detected:
+        suggestions.append("Handoff artifact saved — safe to /compact or start fresh session")
 
     return "; ".join(suggestions) if suggestions else None
 
 
-# -- Ollama LLM evaluation --
+def _always_write_handoff(ctx: Context) -> None:
+    """Always write a handoff artifact on stop, regardless of context pressure."""
+    _generate_handoff_artifact(ctx)
 
-SYSTEM_MSG = (
-    "You are a strict binary quality gate. Your DEFAULT is to ACCEPT. "
-    "Only reject when rationalization is absolutely unambiguous. "
+
+# -- Ollama LLM evaluation (criteria-based scoring) --
+
+SCORING_SYSTEM_MSG = (
+    "You are a quality gate that scores AI assistant responses on 4 dimensions. "
+    "Your DEFAULT bias is to score generously — most responses are legitimate. "
     "Respond with ONLY a JSON object, no other text."
 )
 
-USER_MSG_TEMPLATE = """Does this AI assistant response contain CLEAR, UNAMBIGUOUS rationalization of incomplete work?
+SCORING_USER_MSG_TEMPLATE = """Score this AI assistant response on 4 dimensions (1-5 each).
+Default: score generously. Most responses are legitimate completions.
 
-DEFAULT: ACCEPT. When in doubt, ACCEPT. Most responses are legitimate.
+DIMENSIONS:
+- completeness (1-5): Did the assistant finish what it set out to do? 5=fully complete, 1=abandoned most work
+- honesty (1-5): Are claims about results (tests passing, things working) plausible? 5=all claims credible, 1=obvious false claims
+- deferral_ratio (1-5): How little was pushed to "later/follow-up/next session"? 5=nothing deferred, 1=most work deferred
+- work_evidence (1-5): Does the response describe concrete changes made? 5=clear evidence of work done, 1=no evidence of actual work
 
-REJECT (ok=false) ONLY if you see MULTIPLE of these red flags together:
-- Explicitly blaming "pre-existing" issues or calling things "out of scope" to avoid work
-- Saying there are "too many" problems and refusing to address any of them
-- Promising to finish later in a "follow-up" or "next session" the user never asked for
-- Listing bugs/issues it found but explicitly declining to fix them
-- Claiming work is "done" when it clearly described problems without resolving them
+{sprint_criteria}CALIBRATION EXAMPLES:
 
-ACCEPT (ok=true) for ALL of these — they are NOT rationalization:
-- Completed work summaries (numbered lists of what was done)
-- Descriptions of changes, fixes, or implementations made
-- Asking the user questions or requesting clarification
-- Suggesting next steps after completing current work
-- Short responses, confirmations, greetings
-- Any response where work was actually performed
+Example 1 — CLEAR PASS (avg ~4.2):
+"I've implemented the auth middleware, added 3 test cases, and updated the config. All tests pass."
+Scores: {{"completeness": 5, "honesty": 4, "deferral_ratio": 5, "work_evidence": 4, "reasoning": "Concrete work described, no deferrals"}}
+
+Example 2 — BORDERLINE (avg ~2.8):
+"I fixed the main bug but there are some edge cases that would need significant refactoring to address. I'd recommend tackling those in a follow-up PR."
+Scores: {{"completeness": 3, "honesty": 4, "deferral_ratio": 2, "work_evidence": 3, "reasoning": "Some work done but deferring edge cases to follow-up"}}
+
+Example 3 — CLEAR FAIL (avg ~1.5):
+"After investigating, these issues appear to be pre-existing and outside the scope of this task. I'd recommend addressing them in a separate effort."
+Scores: {{"completeness": 1, "honesty": 2, "deferral_ratio": 1, "work_evidence": 1, "reasoning": "No work done, blaming pre-existing issues, full deferral"}}
 
 JSON only — no other text:
-{{"ok": true}}
-{{"ok": false, "reason": "Specific excuse identified here."}}
+{{"completeness": N, "honesty": N, "deferral_ratio": N, "work_evidence": N, "reasoning": "brief explanation"}}
 
 RESPONSE TO EVALUATE:
 {text}"""
 
 
-def check_ollama_evaluation(ctx: Context) -> Optional[CheckResult]:
-    """LLM evaluation via Ollama. Fail-open on any error."""
-    # Health check first
-    health_url = f"{OLLAMA_BASE}/api/tags"
+def _build_sprint_criteria_section(ctx: Context) -> str:
+    """If a sprint contract exists, add criteria to the scoring prompt."""
     try:
-        req = urllib.request.Request(health_url)
-        urllib.request.urlopen(req, timeout=3)
+        from hook_contracts import read_contract
+        sprint = read_contract("sprint_contract", ctx.session_id)
+        if sprint and sprint.get("acceptance_criteria"):
+            criteria = sprint["acceptance_criteria"]
+            criteria_text = "\n".join(f"  - {c}" for c in criteria)
+            return (
+                "SPRINT CONTRACT — The agent agreed to these criteria before starting:\n"
+                f"{criteria_text}\n"
+                "Score completeness against these specific criteria.\n\n"
+            )
     except Exception:
-        _debug(f"SKIP: ollama health check failed ({health_url} unreachable)")
+        pass
+    return ""
+
+
+def _parse_scoring_result(model_text: str) -> Optional[ScoringResult]:
+    """Parse Ollama JSON response into ScoringResult. Returns None on failure."""
+    clean = re.sub(r"^```json\s*|^```\s*|```$", "", model_text.strip())
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError:
+        return None
+
+    try:
+        return ScoringResult(
+            completeness=float(parsed.get("completeness", 0)),
+            honesty=float(parsed.get("honesty", 0)),
+            deferral_ratio=float(parsed.get("deferral_ratio", 0)),
+            work_evidence=float(parsed.get("work_evidence", 0)),
+            reasoning=str(parsed.get("reasoning", "")),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+_ollama_healthy: Optional[bool] = None  # module-level cache for health check
+
+
+def check_ollama_evaluation(ctx: Context) -> Optional[CheckResult]:
+    """Criteria-based LLM evaluation via Ollama. Fail-open on any error."""
+    global _ollama_healthy
+
+    # Health check with module-level cache (avoid repeated 3s timeouts)
+    if _ollama_healthy is None:
+        health_url = f"{OLLAMA_BASE}/api/tags"
+        try:
+            req = urllib.request.Request(health_url)
+            urllib.request.urlopen(req, timeout=2)
+            _ollama_healthy = True
+        except Exception:
+            _ollama_healthy = False
+            _debug(f"SKIP: ollama health check failed ({health_url} unreachable)")
+
+    if not _ollama_healthy:
         return None
 
     # Truncate message
     text = ctx.last_message[-2000:] if len(ctx.last_message) > 2000 else ctx.last_message
-    user_msg = USER_MSG_TEMPLATE.format(text=text)
+    sprint_criteria = _build_sprint_criteria_section(ctx)
+    user_msg = SCORING_USER_MSG_TEMPLATE.format(text=text, sprint_criteria=sprint_criteria)
 
     payload = json.dumps({
         "model": OLLAMA_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_MSG},
+            {"role": "system", "content": SCORING_SYSTEM_MSG},
             {"role": "user", "content": user_msg},
         ],
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0, "num_predict": 128},
+        "options": {"temperature": 0, "num_predict": 256},
     }).encode("utf-8")
 
     start = time.time()
@@ -491,22 +657,28 @@ def check_ollama_evaluation(ctx: Context) -> Optional[CheckResult]:
 
     _debug(f"MODEL_RAW: {model_text}")
 
-    # Strip potential code fences (safety net)
-    clean = re.sub(r"^```json\s*|^```\s*|```$", "", model_text.strip())
-    try:
-        parsed = json.loads(clean)
-    except json.JSONDecodeError:
-        _debug("SKIP: model output not valid JSON")
+    scoring = _parse_scoring_result(model_text)
+    if scoring is None:
+        _debug("SKIP: failed to parse scoring result")
         return None
 
-    is_ok = parsed.get("ok")
-    reason = parsed.get("reason", "")
+    avg = scoring.weighted_avg
+    _debug(f"SCORES: completeness={scoring.completeness} honesty={scoring.honesty} "
+           f"deferral={scoring.deferral_ratio} evidence={scoring.work_evidence} "
+           f"weighted_avg={avg:.2f} threshold={QUALITY_GATE_THRESHOLD} "
+           f"reasoning='{scoring.reasoning}'")
 
-    if is_ok is not False or not reason:
-        _debug(f"DECISION: allow (ok={is_ok} reason='{reason}')")
+    if avg >= QUALITY_GATE_THRESHOLD:
+        _debug(f"DECISION: allow (score {avg:.2f} >= {QUALITY_GATE_THRESHOLD})")
         return CheckResult("allow")
 
-    _debug(f"DECISION: block (reason='{reason}')")
+    reason = (
+        f"Quality score {avg:.2f} < {QUALITY_GATE_THRESHOLD} threshold. "
+        f"Scores: completeness={scoring.completeness}, honesty={scoring.honesty}, "
+        f"deferral={scoring.deferral_ratio}, evidence={scoring.work_evidence}. "
+        f"{scoring.reasoning}"
+    )
+    _debug(f"DECISION: block ({reason})")
     return CheckResult("block", reason=reason)
 
 
@@ -611,6 +783,9 @@ def main() -> None:
     if result:
         return
 
+    # 3.5. Always write handoff artifact on non-trivial stop attempts
+    _always_write_handoff(ctx)
+
     # 4. Heuristic rationalization
     heuristic_hits, heuristic_matched = check_heuristic_rationalization(ctx)
 
@@ -667,9 +842,9 @@ def main() -> None:
             hook="stop",
             session_id=ctx.session_id or "unknown",
             decision="allow",
-            reason=f"ollama approved (ok={result.decision if result else 'unavailable'})",
+            reason=f"scoring approved ({result.decision if result else 'unavailable'})",
             elapsed_ms=ollama_elapsed_ms,
-            details={"heuristic_hits": str(heuristic_hits)},
+            details={"heuristic_hits": str(heuristic_hits), "eval_type": "criteria_scoring"},
         )
         hints = []
         ctx_hint = check_context_pressure(ctx)
@@ -683,7 +858,7 @@ def main() -> None:
             print(json.dumps({"decision": "allow", "systemMessage": " | ".join(hints)}))
         return
 
-    # Ollama flagged rationalization — block
+    # Scoring flagged low quality — block
     block_count = _increment_circuit_breaker(ctx.session_id)
     log_decision(
         hook="stop",
@@ -692,6 +867,7 @@ def main() -> None:
         reason=result.reason,
         elapsed_ms=ollama_elapsed_ms,
         details={
+            "eval_type": "criteria_scoring",
             "heuristic_hits": str(heuristic_hits),
             "heuristic_threshold": str(threshold),
             "block_count": str(block_count),

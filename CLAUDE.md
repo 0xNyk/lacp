@@ -45,17 +45,51 @@ Hooks live in `hooks/` and are installed to `~/.claude/` via `bin/lacp-claude-ho
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `stop_quality_gate.py` | Stop | Modular Python quality gate with test verification + heuristics + Ollama + blind spot analysis |
-| `session_start.py` | SessionStart | Unified Python hook with git context + test cmd caching + focus brief injection |
+| `stop_quality_gate.py` | Stop | Criteria-based scoring (4 dimensions, weighted avg) + test verification + heuristics + handoff artifact generation |
+| `session_start.py` | SessionStart | Git context + test cmd caching + focus brief + handoff injection + stale contract cleanup |
+| `eval_checkpoint.py` | PostToolUse(Write/Edit) | Continuous QA — runs tests at intervals during work, injects feedback on failure |
 | `pretool_guard.py` | PreToolUse | Co-author, scp/root, rm -rf, publishing, exfiltration guards |
 | `thinking_nudge.py` | UserPromptSubmit | Nudges user to state position before asking questions (opt-in) |
 | `detect_session_changes.py` | (library) | Scans transcript for file changes (imported by stop hook) |
 | `hook_telemetry.py` | (library) | JSONL telemetry logger with rotation (imported by stop hook) |
+| `hook_contracts.py` | (library) | Typed state exchange between hooks (SessionStartOutput, SprintContract, EvalCheckpoint, HandoffArtifact) |
 | `write_validate.py` | PostToolUse(Write) | YAML frontmatter schema validation |
 | `session_orient.sh` | SessionStart | Vault tree, recent changes (legacy bash) |
 | `stop_quality_gate.sh` | Stop | Ollama-backed rationalization detection (legacy bash) |
 
 Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate`, `quality-gate-v2`, `orient`, `session-start`, `pretool-guard`, `write-validate`, `thinking-partner`.
+
+## Context Modes
+
+Set `LACP_CONTEXT_MODE` to activate a mode (injected at session start):
+
+| Mode | Purpose |
+|------|---------|
+| `brainstorm` | Design exploration before implementation (no code until design approved) |
+| `debugging` | 4-phase systematic root cause investigation |
+| `handoff-resume` | Continue from previous session handoff artifact |
+| `implementation` | Focused implementation partner |
+| `review` | Code review mode |
+| `sprint` | Pre-agreed completion criteria (sprint contracts) |
+| `tdd` | Strict RED-GREEN-REFACTOR discipline |
+| `thinking-partner` | Challenge assumptions, surface blind spots |
+| `verification` | Evidence-before-claims discipline |
+
+## CLI Stream
+
+`lacp` (no args) launches a hardened agent session:
+
+```bash
+lacp                              # auto-detects claude/codex/hermes/opencode/gemini/goose/aider/openclaw
+lacp --mode tdd                   # TDD mode with eval checkpoints
+lacp --mode debugging             # systematic debugging mode
+lacp --resume                     # continue last session
+lacp "fix the auth bug"           # one-shot prompt
+lacp watch --follow               # live telemetry stream
+lacp watch --summary              # session health overview
+lacp handoff show                 # view handoff artifact for current dir
+lacp scaffold-audit               # identify removable pipeline stages
+```
 
 ## Environment Variables
 
@@ -67,6 +101,11 @@ All configurable via env or `.env` file. Key ones:
 - `LACP_OBSIDIAN_VAULT` — Obsidian vault path (default: `~/obsidian/vault`)
 - `LACP_WRITE_VALIDATE_PATHS` — colon-separated paths for write validation
 - `LACP_TAXONOMY_PATH` — taxonomy.json location for category validation
+- `LACP_CONTEXT_MODE` — active context mode (tdd, debugging, sprint, etc.)
+- `LACP_EVAL_CHECKPOINT_ENABLED` — enable continuous QA during work (default: `0`)
+- `LACP_EVAL_CHECKPOINT_INTERVAL` — run tests every N file writes (default: `10`)
+- `LACP_QUALITY_GATE_THRESHOLD` — criteria scoring threshold 1-5 (default: `2.5`)
+- `LACP_BLIND_SPOT_ENABLED` — enable blind spot reflection at session end (default: `0`)
 
 > Full list of 40+ environment variables with defaults: `config/lacp.env.example`
 

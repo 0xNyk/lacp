@@ -5,7 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp <command> [args...]
+Usage: lacp [prompt...]              Launch hardened agent session
+       lacp <command> [args...]      Run LACP subcommand
+       lacp watch [--follow]         Monitor active sessions
+       lacp help                     Show this help
 
 Core:
   start         Run onboarding flow (alias: onboard)
@@ -18,6 +21,9 @@ Core:
   mode          Show/set operating mode
   posture       Evaluate local-first/no-external-ci posture contract
   claude-hooks  Audit/repair/optimize local Claude hooks + plugin cache drift
+  watch         Real-time session monitoring dashboard
+  handoff       View/manage session handoff artifacts
+  scaffold-audit Identify pipeline stages no longer load-bearing
   console       Interactive LACP shell with slash commands
   time          Monthly project/client session time tracking
 
@@ -93,21 +99,34 @@ Remote:
   remote-smoke  Run remote provider smoke test
 
 Examples:
-  lacp start --with-verify
+  lacp                              # launch agent session (auto-detects claude/codex/hermes/etc.)
+  lacp --mode tdd                   # launch with TDD context mode
+  lacp "fix the auth bug"           # one-shot prompt
+  lacp watch --follow               # live telemetry stream
+  lacp watch --summary              # session health overview
   lacp test --isolated
   lacp doctor --json | jq
 EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  usage
-  exit 0
+  # No args: launch hardened agent session
+  exec "${ROOT}/bin/lacp-stream"
 fi
 
 cmd="$1"
 shift || true
 
 case "${cmd}" in
+  watch)
+    exec "${ROOT}/bin/lacp-watch" "$@"
+    ;;
+  handoff)
+    exec "${ROOT}/bin/lacp-handoff" "$@"
+    ;;
+  scaffold-audit)
+    exec "${ROOT}/bin/lacp-scaffold-audit" "$@"
+    ;;
   start|onboard)
     exec "${ROOT}/bin/lacp-onboard" "$@"
     ;;
