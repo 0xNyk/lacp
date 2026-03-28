@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp sms <command> [options]
+
+Self-Memory System — psychology-informed agent memory.
+Implements Conway's SMS (2005) with five principles.
+
+Commands:
+  context           Show what SMS would inject at session start
+  episodes [--days N] Show recorded episodes (default: 30 days)
+  epochs            Show epoch (life period) groupings
+  narrative         Show/update agent narrative arc
+  self-model        Show/update evolving self-model
+  synthesize        Run epoch synthesis from recent episodes
+  significance      Show significance distribution of recent episodes
+  working-self      Show current goals (from focus brief)
+
+Options:
+  --json            JSON output
+  --days N          Lookback window (default: 30)
+  -h, --help        Show help
+
+Principles:
+  1. Hierarchical temporal: episodes → epochs (life periods)
+  2. Goal-relevant filtering: focus brief gates retrieval
+  3. Emotional weighting: significance scoring (0-1)
+  4. Narrative coherence: agent story across sessions
+  5. Co-emergent self-model: identity ↔ memory feedback loop
+EOF
+}
+
+SMS_PY="${ROOT}/hooks/self_memory_system.py"
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 0
+fi
+
+CMD="$1"
+shift || true
+
+DAYS=30
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)  DAYS="$2"; shift 2 ;;
+    --json)  AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+case "${CMD}" in
+  context)
+    python3 "${SMS_PY}" context
+    ;;
+  episodes)
+    python3 "${SMS_PY}" episodes "${DAYS}"
+    ;;
+  epochs)
+    python3 "${SMS_PY}" epochs
+    ;;
+  narrative)
+    python3 "${SMS_PY}" narrative
+    ;;
+  self-model)
+    python3 "${SMS_PY}" self-model
+    ;;
+  working-self)
+    python3 "${SMS_PY}" working-self
+    ;;
+  synthesize)
+    # Run epoch synthesis
+    python3 - "${ROOT}/hooks" "${DAYS}" <<'PYTHON'
+import json
+import sys
+import time
+
+sys.path.insert(0, sys.argv[1])
+from self_memory_system import synthesize_epoch, write_epoch, read_episodes
+
+days = int(sys.argv[2])
+episodes = read_episodes(days=days, min_significance=0.3)
+
+if not episodes:
+    print("[lacp] No significant episodes to synthesize")
+    raise SystemExit(0)
+
+label = f"Epoch synthesized {time.strftime('%Y-%m-%d')}"
+epoch = synthesize_epoch(label=label, days=days)
+write_epoch(epoch)
+
+print(f"[lacp] Epoch synthesized: {epoch.epoch_id}")
+print(f"  Episodes: {epoch.episode_count}")
+print(f"  Key decisions: {len(epoch.key_decisions)}")
+if epoch.key_decisions:
+    for d in epoch.key_decisions[:5]:
+        print(f"    - {d[:80]}")
+PYTHON
+    ;;
+  significance)
+    # Show significance distribution
+    python3 - "${ROOT}/hooks" "${DAYS}" "${AS_JSON}" <<'PYTHON'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from self_memory_system import read_episodes
+
+days = int(sys.argv[2])
+as_json = sys.argv[3] == "1"
+
+episodes = read_episodes(days=days)
+if not episodes:
+    if as_json:
+        print(json.dumps({"total": 0, "distribution": {}}))
+    else:
+        print("[lacp] No episodes recorded")
+    raise SystemExit(0)
+
+# Distribution buckets
+buckets = {"low (0-0.3)": 0, "medium (0.3-0.6)": 0, "high (0.6-0.8)": 0, "critical (0.8-1.0)": 0}
+for ep in episodes:
+    sig = ep.get("significance", 0)
+    if sig < 0.3:
+        buckets["low (0-0.3)"] += 1
+    elif sig < 0.6:
+        buckets["medium (0.3-0.6)"] += 1
+    elif sig < 0.8:
+        buckets["high (0.6-0.8)"] += 1
+    else:
+        buckets["critical (0.8-1.0)"] += 1
+
+avg_sig = sum(ep.get("significance", 0) for ep in episodes) / len(episodes)
+
+if as_json:
+    print(json.dumps({"total": len(episodes), "avg_significance": round(avg_sig, 3), "distribution": buckets}))
+else:
+    print(f"[lacp] Significance distribution ({len(episodes)} episodes, {days}d window)")
+    print(f"  Average: {avg_sig:.3f}")
+    for bucket, count in buckets.items():
+        bar = "█" * count
+        print(f"  {bucket:20s}  {count:3d}  {bar}")
+PYTHON
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    die "Unknown command: ${CMD}. Use --help for usage."
+    ;;
+esac

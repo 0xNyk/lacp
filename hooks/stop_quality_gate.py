@@ -514,6 +514,60 @@ def _always_write_handoff(ctx: Context) -> None:
     _generate_handoff_artifact(ctx)
 
 
+def _record_sms_episode(ctx: Context) -> None:
+    """Record this session as an SMS episode with significance scoring."""
+    try:
+        from self_memory_system import Episode, write_episode, compute_significance
+
+        # Collect context for significance scoring
+        files_modified = []
+        if ctx.transcript_path and os.path.isfile(ctx.transcript_path):
+            result = _cached_scan_transcript(ctx.transcript_path)
+            files_modified = result.get("files", [])[:20]
+
+        had_test_failures = False
+        try:
+            from hook_contracts import read_contract
+            checkpoint = read_contract("eval_checkpoint", ctx.session_id)
+            if checkpoint and checkpoint.get("fail_count", 0) > 0:
+                had_test_failures = True
+        except Exception:
+            pass
+
+        # Compute significance (Damasio: emotional weighting)
+        significance = compute_significance(
+            ctx.stripped,
+            had_test_failures=had_test_failures,
+            files_changed=len(files_modified),
+            was_blocked=False,  # We're in the stop hook, not blocked
+        )
+
+        episode = Episode(
+            session_id=ctx.session_id or "unknown",
+            project=ctx.cwd or "",
+            started_at="",  # Will be filled from session_start contract
+            summary=ctx.stripped[:200] if ctx.stripped else "",
+            files_touched=files_modified,
+            significance=significance,
+        )
+
+        # Try to get started_at from session start contract
+        try:
+            contract = read_contract("session_start", ctx.session_id)
+            if contract and contract.get("started_at"):
+                episode.started_at = contract["started_at"]
+        except Exception:
+            pass
+
+        if not episode.started_at:
+            episode.started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        write_episode(episode)
+        _debug(f"SMS: episode recorded (significance={significance:.2f}, files={len(files_modified)})")
+    except Exception as e:
+        _debug(f"SMS: failed to record episode: {e}")
+
+
 # -- Ollama LLM evaluation (criteria-based scoring) --
 
 SCORING_SYSTEM_MSG = (
@@ -804,6 +858,9 @@ def main() -> None:
 
     # 3.5. Always write handoff artifact on non-trivial stop attempts
     _always_write_handoff(ctx)
+
+    # 3.6. Record SMS episode (psychology-informed memory)
+    _record_sms_episode(ctx)
 
     # 4. Heuristic rationalization
     heuristic_hits, heuristic_matched = check_heuristic_rationalization(ctx)

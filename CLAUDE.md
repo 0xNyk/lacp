@@ -109,6 +109,29 @@ All configurable via env or `.env` file. Key ones:
 
 > Full list of 40+ environment variables with defaults: `config/lacp.env.example`
 
+## Self-Memory System (SMS)
+
+Psychology-informed agent memory based on Conway's Self-Memory System (2005).
+
+Five principles implemented:
+1. **Hierarchical temporal** — episodes grouped into epochs (life periods)
+2. **Goal-relevant filtering** — focus brief gates memory retrieval
+3. **Emotional weighting** — significance scoring (0-1) biases recall
+4. **Narrative coherence** — agent story arc across sessions
+5. **Co-emergent self-model** — identity ↔ memory feedback loop
+
+```bash
+lacp sms context           # what SMS injects at session start
+lacp sms episodes          # recorded episodes with significance
+lacp sms significance      # significance distribution
+lacp sms synthesize        # create epoch from recent episodes
+lacp sms narrative         # view/update agent narrative
+lacp sms self-model        # view/update evolving self-model
+```
+
+Core module: `hooks/self_memory_system.py`
+Data: `~/.lacp/sms/` (episodes.jsonl, epochs.jsonl, narrative.json, self-model.json)
+
 ## Git Workflow
 
 - Branch from `main` for features: `feat/<name>`

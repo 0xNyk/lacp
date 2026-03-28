@@ -24,6 +24,7 @@ Core:
   watch         Real-time session monitoring dashboard
   handoff       View/manage session handoff artifacts
   scaffold-audit Identify pipeline stages no longer load-bearing
+  sms           Self-Memory System — psychology-informed agent memory
   tools         Machine-readable catalog of all LACP commands
   console       Interactive LACP shell with slash commands
   time          Monthly project/client session time tracking
@@ -127,6 +128,9 @@ case "${cmd}" in
     ;;
   scaffold-audit)
     exec "${ROOT}/bin/lacp-scaffold-audit" "$@"
+    ;;
+  sms)
+    exec "${ROOT}/bin/lacp-sms" "$@"
     ;;
   tools)
     exec "${ROOT}/bin/lacp-tools" "$@"

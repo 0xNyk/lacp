@@ -226,6 +226,15 @@ def main() -> None:
     except Exception:
         pass
 
+    # Self-Memory System context injection (Conway SMS — psychology-informed)
+    try:
+        from self_memory_system import build_session_context
+        sms_context = build_session_context()
+        if sms_context:
+            parts.append(f"Agent memory (SMS):\n{sms_context}")
+    except Exception:
+        pass  # SMS is optional — fail silently
+
     # LACP context mode
     mode = os.getenv("LACP_CONTEXT_MODE", "").strip()
     if mode:
