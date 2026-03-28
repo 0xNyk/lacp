@@ -39,5 +39,17 @@
     "metric_direction": "maximize",
     "baseline_command": "bin/lacp-test --quick",
     "iteration_minutes": 1
+  },
+  "health": {
+    "description": "Unified health score optimization across all diagnostic sources",
+    "parameters": [
+      {"name": "QUALITY_GATE_THRESHOLD", "env": "LACP_QUALITY_GATE_THRESHOLD", "type": "float", "min": 1.5, "max": 4.0, "default": 2.5, "step": 0.1},
+      {"name": "stale_days", "env": "LACP_BRAIN_STALE_DAYS", "type": "int", "min": 14, "max": 60, "default": 30, "step": 5}
+    ],
+    "eval_command": "bin/lacp-health-snapshot --json",
+    "metric_jq": ".health_score",
+    "metric_direction": "maximize",
+    "baseline_command": "bin/lacp-test --quick",
+    "iteration_minutes": 2
   }
 }
