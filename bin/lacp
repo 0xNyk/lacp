@@ -119,7 +119,30 @@ if [[ $# -lt 1 ]]; then
   exec "${ROOT}/bin/lacp-stream"
 fi
 
+# Stream flags → forward everything to lacp-stream
+case "$1" in
+  --mode|--resume|--agent|--bypass|--print|--profile)
+    exec "${ROOT}/bin/lacp-stream" "$@"
+    ;;
+esac
+
 cmd="$1"
+
+# If first arg is an unknown flag, forward to lacp-stream
+if [[ "${cmd}" == -* && "${cmd}" != "-h" && "${cmd}" != "--help" ]]; then
+  exec "${ROOT}/bin/lacp-stream" "$@"
+fi
+
+# If first arg is not a known subcommand (no lacp-<cmd> binary exists),
+# treat it as bare prompt text for lacp-stream (one-shot mode)
+if [[ "${cmd}" != "help" && ! -x "${ROOT}/bin/lacp-${cmd}" ]]; then
+  # Check aliases (start→onboard, status→status-report, run→sandbox-run)
+  case "${cmd}" in
+    start|onboard|status|run) ;;  # known aliases — fall through
+    *) exec "${ROOT}/bin/lacp-stream" "$@" ;;
+  esac
+fi
+
 shift || true
 
 case "${cmd}" in
