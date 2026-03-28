@@ -226,6 +226,24 @@ def main() -> None:
     except Exception:
         pass
 
+    # Health snapshot context — inject latest health score
+    try:
+        snapshot_dir = Path.home() / ".lacp" / "health" / "snapshots"
+        if snapshot_dir.is_dir():
+            snapshots = sorted(snapshot_dir.glob("snapshot-*.json"))
+            if snapshots:
+                latest = json.loads(snapshots[-1].read_text())
+                score = latest.get("health_score", "?")
+                penalties = latest.get("penalties", [])
+                age_h = int((time.time() - snapshots[-1].stat().st_mtime) / 3600)
+                if age_h < 24:
+                    health_line = f"System health: {score}/100 ({age_h}h ago)"
+                    if penalties:
+                        health_line += f" [{'; '.join(penalties[:3])}]"
+                    parts.append(health_line)
+    except Exception:
+        pass
+
     # Self-Memory System context injection (Conway SMS — psychology-informed)
     try:
         from self_memory_system import build_session_context

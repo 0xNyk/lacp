@@ -25,6 +25,7 @@ Core:
   handoff       View/manage session handoff artifacts
   scaffold-audit Identify pipeline stages no longer load-bearing
   eval          Session quality evaluation report
+  health-snapshot Unified health snapshot across all diagnostic sources
   research      Autoresearch — autonomous self-improvement experiments
   sms           Self-Memory System — psychology-informed agent memory
   tools         Machine-readable catalog of all LACP commands
@@ -133,6 +134,9 @@ case "${cmd}" in
     ;;
   eval)
     exec "${ROOT}/bin/lacp-eval" "$@"
+    ;;
+  health-snapshot)
+    exec "${ROOT}/bin/lacp-health-snapshot" "$@"
     ;;
   research)
     exec "${ROOT}/bin/lacp-research" "$@"

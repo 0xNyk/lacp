@@ -20,9 +20,9 @@ assert_eq() {
 "${ROOT}/bin/lacp-research" --help >/dev/null 2>&1
 pass=$((pass + 1))
 
-# --- Test 2: Surfaces lists 3 surfaces ---
+# --- Test 2: Surfaces lists 4 surfaces ---
 count=$("${ROOT}/bin/lacp-research" surfaces --json 2>&1 | jq 'keys | length')
-assert_eq "3 surfaces" "3" "${count}"
+assert_eq "4 surfaces" "4" "${count}"
 
 # --- Test 3: Dry run produces results ---
 dry=$("${ROOT}/bin/lacp-research" run --surface sms --iterations 2 --dry-run --json 2>&1 | jq '.iterations')
