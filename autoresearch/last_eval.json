@@ -1,29 +1,29 @@
 {
-  "composite_score": 78.1534,
+  "composite_score": 78.5302,
   "scores": {
-    "brain": 86.9565,
-    "system": 88.2022,
-    "knowledge": 50.0
+    "brain": 93.4783,
+    "system": 96.1111,
+    "knowledge": 30.0
   },
   "details": {
     "brain": {
-      "pass": 18,
-      "warn": 4,
-      "fail": 1,
+      "pass": 20,
+      "warn": 3,
+      "fail": 0,
       "total": 23
     },
     "system": {
-      "pass": 74,
-      "warn": 9,
-      "fail": 6,
-      "total": 89
+      "pass": 83,
+      "warn": 7,
+      "fail": 0,
+      "total": 90
     },
     "knowledge": {
       "pass": 0,
-      "warn": 1,
-      "fail": 0,
-      "total": 1
+      "warn": 3,
+      "fail": 2,
+      "total": 5
     }
   },
-  "elapsed_seconds": 4.8
+  "elapsed_seconds": 6.0
 }
