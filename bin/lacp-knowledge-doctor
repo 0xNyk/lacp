@@ -132,6 +132,12 @@ for path in md_files:
             continue
         links.append(target)
         resolved = note_titles.get(target) or note_relpaths.get(target)
+        # Handle relative paths like ../DIRECTIVE
+        if not resolved and target.startswith(".."):
+            rel_resolved = (path.parent / target).resolve()
+            rel_md = rel_resolved.with_suffix(".md") if not str(rel_resolved).endswith(".md") else rel_resolved
+            if rel_md.exists() and rel_md.stem in note_titles:
+                resolved = note_titles[rel_md.stem]
         if resolved:
             backlinks[str(resolved)] += 1
             outlinks[str(path)] += 1
