@@ -55,6 +55,14 @@ root = pathlib.Path(sys.argv[1]).expanduser().resolve()
 md_files = sorted([p for p in root.rglob("*.md") if p.is_file()])
 
 note_titles = {p.stem: p for p in md_files}
+# Also index by relative path (without .md) for path-based wikilinks like [[research/note]]
+note_relpaths = {}
+for p in md_files:
+    try:
+        rel = str(p.relative_to(root)).removesuffix(".md")
+        note_relpaths[rel] = p
+    except ValueError:
+        pass
 backlinks = {str(p): 0 for p in md_files}
 outlinks = {str(p): 0 for p in md_files}
 
@@ -123,8 +131,9 @@ for path in md_files:
         if not target:
             continue
         links.append(target)
-        if target in note_titles:
-            backlinks[str(note_titles[target])] += 1
+        resolved = note_titles.get(target) or note_relpaths.get(target)
+        if resolved:
+            backlinks[str(resolved)] += 1
             outlinks[str(path)] += 1
         else:
             unresolved_links.append({"file": str(path), "target": target})
