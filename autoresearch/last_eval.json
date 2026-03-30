@@ -20,10 +20,10 @@
     },
     "knowledge": {
       "pass": 0,
-      "warn": 3,
+      "warn": 2,
       "fail": 0,
-      "total": 3
+      "total": 2
     }
   },
-  "elapsed_seconds": 7.3
+  "elapsed_seconds": 5.7
 }
