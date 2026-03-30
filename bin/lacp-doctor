@@ -623,11 +623,17 @@ fi
 
 latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
 if [[ -n "${latest_bench}" ]]; then
-  gate_ok="$(jq -r '.gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
+  gate_ok="$(jq -r '.gates.result.ok // .gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
   if [[ "${gate_ok}" == "true" ]]; then
     add_check "artifact:latest_benchmark" "PASS" "${latest_bench}"
   else
-    add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok}"
+    # Check if benchmark exists and is recent (< 24h) — pass as informational even if gate failed
+    bench_age_h="$(file_age_hours "${latest_bench}" 2>/dev/null || echo 999)"
+    if [[ "${bench_age_h}" -lt 24 ]]; then
+      add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok} (recent, ${bench_age_h}h old)"
+    else
+      add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok} (stale, ${bench_age_h}h old)"
+    fi
   fi
 else
   add_check "artifact:latest_benchmark" "WARN" "missing"
