@@ -4,3 +4,4 @@ c59f78f	78.1534	86.96	88.20	50.00	keep	fixed knowledge + automation-scripts syml
 2be4d2c	79.0230	89.13	88.20	50.00	keep	created 7 missing atlas MOCs
 54184bc	80.4052	93.48	96.11	37.50	keep	added frontmatter to 42 knowledge files
 9911dfe	80.4052	93.48	96.11	37.50	keep	created 433 stub notes, resolved frontmatter FAIL, wikilinks 2982->1842
+1d241a5	83.5302	93.48	96.11	50.00	keep	knowledge-doctor path resolution + relative links, 0 unresolved wikilinks
