@@ -1,9 +1,9 @@
 {
-  "composite_score": 83.5302,
+  "composite_score": 94.6413,
   "scores": {
     "brain": 93.4783,
     "system": 96.1111,
-    "knowledge": 50.0
+    "knowledge": 94.4444
   },
   "details": {
     "brain": {
@@ -19,11 +19,11 @@
       "total": 90
     },
     "knowledge": {
-      "pass": 0,
+      "pass": 8,
       "warn": 1,
       "fail": 0,
-      "total": 1
+      "total": 9
     }
   },
-  "elapsed_seconds": 6.4
+  "elapsed_seconds": 5.6
 }
