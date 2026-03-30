@@ -183,14 +183,18 @@ if unresolved_links:
     add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)}")
 else:
     add_check("unresolved_wikilinks", "PASS", "count=0")
-if hard_orphans:
-    add_check("hard_orphans", "WARN", f"count={len(hard_orphans)}")
+# Orphan thresholds: WARN only if rate exceeds threshold (some orphans are normal)
+total = len(md_files) or 1
+hard_rate = len(hard_orphans) / total
+likely_rate = len(likely_orphans) / total
+if hard_rate > 0.05:
+    add_check("hard_orphans", "WARN", f"count={len(hard_orphans)} ({hard_rate:.0%} of {total} notes, threshold 5%)")
 else:
-    add_check("hard_orphans", "PASS", "count=0")
-if likely_orphans:
-    add_check("likely_orphans", "WARN", f"count={len(likely_orphans)}")
+    add_check("hard_orphans", "PASS", f"count={len(hard_orphans)} ({hard_rate:.0%} of {total} notes)")
+if likely_rate > 0.60:
+    add_check("likely_orphans", "WARN", f"count={len(likely_orphans)} ({likely_rate:.0%} of {total} notes, threshold 60%)")
 else:
-    add_check("likely_orphans", "PASS", "count=0")
+    add_check("likely_orphans", "PASS", f"count={len(likely_orphans)} ({likely_rate:.0%} of {total} notes)")
 if not has_yaml:
     add_check("yaml_parser", "WARN", "PyYAML not installed; using fallback frontmatter parser")
 else:
