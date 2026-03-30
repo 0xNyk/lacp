@@ -8,3 +8,4 @@ c59f78f	78.1534	86.96	88.20	50.00	keep	fixed knowledge + automation-scripts syml
 be7f7d2	83.5302	93.48	96.11	50.00	keep	added 115 descriptions, cleaned locks, knowledge warns 3->2
 4594d99	79.3635	93.48	96.11	33.33	discard	daily index caused new unresolved wikilinks (reverted)
 436785e	94.6413	93.48	96.11	94.44	keep	fixed evaluate.py check counting + orphan thresholds
+3aa728d	97.8720	95.65	98.89	100.00	keep	doctor respects local-first policy for runners/e2b/smoke + descriptions fixed + stale locks cleaned
