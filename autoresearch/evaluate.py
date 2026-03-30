@@ -39,12 +39,16 @@ def run_doctor(cmd: list[str], name: str) -> dict:
         data = json.loads(result.stdout)
         summary = data.get("summary", {})
         checks = data.get("checks", [])
+        # Count from checks directly (more reliable than summary which varies per doctor)
+        pass_count = sum(1 for c in checks if c.get("status") == "PASS")
+        warn_count = sum(1 for c in checks if c.get("status") == "WARN")
+        fail_count = sum(1 for c in checks if c.get("status") == "FAIL")
         return {
             "name": name,
-            "pass": summary.get("pass", 0),
-            "warn": summary.get("warn", 0),
-            "fail": summary.get("fail", 0),
-            "total": summary.get("pass", 0) + summary.get("warn", 0) + summary.get("fail", 0),
+            "pass": pass_count,
+            "warn": warn_count,
+            "fail": fail_count,
+            "total": pass_count + warn_count + fail_count,
             "checks": checks,
             "ok": data.get("ok", False),
         }
