@@ -1,2 +1,3 @@
 commit	composite_score	brain	system	knowledge	status	description
 76817e6	73.8056	76.09	88.20	50.00	keep	baseline
+c59f78f	78.1534	86.96	88.20	50.00	keep	fixed knowledge + automation-scripts symlinks, created daily note

@@ -1,15 +1,15 @@
 {
-  "composite_score": 73.8056,
+  "composite_score": 78.1534,
   "scores": {
-    "brain": 76.087,
+    "brain": 86.9565,
     "system": 88.2022,
     "knowledge": 50.0
   },
   "details": {
     "brain": {
-      "pass": 15,
-      "warn": 5,
-      "fail": 3,
+      "pass": 18,
+      "warn": 4,
+      "fail": 1,
       "total": 23
     },
     "system": {
@@ -25,5 +25,5 @@
       "total": 1
     }
   },
-  "elapsed_seconds": 5.5
+  "elapsed_seconds": 4.8
 }
