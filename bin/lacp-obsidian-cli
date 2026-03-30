@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-obsidian-cli <command> [options]
+
+Thin wrapper for the official Obsidian CLI (1.12+).
+Handles vault targeting and error reporting.
+
+Commands:
+  check                 Verify CLI installed, on PATH, Obsidian running, vault accessible
+  read <note>           Read a note from the vault
+  search <query>        Search notes in the vault
+  doctor                Full diagnostic (version, vault, connectivity)
+
+Options:
+  --vault <path>        Override vault path (default: $LACP_OBSIDIAN_VAULT or manifest)
+  --json                JSON output
+  -h, --help            Show this help
+
+Environment:
+  LACP_OBSIDIAN_VAULT   Default vault path
+
+Note: Requires Obsidian 1.12+ with CLI enabled.
+      This is separate from lacp-obsidian (config management).
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+VAULT_ROOT="${LACP_OBSIDIAN_VAULT:-}"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vault) VAULT_ROOT="$2"; shift 2 ;;
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) die "Unknown option: $1" ;;
+    *) break ;;
+  esac
+done
+
+resolve_vault() {
+  if [[ -n "${VAULT_ROOT}" && -d "${VAULT_ROOT}" ]]; then
+    return 0
+  fi
+  local manifest="${ROOT}/config/obsidian/manifest.json"
+  if [[ -f "${manifest}" ]]; then
+    local mp
+    mp="$(python3 -c "
+import json, os, sys
+m = json.loads(open(sys.argv[1]).read())
+p = m.get('vault_path', '')
+print(os.path.expanduser(p) if p else '')
+" "${manifest}" 2>/dev/null || true)"
+    if [[ -n "${mp}" && -d "${mp}" ]]; then
+      VAULT_ROOT="${mp}"
+      return 0
+    fi
+  fi
+  if [[ -z "${VAULT_ROOT}" ]]; then
+    VAULT_ROOT="${HOME}/obsidian/vault"
+  fi
+}
+
+require_obsidian_cli() {
+  if ! command -v obsidian >/dev/null 2>&1; then
+    die "obsidian CLI not found on PATH. Install Obsidian 1.12+ and enable CLI."
+  fi
+}
+
+check_cmd_fn() {
+  resolve_vault
+  local ok=true
+  local checks=()
+
+  # CLI binary
+  if command -v obsidian >/dev/null 2>&1; then
+    local ver
+    ver="$(obsidian version 2>/dev/null || echo "unknown")"
+    checks+=("PASS|cli_binary|obsidian CLI available (${ver})")
+  else
+    checks+=("FAIL|cli_binary|obsidian CLI not found on PATH")
+    ok=false
+  fi
+
+  # Obsidian.app running
+  if pgrep -q "Obsidian" 2>/dev/null; then
+    checks+=("PASS|obsidian_app|Obsidian.app running")
+  else
+    checks+=("WARN|obsidian_app|Obsidian.app not running (CLI may not respond)")
+  fi
+
+  # Vault accessible
+  if [[ -d "${VAULT_ROOT}" ]]; then
+    checks+=("PASS|vault_path|${VAULT_ROOT}")
+  else
+    checks+=("FAIL|vault_path|${VAULT_ROOT} not found")
+    ok=false
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json, sys
+checks = []
+for item in sys.argv[1:]:
+    parts = item.split('|', 2)
+    checks.append({'status': parts[0], 'name': parts[1], 'detail': parts[2]})
+ok = all(c['status'] != 'FAIL' for c in checks)
+print(json.dumps({'ok': ok, 'checks': checks}, indent=2))
+" "${checks[@]}"
+  else
+    for c in "${checks[@]}"; do
+      IFS='|' read -r status name detail <<< "${c}"
+      printf '%-5s %-20s %s\n' "${status}" "${name}" "${detail}"
+    done
+    if [[ "${ok}" == "false" ]]; then
+      exit 1
+    fi
+  fi
+}
+
+read_cmd_fn() {
+  require_obsidian_cli
+  resolve_vault
+  local note="${1:-}"
+  [[ -n "${note}" ]] || die "Usage: lacp-obsidian-cli read <note-path>"
+  obsidian read file="${note}" vault="${VAULT_ROOT}"
+}
+
+search_cmd_fn() {
+  require_obsidian_cli
+  resolve_vault
+  local query="${1:-}"
+  [[ -n "${query}" ]] || die "Usage: lacp-obsidian-cli search <query>"
+  obsidian search query="${query}" vault="${VAULT_ROOT}"
+}
+
+doctor_cmd_fn() {
+  resolve_vault
+  local checks=()
+
+  # Version
+  if command -v obsidian >/dev/null 2>&1; then
+    local ver
+    ver="$(obsidian version 2>/dev/null || echo "error")"
+    checks+=("PASS|version|${ver}")
+  else
+    checks+=("FAIL|version|obsidian CLI not on PATH")
+  fi
+
+  # Obsidian.app
+  if pgrep -q "Obsidian" 2>/dev/null; then
+    checks+=("PASS|app_running|Obsidian.app running")
+  else
+    checks+=("WARN|app_running|Obsidian.app not running")
+  fi
+
+  # Vault path
+  if [[ -d "${VAULT_ROOT}" ]]; then
+    local note_count
+    note_count="$(find "${VAULT_ROOT}" -name '*.md' -type f 2>/dev/null | wc -l | tr -d ' ')"
+    checks+=("PASS|vault|${VAULT_ROOT} (${note_count} notes)")
+  else
+    checks+=("FAIL|vault|${VAULT_ROOT} not found")
+  fi
+
+  # .obsidian dir
+  if [[ -d "${VAULT_ROOT}/.obsidian" ]]; then
+    checks+=("PASS|obsidian_config|${VAULT_ROOT}/.obsidian exists")
+  else
+    checks+=("WARN|obsidian_config|${VAULT_ROOT}/.obsidian not found")
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json, sys
+checks = []
+for item in sys.argv[1:]:
+    parts = item.split('|', 2)
+    checks.append({'status': parts[0], 'name': parts[1], 'detail': parts[2]})
+fail = sum(1 for c in checks if c['status'] == 'FAIL')
+warn = sum(1 for c in checks if c['status'] == 'WARN')
+ok = fail == 0
+print(json.dumps({'ok': ok, 'summary': {'pass': len(checks) - fail - warn, 'warn': warn, 'fail': fail}, 'checks': checks}, indent=2))
+" "${checks[@]}"
+  else
+    echo "Obsidian CLI Doctor"
+    echo "==================="
+    for c in "${checks[@]}"; do
+      IFS='|' read -r status name detail <<< "${c}"
+      printf '%-5s %-20s %s\n' "${status}" "${name}" "${detail}"
+    done
+  fi
+}
+
+case "${sub}" in
+  check)  check_cmd_fn ;;
+  read)   read_cmd_fn "$@" ;;
+  search) search_cmd_fn "$@" ;;
+  doctor) doctor_cmd_fn ;;
+  *)      die "Unknown subcommand: ${sub}. Run lacp-obsidian-cli --help" ;;
+esac

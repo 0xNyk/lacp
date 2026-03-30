@@ -122,11 +122,6 @@ servers['qmd'] = {
   'args': ['mcp'],
   'env': {'HOME': '~'}
 }
-servers['obsidian'] = {
-  'command': 'npx',
-  'args': ['-y', 'obsidian-mcp']
-}
-
 print(json.dumps(payload, indent=2) + '\n')
 PY
 )"

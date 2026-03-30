@@ -210,6 +210,14 @@ check_cmd git
 check_cmd ollama
 check_cmd docker
 
+# Obsidian CLI (official, 1.12+)
+if command -v obsidian >/dev/null 2>&1; then
+  obs_ver="$(obsidian version 2>/dev/null || echo "unknown")"
+  add_check "cmd:obsidian" "PASS" "$(command -v obsidian) (${obs_ver})"
+else
+  add_check "cmd:obsidian" "WARN" "obsidian CLI not found (optional, install Obsidian 1.12+)"
+fi
+
 # Ollama daemon + required models
 if command -v ollama >/dev/null 2>&1; then
   if curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then

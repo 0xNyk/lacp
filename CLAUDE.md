@@ -65,6 +65,17 @@ All configurable via env or `.env` file. Key ones:
 - `LACP_DRAFTS_ROOT` — article drafts root (default: `~/.lacp/drafts`)
 - `LACP_OBSIDIAN_VAULT` — Obsidian vault path (default: `~/obsidian/vault`)
 - `LACP_WRITE_VALIDATE_PATHS` — colon-separated paths for write validation
+
+## Obsidian Data Access
+
+`bin/lacp-obsidian-cli` wraps the official Obsidian CLI (1.12+) for vault data access:
+- `check` — verify CLI installed, app running, vault accessible
+- `read <note>` — read a note via official CLI
+- `search <query>` — search the vault
+- `doctor` — full CLI diagnostic
+
+This is separate from `bin/lacp-obsidian` (config management).
+The third-party `obsidian-mcp` npm package has been removed in favor of the official CLI.
 - `LACP_TAXONOMY_PATH` — taxonomy.json location for category validation
 
 ## Git Workflow

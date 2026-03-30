@@ -26,7 +26,7 @@ python3 - <<'PY' "${settings_path}"
 import json, sys
 p = json.load(open(sys.argv[1]))
 servers = p.get('mcpServers', {})
-required = {'memory','smart-connections','qmd','obsidian'}
+required = {'memory','smart-connections','qmd'}
 missing = required - set(servers.keys())
 if missing:
     raise SystemExit(f"missing mcp servers: {sorted(missing)}")

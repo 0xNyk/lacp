@@ -73,6 +73,7 @@ Required:
 
 Recommended:
 - `shellcheck`
+- `obsidian` CLI (Obsidian 1.12+ with CLI enabled — used for vault data access)
 
 ## Starter Guide
 
@@ -505,7 +506,8 @@ LACP now treats memory as an explicit 3-layer stack:
    - seeded files: `MEMORY.md`, `debugging.md`, `patterns.md`, `architecture.md`, `preferences.md`
 2. Layer 2: Knowledge Graph
    - Obsidian vault as persistent graph (`$LACP_OBSIDIAN_VAULT`)
-   - MCP wiring for `memory`, `smart-connections`, `qmd`, and `obsidian`
+   - MCP wiring for `memory`, `smart-connections`, `qmd`
+   - Obsidian CLI (1.12+) for direct vault read/search/write access
 3. Layer 3: Ingestion Pipeline
    - `bin/lacp brain-ingest` converts transcript/url/file inputs into structured notes
    - writes to `inbox/queue-generated/` and appends to `inbox/queue-generated/index.md`
@@ -664,6 +666,7 @@ Notes:
 - `bin/lacp-brain-stack`: initialize/status official 3-layer memory stack (session memory scaffolding + MCP wiring)
 - `bin/lacp-brain-ingest`: ingest transcript/url/file into structured Obsidian queue note (`inbox/queue-generated/`)
 - `bin/lacp-obsidian`: manage Obsidian vault configuration as code (`status`, `audit`, `apply`, `backup`, `restore`, `plugins`, `graph-config`, `optimize`)
+- `bin/lacp-obsidian-cli`: thin wrapper for official Obsidian CLI (1.12+) for vault data access (`check`, `read`, `search`, `doctor`)
 - `bin/lacp-repo-research-sync`: mirror repo `docs/research/**/*.md` into Obsidian graph notes (`knowledge/graph/repo-research/`)
 - `bin/lacp-skill-sync-anthropic`: sync official Anthropic skills into local Claude/Codex skill paths
 - `bin/lacp-brain-expand`: automated brain expansion loop (config guard + session sync + research materialization + thresholded research graph promotion + repo/codebase sync + repo research mirror + weekly consolidation + mycelium-enhanced memory consolidation + agent-daily sync + inbox hygiene + doctor checks)
@@ -799,6 +802,7 @@ cd /path/to/lacp
 ./scripts/ci/test-install.sh
 ./scripts/ci/test-system-health.sh
 ./scripts/ci/test-obsidian-cli.sh
+./scripts/ci/test-obsidian-cli-integration.sh
 ./scripts/ci/test-brain-memory.sh
 ./scripts/ci/smoke.sh
 ```
