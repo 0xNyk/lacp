@@ -79,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       SANDBOX=1
       shift
       ;;
+    --progress)
+      PROGRESS=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -133,6 +137,12 @@ log_step() {
     WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
     FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
   esac
+
+  # Progress mode: emit structured JSON event to stderr for TUI consumption
+  if [[ "${PROGRESS:-0}" -eq 1 ]]; then
+    printf '{"event":"step","status":"%s","name":"%s","detail":"%s","ts":"%s"}\n' \
+      "${status}" "${name}" "${detail}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  fi
 }
 
 # Sandboxed execution wrapper: drops network access on macOS via sandbox-exec
