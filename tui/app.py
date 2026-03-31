@@ -73,15 +73,44 @@ def load_profile_data() -> dict:
 
 
 def gather_health() -> dict:
-    """Quick health data from doctor."""
-    try:
-        result = subprocess.run(
-            [str(LACP_ROOT / "bin" / "lacp-doctor"), "--json"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return json.loads(result.stdout)
-    except Exception:
-        return {"ok": False, "summary": {"pass": 0, "warn": 0, "fail": 1}}
+    """Quick health check without calling lacp-doctor (which is heavy and can trigger Obsidian)."""
+    summary = {"pass": 0, "warn": 0, "fail": 0}
+    ok = True
+
+    # Check key paths exist
+    for name, path in [
+        ("knowledge_root", KNOWLEDGE_ROOT),
+        ("automation", LACP_ROOT / "automation" / "scripts"),
+        ("registry", KNOWLEDGE_ROOT / "data" / "research" / "registry.json"),
+    ]:
+        if path.exists():
+            summary["pass"] += 1
+        else:
+            summary["warn"] += 1
+
+    # Check lock file health
+    lock = KNOWLEDGE_ROOT / "data" / ".consolidate-lock"
+    if lock.exists():
+        try:
+            holder = lock.read_text().strip()
+            age_s = time.time() - lock.stat().st_mtime
+            if holder and age_s > 3600:
+                summary["warn"] += 1  # stale lock
+            else:
+                summary["pass"] += 1
+        except Exception:
+            summary["pass"] += 1
+    else:
+        summary["pass"] += 1
+
+    # Check version file
+    if VERSION_FILE.exists():
+        summary["pass"] += 1
+    else:
+        summary["warn"] += 1
+
+    ok = summary["fail"] == 0
+    return {"ok": ok, "summary": summary}
 
 
 def gather_memory() -> dict:
