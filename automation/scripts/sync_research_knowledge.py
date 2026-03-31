@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import re
 import sys
@@ -21,7 +22,7 @@ DAILY_DIR = KNOWLEDGE_ROOT / "memory" / "daily"
 GRAPH_RESEARCH_DIR = KNOWLEDGE_ROOT / "graph" / "research"
 DATA_RESEARCH_DIR = KNOWLEDGE_ROOT / "data" / "research"
 REGISTRY_FILE = DATA_RESEARCH_DIR / "registry.json"
-INBOX_DIR = Path.home() / "obsidian" / "nyk" / "inbox"
+INBOX_DIR = Path(os.environ.get("LACP_OBSIDIAN_VAULT", str(Path.home() / "obsidian" / "vault"))) / "inbox"
 TAXONOMY_FILE = DATA_RESEARCH_DIR / "taxonomy.json"
 QUARANTINE_FILE = GRAPH_RESEARCH_DIR / "quarantine-candidates.md"
 
@@ -134,6 +135,26 @@ class ResearchSignal:
     source: str
     text: str
     urls: list[str]
+    # Multi-agent provenance fields (optional, backward compatible)
+    agent_id: str = ""          # unique identifier for the writing agent
+    confidence: float = 0.7     # 0.0-1.0 how certain the source agent was
+    evidence_type: str = ""     # "observation", "inference", "synthesis", "user-stated"
+
+
+def detect_agent_id() -> str:
+    """Auto-detect the current agent identity from environment.
+
+    Checks (in order): LACP_AGENT_ID env var, USER env var, hostname.
+    Returns a stable identifier suitable for provenance tracking.
+    """
+    agent_id = os.environ.get("LACP_AGENT_ID", "")
+    if agent_id:
+        return agent_id
+    user = os.environ.get("USER", "")
+    if user:
+        return user
+    import socket
+    return socket.gethostname()
 
 
 def clean_text(value: str, limit: int = 280) -> str:
@@ -1587,10 +1608,10 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
                     "first_seen": signal.day,
                     "last_seen": signal.day,
                     # Bi-temporal fields (Graphiti pattern)
-                    "event_time": signal.day,      # when the fact/event occurred
-                    "ingested_at": now_iso,         # when we learned about it
-                    "valid_from": signal.day,       # temporal validity start
-                    "valid_until": None,            # None = still valid
+                    "event_time": signal.day,
+                    "ingested_at": now_iso,
+                    "valid_from": signal.day,
+                    "valid_until": None,
                     "days": [],
                     "sources": {},
                     "categories": classify_categories(
@@ -1602,6 +1623,14 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
                     "evidence_urls": signal.urls,
                     "observations": [],
                     "storage_strength": 0.8 if pe_class == "novel" else 0.0,
+                    # Multi-agent write provenance
+                    "provenance": {
+                        "created_by": signal.agent_id or signal.source,
+                        "created_at": now_iso,
+                        "confidence": signal.confidence,
+                        "evidence_type": signal.evidence_type or "observation",
+                        "write_log": [],
+                    },
                 }
                 if new_vec:
                     entry["embedding"] = new_vec
@@ -1657,6 +1686,32 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
         # Track latest ingestion
         if "ingested_at" not in entry:
             entry["ingested_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        # Multi-agent write provenance: append to write log
+        provenance = entry.get("provenance", {})
+        if not isinstance(provenance, dict):
+            provenance = {}
+        write_log = provenance.get("write_log", [])
+        if not isinstance(write_log, list):
+            write_log = []
+        agent = signal.agent_id or signal.source
+        write_entry = {
+            "agent": agent,
+            "day": signal.day,
+            "confidence": signal.confidence,
+            "evidence_type": signal.evidence_type or "observation",
+        }
+        write_log.append(write_entry)
+        provenance["write_log"] = write_log[-20:]  # keep last 20 writes
+        provenance["last_writer"] = agent
+        provenance["last_write_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        # Update confidence: take max across all writers (most confident source wins)
+        max_confidence = max(
+            (w.get("confidence", 0.7) for w in write_log),
+            default=0.7,
+        )
+        provenance["confidence"] = max_confidence
+        entry["provenance"] = provenance
 
         items[item_id] = entry
         updated += 1
