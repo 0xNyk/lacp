@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp watch [options]
+
+Real-time monitoring dashboard for LACP agent sessions.
+
+Shows quality gate decisions, eval checkpoint results, handoff status,
+context pressure, and scaffold audit data as they happen.
+
+Options:
+  --tail N          Number of recent telemetry entries (default: 20)
+  --follow          Continuously watch for new entries (like tail -f)
+  --session <id>    Filter to specific session
+  --hook <name>     Filter to specific hook (stop, checkpoint, etc.)
+  --json            Raw JSON output (for piping)
+  --summary         Show session summary instead of live feed
+  -h, --help        Show help
+
+Examples:
+  lacp watch                    # last 20 telemetry entries
+  lacp watch --follow           # live stream of hook decisions
+  lacp watch --summary          # session-level health overview
+  lacp watch --session abc123   # filter to session
+EOF
+}
+
+TAIL_N=20
+FOLLOW=0
+SESSION_FILTER=""
+HOOK_FILTER=""
+AS_JSON=0
+SUMMARY=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tail)     TAIL_N="$2"; shift 2 ;;
+    --follow)   FOLLOW=1; shift ;;
+    --session)  SESSION_FILTER="$2"; shift 2 ;;
+    --hook)     HOOK_FILTER="$2"; shift 2 ;;
+    --json)     AS_JSON=1; shift ;;
+    --summary)  SUMMARY=1; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *)          die "Unknown argument: $1" ;;
+  esac
+done
+
+TELEMETRY_FILE="${HOME}/.local/share/claude-hooks/telemetry.jsonl"
+
+if [[ ! -f "${TELEMETRY_FILE}" ]]; then
+  die "No telemetry file at ${TELEMETRY_FILE}. Run an agent session first."
+fi
+
+if [[ "${SUMMARY}" -eq 1 ]]; then
+  # Session summary mode
+  python3 - "${TELEMETRY_FILE}" "${SESSION_FILTER}" "${AS_JSON}" <<'PYTHON'
+import json
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+telemetry_file = sys.argv[1]
+session_filter = sys.argv[2]
+as_json = sys.argv[3] == "1"
+
+cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+sessions = defaultdict(lambda: {
+    "decisions": Counter(),
+    "first_seen": None,
+    "last_seen": None,
+    "hooks": Counter(),
+    "total": 0,
+})
+
+for line in Path(telemetry_file).read_text().splitlines():
+    if not line.strip():
+        continue
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+
+    ts_str = entry.get("ts", "")
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        if ts < cutoff:
+            continue
+    except (ValueError, TypeError):
+        continue
+
+    sid = entry.get("session_id", "unknown")
+    if session_filter and session_filter not in sid:
+        continue
+
+    s = sessions[sid]
+    s["total"] += 1
+    s["decisions"][entry.get("decision", "?")] += 1
+    s["hooks"][entry.get("hook", "?")] += 1
+
+    if s["first_seen"] is None or ts_str < s["first_seen"]:
+        s["first_seen"] = ts_str
+    if s["last_seen"] is None or ts_str > s["last_seen"]:
+        s["last_seen"] = ts_str
+
+if as_json:
+    out = []
+    for sid, s in sorted(sessions.items(), key=lambda x: x[1]["last_seen"] or "", reverse=True):
+        out.append({
+            "session_id": sid,
+            "events": s["total"],
+            "decisions": dict(s["decisions"]),
+            "hooks": dict(s["hooks"]),
+            "first_seen": s["first_seen"],
+            "last_seen": s["last_seen"],
+        })
+    print(json.dumps(out[:20], indent=2))
+else:
+    print(f"Session Summary (last 7 days, {len(sessions)} sessions)")
+    print()
+    for sid, s in sorted(sessions.items(), key=lambda x: x[1]["last_seen"] or "", reverse=True)[:20]:
+        blocks = s["decisions"].get("block", 0)
+        allows = s["decisions"].get("allow", 0) + s["decisions"].get("skip", 0)
+        marker = " !!!" if blocks > 0 else ""
+        print(f"  {sid[:20]:20s}  events={s['total']:4d}  "
+              f"allow={allows:3d}  block={blocks:2d}{marker}  "
+              f"last={s['last_seen'][:19] if s['last_seen'] else '?'}")
+    print()
+
+    # Handoff status
+    handoff_dir = Path.home() / ".lacp" / "handoffs"
+    if handoff_dir.is_dir():
+        handoffs = list(handoff_dir.glob("*-latest.json"))
+        if handoffs:
+            print(f"Active handoffs: {len(handoffs)}")
+            for h in sorted(handoffs, key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+                age_h = int((datetime.now().timestamp() - h.stat().st_mtime) / 3600)
+                try:
+                    data = json.loads(h.read_text())
+                    branch = data.get("git_branch", "?")
+                    status = data.get("test_status", "?")
+                    print(f"    {h.stem[:20]:20s}  {age_h}h old  branch={branch}  tests={status}")
+                except Exception:
+                    print(f"    {h.stem[:20]:20s}  {age_h}h old")
+            print()
+
+    # Scaffold audit mini-report
+    total = sum(s["total"] for s in sessions.values())
+    blocks = sum(s["decisions"].get("block", 0) for s in sessions.values())
+    block_pct = (blocks / total * 100) if total > 0 else 0
+    print(f"Quality gate: {total} events, {blocks} blocks ({block_pct:.1f}%)")
+PYTHON
+  exit $?
+fi
+
+# Live/tail mode
+if [[ "${FOLLOW}" -eq 1 ]]; then
+  log "Watching telemetry (Ctrl+C to stop)..."
+  echo ""
+
+  # Use tail -f with jq formatting
+  tail -f "${TELEMETRY_FILE}" 2>/dev/null | while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+
+    # Apply filters
+    if [[ -n "${SESSION_FILTER}" ]]; then
+      echo "${line}" | grep -q "${SESSION_FILTER}" || continue
+    fi
+    if [[ -n "${HOOK_FILTER}" ]]; then
+      echo "${line}" | grep -q "\"hook\":\"${HOOK_FILTER}\"" || continue
+    fi
+
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      echo "${line}"
+    else
+      # Pretty-print
+      python3 -c "
+import json, sys
+try:
+    e = json.loads(sys.argv[1])
+    ts = e.get('ts', '?')[:19]
+    hook = e.get('hook', '?')
+    decision = e.get('decision', '?')
+    reason = e.get('reason', '')[:80]
+    sid = e.get('session_id', '?')[:12]
+    marker = '!!!' if decision == 'block' else '   '
+    print(f'{marker} [{ts}] {hook:10s} {decision:6s}  {reason}  (session={sid})')
+except Exception:
+    print(sys.argv[1])
+" "${line}" 2>/dev/null || echo "${line}"
+    fi
+  done
+else
+  # Tail mode — show last N entries
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    tail -n "${TAIL_N}" "${TELEMETRY_FILE}" | while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      if [[ -n "${SESSION_FILTER}" ]]; then
+        echo "${line}" | grep -q "${SESSION_FILTER}" || continue
+      fi
+      if [[ -n "${HOOK_FILTER}" ]]; then
+        echo "${line}" | grep -q "\"hook\":\"${HOOK_FILTER}\"" || continue
+      fi
+      echo "${line}"
+    done
+  else
+    log "Last ${TAIL_N} telemetry entries:"
+    echo ""
+    tail -n "${TAIL_N}" "${TELEMETRY_FILE}" | while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      if [[ -n "${SESSION_FILTER}" ]]; then
+        echo "${line}" | grep -q "${SESSION_FILTER}" || continue
+      fi
+      if [[ -n "${HOOK_FILTER}" ]]; then
+        echo "${line}" | grep -q "\"hook\":\"${HOOK_FILTER}\"" || continue
+      fi
+      python3 -c "
+import json, sys
+try:
+    e = json.loads(sys.argv[1])
+    ts = e.get('ts', '?')[:19]
+    hook = e.get('hook', '?')
+    decision = e.get('decision', '?')
+    reason = e.get('reason', '')[:80]
+    sid = e.get('session_id', '?')[:12]
+    marker = '!!!' if decision == 'block' else '   '
+    print(f'{marker} [{ts}] {hook:10s} {decision:6s}  {reason}  (session={sid})')
+except Exception:
+    print(sys.argv[1])
+" "${line}" 2>/dev/null || echo "${line}"
+    done
+  fi
+fi

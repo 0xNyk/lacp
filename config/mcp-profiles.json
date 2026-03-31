@@ -29,7 +29,8 @@
         "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "true",
         "LACP_MCP_USE_TOOL_SEARCH": "true",
         "LACP_MCP_DEFER_TOOL_LOADING": "true",
-        "LACP_MCP_PREFER_CLI_FIRST": "true"
+        "LACP_MCP_PREFER_CLI_FIRST": "true",
+        "LACP_MCP_ORI_MNEMOS_ALLOWED": "true"
       },
       "mcp_auth_policy_patch": {
         "auth": {
@@ -44,10 +45,11 @@
         "LACP_MCP_MODE": "mcp-heavy",
         "LACP_MCP_MAX_CONNECTED_SERVERS": "12",
         "LACP_MCP_MAX_TOOL_DEFINITIONS": "120",
-        "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "false",
+        "LACP_MCP_REQUIRE_SERVER_ALLOWLIST": "true",
         "LACP_MCP_USE_TOOL_SEARCH": "true",
         "LACP_MCP_DEFER_TOOL_LOADING": "false",
-        "LACP_MCP_PREFER_CLI_FIRST": "false"
+        "LACP_MCP_PREFER_CLI_FIRST": "false",
+        "LACP_MCP_ORI_MNEMOS_ALLOWED": "true"
       },
       "mcp_auth_policy_patch": {
         "auth": {

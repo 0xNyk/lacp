@@ -123,7 +123,8 @@ build_payload() {
         schedule_loaded: ($schedule.loaded // false),
         wrappers_managed: (
           (($report.observability.wrappers.claude.managed // false) == true) and
-          (($report.observability.wrappers.codex.managed // false) == true)
+          (($report.observability.wrappers.codex.managed // false) == true) and
+          (($report.observability.wrappers.hermes.managed // false) == true)
         ),
         wrapper_routed_runs_total: ($report.observability.wrapper_routed_runs.total // 0),
         worktree_count: ($worktree.worktree_count // 0),
@@ -174,7 +175,7 @@ render_text() {
     "  orchestrate backends: tmux=\(.automations.orchestrate.backends.tmux.available // false) dmux=\(.automations.orchestrate.backends.dmux.available // false) claude_worktree=\(.automations.orchestrate.backends.claude_worktree.available // false)",
     "  worktrees: count=\(.automations.worktree.worktree_count // 0) root=\(.automations.worktree.worktree_root // "n/a")",
     "  swarm latest: \(.summary.swarm_latest // "none")",
-    "  wrappers managed: claude=\(.automations.wrappers_and_runs.wrappers.claude.managed // false) codex=\(.automations.wrappers_and_runs.wrappers.codex.managed // false)",
+    "  wrappers managed: claude=\(.automations.wrappers_and_runs.wrappers.claude.managed // false) codex=\(.automations.wrappers_and_runs.wrappers.codex.managed // false) hermes=\(.automations.wrappers_and_runs.wrappers.hermes.managed // false)",
     "  wrapper runs total: \(.summary.wrapper_routed_runs_total)",
     "  vendor: claude=\(.automations.vendor_watch.local_versions.claude.version // "missing") codex=\(.automations.vendor_watch.local_versions.codex.version // "missing") changed_sources=\(.summary.vendor_sources_changed)",
     "  vendor health: status=\(if .summary.vendor_degraded then "DEGRADED" else "OK" end) groups_ok=\(.summary.vendor_source_groups_ok)/\(.summary.vendor_source_groups_total) claude_sources_ok=\(.summary.vendor_claude_sources_ok) codex_sources_ok=\(.summary.vendor_codex_sources_ok)",

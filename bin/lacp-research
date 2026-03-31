@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp research <command> [options]
+
+Autoresearch — autonomous experimentation loops for LACP self-improvement.
+Pattern: modify parameter → run checks → keep or revert → log → repeat.
+
+Commands:
+  run --surface <name> [--iterations N] [--dry-run] [--json]
+  status [--json]
+  surfaces [--json]
+
+Surfaces: hooks, brain, sms
+
+Options:
+  --surface <name>   Optimization surface
+  --iterations N     Number of experiments (default: 5)
+  --param <name>     Specific parameter to tune
+  --baseline-trials N Number of baseline runs for noise estimation (default: 1)
+  --dry-run          Show what would change
+  --json             Machine-readable output
+EOF
+}
+
+SURFACES_FILE="${ROOT}/config/research/surfaces.json"
+EXPERIMENTS_DIR="${HOME}/.lacp/research"
+EXPERIMENTS_LOG="${EXPERIMENTS_DIR}/experiments.jsonl"
+
+if [[ $# -lt 1 ]]; then usage; exit 0; fi
+
+CMD="$1"; shift || true
+SURFACE="" ITERATIONS=5 PARAM="" BASELINE_TRIALS=1 DRY_RUN=0 AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --surface)    SURFACE="$2"; shift 2 ;;
+    --iterations) ITERATIONS="$2"; shift 2 ;;
+    --param)      PARAM="$2"; shift 2 ;;
+    --baseline-trials) BASELINE_TRIALS="$2"; shift 2 ;;
+    --dry-run)    DRY_RUN=1; shift ;;
+    --json)       AS_JSON=1; shift ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            die "Unknown argument: $1" ;;
+  esac
+done
+
+cmd_surfaces() {
+  python3 - "${SURFACES_FILE}" "${AS_JSON}" <<'PYTHON'
+import json, sys
+with open(sys.argv[1]) as f:
+    surfaces = json.load(f)
+if sys.argv[2] == "1":
+    print(json.dumps(surfaces, indent=2))
+else:
+    for name, cfg in surfaces.items():
+        params = ", ".join(p["name"] for p in cfg.get("parameters", []))
+        print(f"  {name:12s}  {cfg['description']}")
+        print(f"               params: {params}")
+        print(f"               command: {cfg.get('eval_command', 'n/a')}\n")
+PYTHON
+}
+
+cmd_run() {
+  [[ -n "${SURFACE}" ]] || die "--surface is required"
+  mkdir -p "${EXPERIMENTS_DIR}"
+
+  python3 - "${SURFACES_FILE}" "${SURFACE}" "${ITERATIONS}" "${PARAM}" "${DRY_RUN}" "${AS_JSON}" "${EXPERIMENTS_LOG}" "${ROOT}" "${BASELINE_TRIALS}" <<'PYTHON'
+import json, os, random, subprocess, sys, time
+
+surfaces_file, surface_name = sys.argv[1], sys.argv[2]
+iterations = int(sys.argv[3])
+param_filter, dry_run = sys.argv[4], sys.argv[5] == "1"
+as_json, experiments_log, lacp_root = sys.argv[6] == "1", sys.argv[7], sys.argv[8]
+baseline_trials = int(sys.argv[9]) if len(sys.argv) > 9 else 1
+
+with open(surfaces_file) as f:
+    surfaces = json.load(f)
+
+if surface_name not in surfaces:
+    print(f"Unknown surface: {surface_name}", file=sys.stderr)
+    raise SystemExit(1)
+
+cfg = surfaces[surface_name]
+params = cfg.get("parameters", [])
+run_cmd = cfg.get("eval_command", "")
+baseline_cmd = cfg.get("baseline_command", "")
+metric_jq = cfg.get("metric_jq", "")
+metric_direction = cfg.get("metric_direction", "maximize")  # "maximize" or "minimize"
+
+if param_filter:
+    params = [p for p in params if p["name"] == param_filter]
+    if not params:
+        print(f"Unknown parameter: {param_filter}", file=sys.stderr)
+        raise SystemExit(1)
+
+def run_check(cmd):
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120, cwd=lacp_root)
+        return r.returncode, r.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return 1, ""
+
+def extract_metric(output, jq_expr):
+    """Extract a numeric metric from JSON output using jq expression."""
+    if not jq_expr or not output:
+        return None
+    try:
+        r = subprocess.run(
+            ["jq", "-r", jq_expr],
+            input=output, capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            val = r.stdout.strip()
+            if val == "null":
+                return None
+            return float(val)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+    return None
+
+def is_improvement(old_metric, new_metric, direction, stddev=0.0):
+    """Check if new metric is better than old, accounting for noise.
+
+    With noise awareness: only accept if improvement exceeds 1 stddev.
+    """
+    if old_metric is None or new_metric is None:
+        return None  # Can't compare, fall back to exit-code
+    if direction == "minimize":
+        return new_metric < (old_metric - stddev)
+    return new_metric > (old_metric + stddev)  # maximize (default)
+
+def log_exp(entry):
+    with open(experiments_log, "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+# Run baseline check
+if not dry_run and baseline_cmd:
+    rc, _ = run_check(baseline_cmd)
+    if rc != 0:
+        print("Baseline check failed. Fix before researching.", file=sys.stderr)
+        raise SystemExit(1)
+
+# Capture baseline metric with noise estimation (multiple trials)
+import math
+baseline_metric = None
+noise_stddev = 0.0
+
+if not dry_run and metric_jq:
+    baseline_samples = []
+    for trial in range(baseline_trials):
+        rc, output = run_check(run_cmd)
+        if rc == 0:
+            m = extract_metric(output, metric_jq)
+            if m is not None:
+                baseline_samples.append(m)
+
+    if baseline_samples:
+        baseline_metric = sum(baseline_samples) / len(baseline_samples)
+        if len(baseline_samples) > 1:
+            variance = sum((x - baseline_metric) ** 2 for x in baseline_samples) / (len(baseline_samples) - 1)
+            noise_stddev = math.sqrt(variance)
+
+        if not as_json:
+            print(f"  Baseline metric ({metric_jq}): {baseline_metric:.3f}")
+            if noise_stddev > 0:
+                print(f"  Noise (stddev from {baseline_trials} trials): {noise_stddev:.3f}")
+                print(f"  Improvement threshold: {baseline_metric + noise_stddev:.3f}" if metric_direction == "maximize"
+                      else f"  Improvement threshold: {baseline_metric - noise_stddev:.3f}")
+            print(f"  Direction: {metric_direction}\n")
+
+current_best_metric = baseline_metric
+
+results = []
+for i in range(iterations):
+    param = random.choice(params)
+    pname, pmin, pmax = param["name"], param.get("min", 0), param.get("max", 1)
+    pstep, current = param.get("step", 0.1), param.get("default", (param.get("min",0)+param.get("max",1))/2)
+    ptype = param.get("type", "float")
+
+    direction = random.choice([-1, 1])
+    new_val = max(pmin, min(pmax, current + direction * pstep))
+    if ptype == "int":
+        new_val = int(new_val)
+    else:
+        new_val = round(new_val, 3)
+    if new_val == current:
+        new_val = max(pmin, min(pmax, current - direction * pstep))
+        if ptype == "int":
+            new_val = int(new_val)
+        else:
+            new_val = round(new_val, 3)
+
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "surface": surface_name,
+             "iteration": i+1, "parameter": pname, "old_value": current, "new_value": new_val,
+             "decision": "pending", "reason": ""}
+
+    if dry_run:
+        entry["decision"] = "dry_run"
+        entry["reason"] = f"Would change {pname}: {current} -> {new_val}"
+        results.append(entry)
+        if not as_json:
+            print(f"  [{i+1}/{iterations}] {pname}: {current} -> {new_val} (dry run)")
+        continue
+
+    # Apply variant
+    env_var = param.get("env", "")
+    if env_var:
+        os.environ[env_var] = str(new_val)
+
+    # Run evaluation
+    rc, output = run_check(run_cmd)
+
+    if rc != 0:
+        entry["decision"] = "revert"
+        entry["reason"] = f"check failed (exit {rc})"
+        if env_var:
+            os.environ[env_var] = str(current)
+    else:
+        # Extract metric and compare
+        new_metric = extract_metric(output, metric_jq) if metric_jq else None
+        entry["metric_before"] = current_best_metric
+        entry["metric_after"] = new_metric
+
+        improved = is_improvement(current_best_metric, new_metric, metric_direction, noise_stddev)
+
+        if improved is None:
+            # No metric extraction — fall back to exit-code acceptance
+            entry["decision"] = "accept"
+            entry["reason"] = f"check passed (no metric comparison) {pname}={new_val}"
+            param["default"] = new_val
+        elif improved:
+            entry["decision"] = "accept"
+            delta = new_metric - (current_best_metric or 0)
+            entry["reason"] = f"metric improved: {current_best_metric} -> {new_metric} (delta={delta:+.3f})"
+            param["default"] = new_val
+            current_best_metric = new_metric
+        else:
+            entry["decision"] = "revert"
+            entry["reason"] = f"metric not improved: {current_best_metric} -> {new_metric} ({metric_direction})"
+            if env_var:
+                os.environ[env_var] = str(current)
+
+    entry["check_exit_code"] = rc
+    entry["output_preview"] = output[:200] if output else ""
+    results.append(entry)
+    log_exp(entry)
+
+    if not as_json:
+        m = "+" if entry["decision"] == "accept" else "-"
+        metric_info = ""
+        if entry.get("metric_after") is not None:
+            metric_info = f" metric={entry['metric_after']}"
+        print(f"  {m} [{i+1}/{iterations}] {pname}: {current} -> {new_val}{metric_info} -- {entry['reason'][:70]}")
+
+if as_json:
+    summary = {"surface": surface_name, "iterations": len(results), "results": results,
+               "baseline_metric": baseline_metric, "final_metric": current_best_metric,
+               "metric_jq": metric_jq, "metric_direction": metric_direction}
+    print(json.dumps(summary, indent=2))
+elif not dry_run:
+    accepted = sum(1 for r in results if r["decision"] == "accept")
+    print(f"\n  {accepted}/{len(results)} experiments accepted")
+    if baseline_metric is not None and current_best_metric is not None:
+        delta = current_best_metric - baseline_metric
+        print(f"  Metric: {baseline_metric} -> {current_best_metric} (delta={delta:+.3f}, {metric_direction})")
+PYTHON
+}
+
+cmd_status() {
+  if [[ ! -f "${EXPERIMENTS_LOG}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      echo '{"total":0,"surfaces":{}}'
+    else
+      log "No experiments run yet. Try: lacp research run --surface hooks"
+    fi
+    return 0
+  fi
+
+  python3 - "${EXPERIMENTS_LOG}" "${AS_JSON}" <<'PYTHON'
+import json, sys
+from collections import Counter, defaultdict
+
+experiments = []
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line: continue
+    try: experiments.append(json.loads(line))
+    except json.JSONDecodeError: continue
+
+by_surface = defaultdict(lambda: {"total": 0, "accepted": 0, "reverted": 0, "params": Counter()})
+for exp in experiments:
+    s = by_surface[exp.get("surface", "?")]
+    s["total"] += 1
+    if exp.get("decision") == "accept": s["accepted"] += 1
+    elif exp.get("decision") == "revert": s["reverted"] += 1
+    s["params"][exp.get("parameter", "?")] += 1
+
+if sys.argv[2] == "1":
+    out = {"total": len(experiments), "surfaces": {}}
+    for name, data in by_surface.items():
+        out["surfaces"][name] = {"total": data["total"], "accepted": data["accepted"],
+                                  "reverted": data["reverted"], "params_tested": dict(data["params"])}
+    print(json.dumps(out, indent=2))
+else:
+    print(f"Autoresearch -- {len(experiments)} total experiments\n")
+    for name, data in sorted(by_surface.items()):
+        pct = (data["accepted"] / data["total"] * 100) if data["total"] > 0 else 0
+        print(f"  {name:12s}  total={data['total']:3d}  accepted={data['accepted']:3d} ({pct:.0f}%)  reverted={data['reverted']:3d}")
+    if experiments:
+        print("\n  Recent:")
+        for exp in experiments[-5:]:
+            m = "+" if exp.get("decision") == "accept" else "-"
+            print(f"    {m} [{exp.get('ts','?')[:16]}] {exp.get('surface','?')}/{exp.get('parameter','?')}: "
+                  f"{exp.get('old_value','?')} -> {exp.get('new_value','?')}")
+PYTHON
+}
+
+case "${CMD}" in
+  run)      cmd_run ;;
+  status)   cmd_status ;;
+  surfaces) cmd_surfaces ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown command: ${CMD}" ;;
+esac

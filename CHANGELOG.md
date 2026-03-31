@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Thinking-partner system** — five-part "thinking partnership" layer for AI sessions (#27):
+  - `bin/lacp-focus` CLI (`init`, `show`, `edit`, `age`, `check`) — living focus brief with 4-question template (current problem, beliefs/uncertainties, open decisions, 30-day goal). Auto-injected at session start with staleness warnings.
+  - `config/context-modes/` — three context modes (`thinking-partner`, `implementation`, `review`) loaded via `LACP_CONTEXT_MODE` env var. Activates existing `session_start.py` plumbing.
+  - Blind spot analysis in `stop_quality_gate.py` — opt-in Ollama step (`LACP_BLIND_SPOT_ENABLED=1`) surfacing unchallenged assumptions and avoided questions before allowing stop.
+  - `hooks/thinking_nudge.py` — `UserPromptSubmit` hook detecting bare questions without stated positions. Opt-in via `LACP_THINKING_NUDGE=1` or `LACP_CONTEXT_MODE=thinking-partner`. Session cooldown prevents over-nudging.
+  - `bin/lacp-reflect` CLI (`summary`, `prompt`, `reflect`) — weekly reflection pulling provenance chain, generating context-specific prompts, reporting focus brief staleness.
+  - New hook profile: `thinking-partner` for `lacp-claude-hooks apply-profile`.
+  - CI: `test-focus.sh`, `test-context-modes.sh`, `test-thinking-nudge.sh`, `test-blind-spot.sh`, `test-reflect.sh`.
+- `bin/lacp-brain-stack audit` subcommand to report memory coverage across all Claude Code projects (total projects, sessions, with/without memory, top missing by session count).
+- `bin/lacp-brain-stack scaffold-all` subcommand to create `memory/MEMORY.md` + topic stubs for projects with session files but no memory directory (`--min-sessions N`, `--dry-run`, `--json`).
+- `bin/lacp-brain-stack init --with-gitnexus` to optionally wire GitNexus code intelligence MCP server (`npx gitnexus@latest mcp`) into the memory stack for AST-level codebase knowledge graphs.
+- `bin/lacp-brain-stack status --json` now reports `gitnexus_installed` and `gitnexus_indexed` in checks.
+- `bin/lacp-agent-id` persistent agent identity registry (`show`, `list`, `register`, `revoke`, `touch`).
+  - Each `(hostname, project_slug)` pair gets a stable `agent-<hex8>` identity that survives across sessions.
+  - `show` auto-registers on first use; `touch` increments session count and updates `last_seen`.
+  - Registry stored at `~/.lacp/agents/registry.json`.
+- `bin/lacp-provenance` cryptographic session provenance chain (`start`, `end`, `verify`, `log`, `export`).
+  - Each session receipt is SHA-256 hash-chained to the previous receipt via `prev_hash` / `receipt_hash` fields.
+  - Chain stored as append-only JSONL at `~/.lacp/provenance/chain.jsonl`.
+  - `verify` walks the full chain and detects tampered or broken links.
+  - Receipts include `agent_id`, `session_fingerprint`, `project_slug`, `memory_hash`, and timestamps.
+- `bin/lacp` top-level dispatcher expanded with `agent-id` and `provenance`.
+- Canonical memory schema added at `config/memory/node-schema.json` (typed fields, confidence + provenance requirements, relation vocabulary).
+- `bin/lacp-brain-ingest` now emits schema-ready frontmatter (`layer`, `confidence`, `source_urls`, `source_sessions`, `last_verified`, relation scaffolding) and reports quality-gate status in JSON output.
+- `bin/lacp-memory-kpi` command to compute memory quality metrics (`required_schema_coverage_pct`, `source_backed_pct`, contradiction/stale counts).
+- `bin/lacp-brain-resolve` command to resolve contradiction/supersession/validation state by memory note id.
+- `bin/lacp-obsidian-memory-optimize` command to apply low-noise Obsidian graph defaults for memory workflows.
+- `bin/lacp-brain-stack status` now checks for memory resolver/KPI tooling availability.
+- `bin/lacp-status-report` now includes a `memory_kpi` block in JSON and a Memory Quality section in markdown output.
+- CI coverage: `scripts/ci/test-agent-id.sh`, `scripts/ci/test-provenance.sh`, `scripts/ci/test-memory-tools.sh`.
+- `docs/multi-vault-multi-hop-reasoning-spec.md` added with a bounded, evidence-gated multi-vault reasoning design for Obsidian + Dataview (canonical entity IDs, per-hop token budgets, stop conditions, and final answer evidence contract).
+- `TODO.md` added with a phased implementation checklist for schema normalization, Dataview pruning, retrieval scoring, hop planning/evidence gates, and QA tuning.
+- Phase 1 scaffolding added for multi-vault identity/schema rollout:
+  - `docs/entity-id-convention.md`
+  - `docs/obsidian-frontmatter-migration-playbook.md`
+  - `Entities/README.md`, `Entities/aliases-map.md`, `Entities/topic/multi-hop-reasoning.md`, `Entities/tool/dataview.md`
+- `docs/research/llm-debugging-robustness-notes-2026-03-23.md` added to track verification status and practical guidance for social claims about LLM debugging brittleness.
+
+### Fixed
+- `bin/lacp-brain-stack` now uses Claude Code's native project slug naming (`/path` → `-path`) instead of `shasum`-based hashing for memory directory paths. Previously scaffolded memory files in a location Claude Code would never discover.
+
+## [0.3.0] - 2026-03-15
+
+### Added
+- Bootstrap `~/.lacp/` directory tree with empty data files so `session_orient.sh` runs cleanly on fresh installs instead of silently failing.
 - `bin/lacp-system-health` macOS/Apple Silicon developer workstation readiness checks (`--json`, `--fix-hints`, `--fix`).
   - thermal state, CPU load vs core count, memory pressure, swap usage
   - Spotlight indexing exclusion audit for dev directories (`~/.cargo`, `~/.rustup`, `~/.npm`, `~/.nvm`, `~/.bun`, `~/work`, `~/miniconda3`)
@@ -202,4 +247,5 @@ All notable changes to this project will be documented in this file.
 - Structured input-contract gate for risky sandbox runs (`--input-contract`, exit code `11` on violation).
 - Release workflow no longer depends on third-party actions; uses `gh release` with repository `GITHUB_TOKEN`.
 
+[0.3.0]: https://github.com/0xNyk/lacp/releases/tag/v0.3.0
 [0.1.0]: https://github.com/0xNyk/lacp/releases/tag/v0.1.0

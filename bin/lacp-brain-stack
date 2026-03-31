@@ -5,16 +5,26 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/lacp-lib.sh"
 
+MIN_SESSIONS=5
+
 usage() {
   cat <<'EOF'
 Usage:
   lacp-brain-stack status [--json]
-  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--dry-run] [--json]
+  lacp-brain-stack init [--vault <path>] [--claude-settings <path>] [--with-gitnexus] [--with-ori-mnemos] [--dry-run] [--json]
+  lacp-brain-stack audit [--json]
+  lacp-brain-stack scaffold-all [--min-sessions N] [--dry-run] [--json]
 
 Official LACP memory stack bootstrap:
   Layer 1: session memory scaffolding
   Layer 2: Obsidian knowledge graph MCP wiring
   Layer 3: ingestion pipeline command availability
+
+Subcommands:
+  status         Show memory stack status for the current project
+  init           Initialize memory stack (MCP wiring + session memory)
+  audit          Report memory coverage across all Claude Code projects
+  scaffold-all   Create memory dirs for projects missing them (default: 5+ sessions)
 EOF
 }
 
@@ -29,11 +39,16 @@ VAULT_ROOT="${LACP_OBSIDIAN_VAULT}"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 AS_JSON=0
 DRY_RUN=0
+WITH_GITNEXUS=0
+WITH_ORI_MNEMOS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --vault) VAULT_ROOT="$2"; shift 2 ;;
     --claude-settings) CLAUDE_SETTINGS="$2"; shift 2 ;;
+    --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
+    --with-gitnexus) WITH_GITNEXUS=1; shift ;;
+    --with-ori-mnemos) WITH_ORI_MNEMOS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) AS_JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -41,20 +56,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-project_hash() {
-  local seed
-  seed="$(pwd)"
-  if command -v shasum >/dev/null 2>&1; then
-    printf '%s' "${seed}" | shasum | awk '{print $1}' | cut -c1-12
-  else
-    printf '%s' "${seed}" | md5 | awk '{print $NF}' | cut -c1-12
-  fi
+claude_project_dir() {
+  local cwd="${1:-$(pwd)}"
+  # Claude Code naming: replace / with - (e.g., /repo/lacp -> -repo-lacp)
+  local slug
+  slug="$(printf '%s' "${cwd}" | tr '/' '-')"
+  printf '%s/.claude/projects/%s' "${HOME}" "${slug}"
 }
 
 status_cmd() {
-  local phash mem_root
-  phash="$(project_hash)"
-  mem_root="${HOME}/.claude/projects/${phash}/memory"
+  local proj_dir mem_root
+  proj_dir="$(claude_project_dir)"
+  mem_root="${proj_dir}/memory"
 
   payload="$(jq -n \
     --arg schema_version "1" \
@@ -66,7 +79,10 @@ status_cmd() {
     --argjson settings_exists "$([[ -f "${CLAUDE_SETTINGS}" ]] && echo true || echo false)" \
     --argjson memory_exists "$([[ -d "${mem_root}" ]] && echo true || echo false)" \
     --argjson brain_ingest_exists "$([[ -x "${ROOT}/bin/lacp-brain-ingest" ]] && echo true || echo false)" \
-    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists}}')"
+    --argjson gitnexus_installed "$(command -v gitnexus >/dev/null 2>&1 && echo true || echo false)" \
+    --argjson gitnexus_indexed "$([[ -d ".gitnexus" ]] && echo true || echo false)" \
+    --argjson ori_mnemos_configured "$(python3 -c "import json; d=json.load(open('${CLAUDE_SETTINGS}')) if __import__('os').path.isfile('${CLAUDE_SETTINGS}') else {}; print('true' if 'ori-mnemos' in d.get('mcpServers',{}) else 'false')" 2>/dev/null || echo false)" \
+    '{schema_version:$schema_version,kind:$kind,ok:true,vault_root:$vault_root,claude_settings:$claude_settings,memory_root:$memory_root,checks:{vault_exists:$vault_exists,settings_exists:$settings_exists,memory_exists:$memory_exists,brain_ingest_exists:$brain_ingest_exists,gitnexus_installed:$gitnexus_installed,gitnexus_indexed:$gitnexus_indexed,ori_mnemos_configured:$ori_mnemos_configured}}')"
 
   if [[ "${AS_JSON}" -eq 1 ]]; then
     printf '%s\n' "${payload}" | jq .
@@ -79,9 +95,9 @@ status_cmd() {
 }
 
 init_cmd() {
-  local phash mem_root memory_file
-  phash="$(project_hash)"
-  mem_root="${HOME}/.claude/projects/${phash}/memory"
+  local proj_dir mem_root memory_file
+  proj_dir="$(claude_project_dir)"
+  mem_root="${proj_dir}/memory"
   memory_file="${LACP_KNOWLEDGE_ROOT}/data/mcp-memory/entities.json"
 
   tmp_json="$(mktemp)"
@@ -94,11 +110,13 @@ init_cmd() {
     printf '{"mcpServers":{}}\n' > "${tmp_json}"
   fi
 
-  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}"
+  updated="$(python3 - <<'PY' "${tmp_json}" "${VAULT_ROOT}" "${memory_file}" "${WITH_GITNEXUS}" "${WITH_ORI_MNEMOS}"
 import json, pathlib, sys
 settings_path = pathlib.Path(sys.argv[1])
 vault = pathlib.Path(sys.argv[2]).expanduser()
 memory_file = pathlib.Path(sys.argv[3]).expanduser()
+with_gitnexus = sys.argv[4] == '1'
+with_ori_mnemos = sys.argv[5] == '1'
 
 payload = json.loads(settings_path.read_text()) if settings_path.exists() else {}
 servers = payload.setdefault('mcpServers', {})
@@ -122,6 +140,23 @@ servers['qmd'] = {
   'args': ['mcp'],
   'env': {'HOME': '~'}
 }
+servers['obsidian'] = {
+  'command': 'npx',
+  'args': ['-y', 'obsidian-mcp']
+}
+
+if with_gitnexus:
+  servers['gitnexus'] = {
+    'command': 'npx',
+    'args': ['-y', 'gitnexus@latest', 'mcp']
+  }
+
+if with_ori_mnemos:
+  servers['ori-mnemos'] = {
+    'command': 'npx',
+    'args': ['-y', 'ori-mnemos@latest', 'serve', '--mcp'],
+    'env': {'ORI_VAULT': str(vault)}
+  }
 print(json.dumps(payload, indent=2) + '\n')
 PY
 )"
@@ -161,11 +196,190 @@ EOF
     echo "  claude settings: ${CLAUDE_SETTINGS}"
     echo "  memory root: ${mem_root}"
     echo "  memory file: ${memory_file}"
+    if [[ "${WITH_GITNEXUS}" -eq 1 ]]; then
+      echo ""
+      echo "  hint: run 'lacp-repos-index index' to index repos for cross-repo code intelligence"
+    fi
+    if [[ "${WITH_ORI_MNEMOS}" -eq 1 ]]; then
+      echo ""
+      echo "  hint: ori-mnemos provides graph-aware retrieval with ACT-R decay + RRF fusion via MCP"
+    fi
+  fi
+
+  # Ensure Obsidian plugins match MCP server expectations
+  if command -v curl >/dev/null 2>&1 && [[ -x "${ROOT}/bin/lacp-obsidian" ]]; then
+    local _obs_args=()
+    [[ "${DRY_RUN}" -eq 1 ]] && _obs_args+=(--dry-run)
+    [[ "${AS_JSON}" -eq 1 ]] && _obs_args+=(--json)
+    "${ROOT}/bin/lacp-obsidian" install-plugins "${_obs_args[@]+"${_obs_args[@]}"}" 2>/dev/null || true
+  fi
+}
+
+count_sessions() {
+  local proj_dir="$1"
+  local count=0
+  for f in "${proj_dir}"/*.jsonl; do
+    [[ -f "${f}" ]] && count=$((count + 1))
+  done
+  printf '%d' "${count}"
+}
+
+audit_cmd() {
+  local projects_root="${HOME}/.claude/projects"
+  if [[ ! -d "${projects_root}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n '{schema_version:"1",kind:"brain_stack_audit",ok:false,error:"no projects directory"}'
+    else
+      echo "No projects directory found at ${projects_root}"
+    fi
+    return 1
+  fi
+
+  local total_projects=0 total_sessions=0
+  local with_memory=0 without_memory=0
+  local missing_json="[]"
+
+  for proj_dir in "${projects_root}"/*/; do
+    [[ -d "${proj_dir}" ]] || continue
+    local slug
+    slug="$(basename "${proj_dir}")"
+    total_projects=$((total_projects + 1))
+
+    local sessions
+    sessions="$(count_sessions "${proj_dir}")"
+    total_sessions=$((total_sessions + sessions))
+
+    if [[ -f "${proj_dir}memory/MEMORY.md" ]]; then
+      with_memory=$((with_memory + 1))
+    else
+      without_memory=$((without_memory + 1))
+      if [[ "${sessions}" -ge "${MIN_SESSIONS}" ]]; then
+        missing_json="$(printf '%s' "${missing_json}" | jq --arg s "${slug}" --argjson n "${sessions}" '. + [{"slug":$s,"sessions":$n}]')"
+      fi
+    fi
+  done
+
+  # Sort missing by session count descending
+  missing_json="$(printf '%s' "${missing_json}" | jq 'sort_by(-.sessions)')"
+  local missing_count
+  missing_count="$(printf '%s' "${missing_json}" | jq 'length')"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "brain_stack_audit" \
+      --argjson total_projects "${total_projects}" \
+      --argjson total_sessions "${total_sessions}" \
+      --argjson with_memory "${with_memory}" \
+      --argjson without_memory "${without_memory}" \
+      --argjson min_sessions "${MIN_SESSIONS}" \
+      --argjson missing_high_traffic "${missing_json}" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,total_projects:$total_projects,total_sessions:$total_sessions,with_memory:$with_memory,without_memory:$without_memory,min_sessions_threshold:$min_sessions,missing_high_traffic:$missing_high_traffic}'
+  else
+    echo "brain-stack audit"
+    echo "  total projects: ${total_projects}"
+    echo "  total sessions: ${total_sessions}"
+    echo "  with memory:    ${with_memory}"
+    echo "  without memory: ${without_memory}"
+    echo "  missing (${MIN_SESSIONS}+ sessions): ${missing_count}"
+    if [[ "${missing_count}" -gt 0 ]]; then
+      echo ""
+      echo "  top missing projects:"
+      printf '%s' "${missing_json}" | jq -r '.[] | "    \(.sessions) sessions — \(.slug)"'
+    fi
+  fi
+}
+
+scaffold_all_cmd() {
+  local projects_root="${HOME}/.claude/projects"
+  if [[ ! -d "${projects_root}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n '{schema_version:"1",kind:"brain_stack_scaffold_all",ok:false,error:"no projects directory"}'
+    else
+      echo "No projects directory found at ${projects_root}"
+    fi
+    return 1
+  fi
+
+  local scaffolded=0 skipped=0 below_threshold=0
+  local scaffolded_json="[]"
+
+  for proj_dir in "${projects_root}"/*/; do
+    [[ -d "${proj_dir}" ]] || continue
+    local slug
+    slug="$(basename "${proj_dir}")"
+    local mem_root="${proj_dir}memory"
+
+    local sessions
+    sessions="$(count_sessions "${proj_dir}")"
+
+    if [[ "${sessions}" -lt "${MIN_SESSIONS}" ]]; then
+      below_threshold=$((below_threshold + 1))
+      continue
+    fi
+
+    if [[ -f "${mem_root}/MEMORY.md" ]]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    # Scaffold this project
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      mkdir -p "${mem_root}"
+
+      cat > "${mem_root}/MEMORY.md" <<'MEMEOF'
+# Project Memory
+
+## Overview
+(Auto-seeded by lacp-brain-stack scaffold-all. Update with project-specific context.)
+
+## Topic Files
+- [debugging.md](debugging.md)
+- [patterns.md](patterns.md)
+- [architecture.md](architecture.md)
+- [preferences.md](preferences.md)
+MEMEOF
+
+      for f in debugging.md patterns.md architecture.md preferences.md; do
+        if [[ ! -f "${mem_root}/${f}" ]]; then
+          cat > "${mem_root}/${f}" <<EOF
+# ${f%.md}
+
+- created_by: lacp-brain-stack scaffold-all
+- created_at_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+        fi
+      done
+    fi
+
+    scaffolded=$((scaffolded + 1))
+    scaffolded_json="$(printf '%s' "${scaffolded_json}" | jq --arg s "${slug}" --argjson n "${sessions}" '. + [{"slug":$s,"sessions":$n}]')"
+  done
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg schema_version "1" \
+      --arg kind "brain_stack_scaffold_all" \
+      --argjson dry_run "$([[ "${DRY_RUN}" -eq 1 ]] && echo true || echo false)" \
+      --argjson min_sessions "${MIN_SESSIONS}" \
+      --argjson scaffolded "${scaffolded}" \
+      --argjson skipped "${skipped}" \
+      --argjson below_threshold "${below_threshold}" \
+      --argjson projects "${scaffolded_json}" \
+      '{schema_version:$schema_version,kind:$kind,ok:true,dry_run:$dry_run,min_sessions:$min_sessions,scaffolded:$scaffolded,skipped:$skipped,below_threshold:$below_threshold,projects:$projects}'
+  else
+    echo "brain-stack scaffold-all dry_run=${DRY_RUN}"
+    echo "  min sessions: ${MIN_SESSIONS}"
+    echo "  scaffolded:   ${scaffolded}"
+    echo "  skipped:      ${skipped}"
+    echo "  below threshold: ${below_threshold}"
   fi
 }
 
 case "${sub}" in
   status) status_cmd ;;
   init) init_cmd ;;
+  audit) audit_cmd ;;
+  scaffold-all) scaffold_all_cmd ;;
   *) die "Unknown subcommand: ${sub}" ;;
 esac

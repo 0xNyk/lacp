@@ -556,7 +556,10 @@ if [[ "${DRY_RUN}" -eq 0 && $# -eq 0 ]]; then
   die "No command provided. Use -- <command> [args...]"
 fi
 
-CMD=("$@")
+CMD=()
+if [[ $# -gt 0 ]]; then
+  CMD=("$@")
+fi
 ROUTE_JSON="$("${ROOT}/bin/lacp-route" \
   --task "${TASK}" \
   --repo-trust "${REPO_TRUST}" \
@@ -607,7 +610,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   ACTUAL_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   ACTUAL_GIT_WORKTREE="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
-ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD[@]}")"
+ACTUAL_REMOTE_HOST="$(command_remote_target_host "${CMD[@]-}")"
 ACTUAL_SESSION_FINGERPRINT="$(build_session_fingerprint "${ACTUAL_HOST}" "${ACTUAL_CWD}" "${ACTUAL_GIT_BRANCH}" "${ACTUAL_GIT_WORKTREE}" "${ACTUAL_REMOTE_HOST}")"
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -628,7 +631,7 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
     fi
   fi
 
-  if command_is_mutating "${CMD[@]}" || [[ -n "${ACTUAL_REMOTE_HOST}" ]]; then
+  if command_is_mutating "${CMD[@]-}" || [[ -n "${ACTUAL_REMOTE_HOST}" ]]; then
     CONTEXT_CONTRACT_REQUIRED="true"
   fi
 
@@ -710,19 +713,19 @@ else
   case "${ROUTE}" in
     trusted_local)
       RUNNER_TYPE="direct"
-      run_direct "${CMD[@]}" || EXEC_RC=$?
+      run_direct "${CMD[@]-}" || EXEC_RC=$?
       EXECUTED=1
       ;;
     local_sandbox)
       RUNNER_TYPE="local_sandbox_runner"
       RUNNER_PATH="${LACP_LOCAL_SANDBOX_RUNNER:-}"
       if [[ -n "${RUNNER_PATH}" ]]; then
-        run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
+        run_with_runner "${RUNNER_PATH}" "${CMD[@]-}" || EXEC_RC=$?
         EXECUTED=1
       else
         RUNNER_TYPE="direct_fallback"
         log "WARN: LACP_LOCAL_SANDBOX_RUNNER is unset; falling back to direct execution"
-        run_direct "${CMD[@]}" || EXEC_RC=$?
+        run_direct "${CMD[@]-}" || EXEC_RC=$?
         EXECUTED=1
       fi
       ;;
@@ -742,7 +745,7 @@ else
           esac
         fi
         if [[ -n "${RUNNER_PATH}" ]]; then
-          run_with_runner "${RUNNER_PATH}" "${CMD[@]}" || EXEC_RC=$?
+          run_with_runner "${RUNNER_PATH}" "${CMD[@]-}" || EXEC_RC=$?
           EXECUTED=1
         else
           EXEC_RC=3
@@ -787,7 +790,7 @@ fi
 
 CMD_JSON="[]"
 if [[ ${#CMD[@]} -gt 0 ]]; then
-  CMD_JSON="$(json_escape_cmd "${CMD[@]}")"
+  CMD_JSON="$(json_escape_cmd "${CMD[@]-}")"
 fi
 
 CONTEXT_CONTRACT_JSON="null"

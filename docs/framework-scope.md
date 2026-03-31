@@ -2,9 +2,9 @@
 
 ## What LACP Is
 
-LACP is a local control plane for Claude/Codex operations:
-- orchestrates memory and retrieval operations
-- enforces verification gates
+LACP is a harness-first local control plane for Claude/Codex/Hermes operations:
+- runs agent tasks through a verification/evidence harness
+- enforces policy and approval gates
 - standardizes artifact outputs and runbooks
 
 ## What LACP Is Not

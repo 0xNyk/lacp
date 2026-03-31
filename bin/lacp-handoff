@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-handoff <command> [options]
+
+Commands:
+  show [--latest]           Show handoff artifact for current directory
+  list                      List all handoff artifacts
+  clean [--older-than 7d]   Remove old handoff artifacts
+
+Options:
+  --json                    Output as JSON
+EOF
+}
+
+HANDOFF_DIR="${HOME}/.lacp/handoffs"
+AS_JSON=0
+
+cwd_hash() {
+  echo -n "$(pwd)" | shasum -a 256 | cut -c1-12
+}
+
+cmd_show() {
+  local hash
+  hash="$(cwd_hash)"
+  local file="${HANDOFF_DIR}/${hash}-latest.json"
+
+  if [[ ! -f "$file" ]]; then
+    if [[ "$AS_JSON" -eq 1 ]]; then
+      echo '{"status":"no_handoff"}'
+    else
+      log "No handoff artifact found for $(pwd)"
+    fi
+    return 1
+  fi
+
+  if [[ "$AS_JSON" -eq 1 ]]; then
+    cat "$file"
+  else
+    local age_hours
+    age_hours=$(( ( $(date +%s) - $(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null) ) / 3600 ))
+    log "Handoff artifact (${age_hours}h old):"
+    echo ""
+
+    # Pretty-print key fields
+    local summary branch test_status
+    summary=$(jq -r '.task_summary // "none"' "$file" 2>/dev/null || echo "none")
+    branch=$(jq -r '.git_branch // "none"' "$file" 2>/dev/null || echo "none")
+    test_status=$(jq -r '.test_status // "unknown"' "$file" 2>/dev/null || echo "unknown")
+
+    echo "  Summary:  ${summary:0:120}"
+    echo "  Branch:   ${branch}"
+    echo "  Tests:    ${test_status}"
+    echo ""
+
+    # Files modified
+    local files
+    files=$(jq -r '.files_modified[]? // empty' "$file" 2>/dev/null)
+    if [[ -n "$files" ]]; then
+      echo "  Modified files:"
+      echo "$files" | head -10 | sed 's/^/    /'
+      echo ""
+    fi
+
+    # Git diff summary
+    local diff_summary
+    diff_summary=$(jq -r '.git_diff_summary // ""' "$file" 2>/dev/null)
+    if [[ -n "$diff_summary" ]]; then
+      echo "  Git diff:"
+      echo "$diff_summary" | head -5 | sed 's/^/    /'
+    fi
+  fi
+}
+
+cmd_list() {
+  if [[ ! -d "$HANDOFF_DIR" ]]; then
+    if [[ "$AS_JSON" -eq 1 ]]; then
+      echo '[]'
+    else
+      log "No handoff artifacts found"
+    fi
+    return 0
+  fi
+
+  if [[ "$AS_JSON" -eq 1 ]]; then
+    local items="["
+    local first=1
+    for f in "${HANDOFF_DIR}"/*-latest.json; do
+      [[ -f "$f" ]] || continue
+      [[ "$first" -eq 0 ]] && items+=","
+      first=0
+      items+="$(cat "$f")"
+    done
+    items+="]"
+    echo "$items"
+  else
+    local count=0
+    for f in "${HANDOFF_DIR}"/*-latest.json; do
+      [[ -f "$f" ]] || continue
+      count=$((count + 1))
+      local age_hours
+      age_hours=$(( ( $(date +%s) - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) ) / 3600 ))
+      local branch
+      branch=$(jq -r '.git_branch // "?"' "$f" 2>/dev/null || echo "?")
+      local summary
+      summary=$(jq -r '.task_summary // ""' "$f" 2>/dev/null || echo "")
+      echo "  [${age_hours}h] branch=${branch}  ${summary:0:60}"
+    done
+    [[ "$count" -eq 0 ]] && log "No handoff artifacts found"
+  fi
+}
+
+cmd_clean() {
+  local max_age_days="${1:-7}"
+  local max_age_secs=$((max_age_days * 86400))
+  local now
+  now=$(date +%s)
+  local removed=0
+
+  if [[ ! -d "$HANDOFF_DIR" ]]; then
+    log "No handoff directory"
+    return 0
+  fi
+
+  for f in "${HANDOFF_DIR}"/*-latest.json; do
+    [[ -f "$f" ]] || continue
+    local mtime
+    mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null)
+    local age=$((now - mtime))
+    if [[ "$age" -gt "$max_age_secs" ]]; then
+      rm "$f"
+      removed=$((removed + 1))
+    fi
+  done
+
+  if [[ "$AS_JSON" -eq 1 ]]; then
+    echo "{\"removed\": ${removed}}"
+  else
+    log "Removed ${removed} handoff artifact(s) older than ${max_age_days}d"
+  fi
+}
+
+# Parse args
+CMD=""
+CLEAN_DAYS=7
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    show)    CMD="show"; shift ;;
+    list)    CMD="list"; shift ;;
+    clean)   CMD="clean"; shift ;;
+    --json)  AS_JSON=1; shift ;;
+    --latest) shift ;; # default behavior for show
+    --older-than)
+      shift
+      CLEAN_DAYS="${1%d}"  # strip trailing 'd' if present
+      shift
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+[[ -z "$CMD" ]] && { usage; exit 1; }
+
+case "$CMD" in
+  show)  cmd_show ;;
+  list)  cmd_list ;;
+  clean) cmd_clean "$CLEAN_DAYS" ;;
+esac

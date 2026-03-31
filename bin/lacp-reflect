@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+PROVENANCE_ROOT="${HOME}/.lacp/provenance"
+CHAIN_FILE="${PROVENANCE_ROOT}/chain.jsonl"
+FOCUS_FILE="${LACP_FOCUS_FILE:-$HOME/.lacp/focus.md}"
+REFLECT_ROOT="${HOME}/.lacp/reflections"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-reflect [--days <n>] [--json]
+  lacp-reflect summary [--days <n>] [--json]
+  lacp-reflect prompt [--json]
+
+Weekly reflection ritual for thinking partnership.
+
+Subcommands:
+  (default)  Run full reflection: summarize recent work, surface patterns, prompt focus update.
+  summary    Show recent session summary only.
+  prompt     Generate reflection prompts based on recent provenance.
+
+Options:
+  --days <n>   Lookback window (default: 7)
+  --json       Machine-readable output
+EOF
+}
+
+sub="${1:-reflect}"
+case "${sub}" in
+  -h|--help|help) usage; exit 0 ;;
+  summary|prompt) shift || true ;;
+  --*) sub="reflect" ;;  # flags without subcommand = default
+  reflect) shift || true ;;
+  *) sub="reflect" ;;
+esac
+
+DAYS=7
+AS_JSON="false"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days) DAYS="$2"; shift 2 ;;
+    --json) AS_JSON="true"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+cmd_summary() {
+  python3 - <<'PY' "${CHAIN_FILE}" "${DAYS}" "${AS_JSON}" "${FOCUS_FILE}"
+import json
+import os
+import sys
+import time
+
+chain_file = sys.argv[1]
+days = int(sys.argv[2])
+as_json = sys.argv[3] == "true"
+focus_file = sys.argv[4]
+
+cutoff = time.time() - (days * 86400)
+entries = []
+
+if os.path.isfile(chain_file):
+    with open(chain_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Parse ended_at or started_at
+            ts_str = entry.get("ended_at") or entry.get("started_at") or ""
+            if not ts_str:
+                continue
+            try:
+                ts = time.mktime(time.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S"))
+            except (ValueError, OverflowError):
+                continue
+            if ts >= cutoff:
+                entries.append(entry)
+
+# Gather stats
+projects = {}
+total_sessions = len(entries)
+for e in entries:
+    slug = e.get("project_slug", "unknown")
+    projects.setdefault(slug, 0)
+    projects[slug] += 1
+
+# Focus brief status
+focus_age = None
+focus_stale = True
+if os.path.isfile(focus_file):
+    mtime = os.path.getmtime(focus_file)
+    focus_age = int((time.time() - mtime) / 86400)
+    focus_stale = focus_age > 7
+
+result = {
+    "ok": True,
+    "kind": "reflect_summary",
+    "lookback_days": days,
+    "total_sessions": total_sessions,
+    "projects": projects,
+    "focus_brief": {
+        "exists": os.path.isfile(focus_file),
+        "age_days": focus_age,
+        "stale": focus_stale,
+    },
+}
+
+if as_json:
+    print(json.dumps(result))
+else:
+    print(f"Reflection summary (last {days} days)")
+    print(f"  Sessions: {total_sessions}")
+    if projects:
+        print("  Projects:")
+        for slug, count in sorted(projects.items(), key=lambda x: -x[1]):
+            print(f"    {slug}: {count} sessions")
+    if focus_age is not None:
+        status = "STALE" if focus_stale else "OK"
+        print(f"  Focus brief: {status} ({focus_age} days old)")
+    else:
+        print("  Focus brief: MISSING (run: lacp-focus init)")
+PY
+}
+
+cmd_prompt() {
+  python3 - <<'PY' "${CHAIN_FILE}" "${DAYS}" "${AS_JSON}"
+import json
+import os
+import sys
+import time
+
+chain_file = sys.argv[1]
+days = int(sys.argv[2])
+as_json = sys.argv[3] == "true"
+
+cutoff = time.time() - (days * 86400)
+entries = []
+
+if os.path.isfile(chain_file):
+    with open(chain_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts_str = entry.get("ended_at") or entry.get("started_at") or ""
+            if not ts_str:
+                continue
+            try:
+                ts = time.mktime(time.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S"))
+            except (ValueError, OverflowError):
+                continue
+            if ts >= cutoff:
+                entries.append(entry)
+
+# Generate reflection prompts
+prompts = [
+    "What problem did I spend the most time on this week? Is it still the right problem?",
+    "What decision did I make that I am least confident about?",
+    "What did I defer or avoid? Why?",
+    "What pattern keeps recurring across sessions?",
+    "What would I do differently if I started this week over?",
+]
+
+# Add context-specific prompts based on provenance
+projects = set()
+for e in entries:
+    slug = e.get("project_slug", "")
+    if slug:
+        projects.add(slug)
+
+if len(projects) > 3:
+    prompts.append(f"I touched {len(projects)} projects. Am I spreading too thin?")
+
+if len(entries) > 20:
+    prompts.append(f"I had {len(entries)} sessions. Am I doing too many small sessions instead of deep work?")
+elif len(entries) < 3:
+    prompts.append(f"Only {len(entries)} sessions this week. Am I blocked, or is this intentional?")
+
+result = {
+    "ok": True,
+    "kind": "reflect_prompt",
+    "lookback_days": days,
+    "session_count": len(entries),
+    "prompts": prompts,
+}
+
+if as_json:
+    print(json.dumps(result))
+else:
+    print(f"Reflection prompts (based on {len(entries)} sessions, last {days} days):\n")
+    for i, p in enumerate(prompts, 1):
+        print(f"  {i}. {p}")
+    print()
+    print("Update your focus brief: lacp-focus edit")
+PY
+}
+
+cmd_reflect() {
+  log "Weekly reflection"
+  echo ""
+  cmd_summary
+  echo ""
+  cmd_prompt
+
+  # Save reflection timestamp
+  mkdir -p "${REFLECT_ROOT}"
+  local today
+  today="$(date +%Y-%m-%d)"
+  printf '{"date":"%s","days":%s}\n' "${today}" "${DAYS}" >> "${REFLECT_ROOT}/log.jsonl"
+
+  echo ""
+  if [[ -f "${FOCUS_FILE}" ]]; then
+    log "Next step: lacp-focus edit (update your focus brief)"
+  else
+    log "Next step: lacp-focus init (create your focus brief)"
+  fi
+}
+
+case "${sub}" in
+  reflect) cmd_reflect ;;
+  summary) cmd_summary ;;
+  prompt) cmd_prompt ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

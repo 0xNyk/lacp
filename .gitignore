@@ -17,3 +17,7 @@ config/obsidian/snapshots/
 
 # Local release artifacts
 dist/
+
+# Claude Code / GitNexus local state
+.claude/
+.gitnexus/

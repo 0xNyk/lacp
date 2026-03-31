@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+FOCUS_FILE="${LACP_FOCUS_FILE:-$HOME/.lacp/focus.md}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-focus init [--force] [--json]
+  lacp-focus show [--json]
+  lacp-focus edit
+  lacp-focus age [--json]
+  lacp-focus check [--max-days <n>] [--json]
+
+Living focus brief for thinking partnership sessions.
+
+A focus brief answers four questions:
+  1. What is the one problem I am currently trying to solve?
+  2. What do I already believe about it, and where am I uncertain?
+  3. What decisions am I sitting on right now?
+  4. What is the output I am trying to produce in the next 30 days?
+
+Subcommands:
+  init    Create focus brief template (default: ~/.lacp/focus.md)
+  show    Print current focus brief
+  edit    Open focus brief in $EDITOR
+  age     Show days since last update
+  check   Warn if focus brief is stale (default: 7 days)
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+FOCUS_TEMPLATE='# Focus Brief
+
+> Update weekly. The act of updating forces clarity.
+> Last updated: DATE_PLACEHOLDER
+
+## 1. Current Problem
+What is the one problem I am currently trying to solve?
+
+<!-- Replace with your answer -->
+
+## 2. Beliefs and Uncertainties
+What do I already believe about it, and where am I uncertain?
+
+**I believe:**
+-
+
+**I am uncertain about:**
+-
+
+## 3. Open Decisions
+What decisions am I sitting on right now?
+
+| Decision | Leaning toward | Blocking factor |
+|----------|---------------|-----------------|
+|          |               |                 |
+
+## 4. 30-Day Output Goal
+What is the output I am trying to produce in the next 30 days?
+
+<!-- One sentence. Be specific. -->
+'
+
+cmd_init() {
+  local force="false"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force="true"; shift ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ -f "${FOCUS_FILE}" && "${force}" != "true" ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      printf '{"ok":false,"kind":"focus_init","error":"focus brief already exists at %s (use --force to overwrite)"}\n' "${FOCUS_FILE}"
+    else
+      log "Focus brief already exists at ${FOCUS_FILE} (use --force to overwrite)"
+    fi
+    return 1
+  fi
+
+  mkdir -p "$(dirname "${FOCUS_FILE}")"
+  local today
+  today="$(date +%Y-%m-%d)"
+  printf '%s' "${FOCUS_TEMPLATE}" | sed "s/DATE_PLACEHOLDER/${today}/" > "${FOCUS_FILE}"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '{"ok":true,"kind":"focus_init","path":"%s","created":true}\n' "${FOCUS_FILE}"
+  else
+    log "Focus brief created at ${FOCUS_FILE}"
+    log "Edit with: lacp-focus edit"
+  fi
+}
+
+cmd_show() {
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ ! -f "${FOCUS_FILE}" ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      printf '{"ok":false,"kind":"focus_show","error":"no focus brief found. Run: lacp-focus init"}\n'
+    else
+      die "No focus brief found. Run: lacp-focus init"
+    fi
+    return 1
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    local content
+    content="$(python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" < "${FOCUS_FILE}")"
+    printf '{"ok":true,"kind":"focus_show","path":"%s","content":%s}\n' "${FOCUS_FILE}" "${content}"
+  else
+    cat "${FOCUS_FILE}"
+  fi
+}
+
+cmd_edit() {
+  if [[ ! -f "${FOCUS_FILE}" ]]; then
+    log "No focus brief found. Creating one first..."
+    cmd_init
+  fi
+  "${EDITOR:-vi}" "${FOCUS_FILE}"
+}
+
+cmd_age() {
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ ! -f "${FOCUS_FILE}" ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      printf '{"ok":false,"kind":"focus_age","error":"no focus brief found"}\n'
+    else
+      die "No focus brief found. Run: lacp-focus init"
+    fi
+    return 1
+  fi
+
+  local age_days
+  age_days="$(python3 - <<'PY' "${FOCUS_FILE}"
+import os, sys, time
+path = sys.argv[1]
+mtime = os.path.getmtime(path)
+age_days = int((time.time() - mtime) / 86400)
+print(age_days)
+PY
+)"
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '{"ok":true,"kind":"focus_age","path":"%s","age_days":%s}\n' "${FOCUS_FILE}" "${age_days}"
+  else
+    log "Focus brief age: ${age_days} days (${FOCUS_FILE})"
+  fi
+}
+
+cmd_check() {
+  local max_days="7"
+  local as_json="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max-days) max_days="$2"; shift 2 ;;
+      --json) as_json="true"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1" ;;
+    esac
+  done
+
+  if [[ ! -f "${FOCUS_FILE}" ]]; then
+    if [[ "${as_json}" == "true" ]]; then
+      printf '{"ok":false,"kind":"focus_check","stale":true,"error":"no focus brief found. Run: lacp-focus init"}\n'
+    else
+      log "STALE: No focus brief found. Run: lacp-focus init"
+    fi
+    return 1
+  fi
+
+  local age_days
+  age_days="$(python3 - <<'PY' "${FOCUS_FILE}"
+import os, sys, time
+path = sys.argv[1]
+mtime = os.path.getmtime(path)
+age_days = int((time.time() - mtime) / 86400)
+print(age_days)
+PY
+)"
+
+  local stale="false"
+  if [[ "${age_days}" -gt "${max_days}" ]]; then
+    stale="true"
+  fi
+
+  if [[ "${as_json}" == "true" ]]; then
+    printf '{"ok":%s,"kind":"focus_check","stale":%s,"age_days":%s,"max_days":%s,"path":"%s"}\n' \
+      "$([[ "${stale}" == "false" ]] && echo "true" || echo "false")" \
+      "${stale}" "${age_days}" "${max_days}" "${FOCUS_FILE}"
+  else
+    if [[ "${stale}" == "true" ]]; then
+      log "STALE: Focus brief is ${age_days} days old (max: ${max_days}). Run: lacp-focus edit"
+      return 1
+    else
+      log "OK: Focus brief is ${age_days} days old (max: ${max_days})"
+    fi
+  fi
+}
+
+case "${sub}" in
+  init) cmd_init "$@" ;;
+  show) cmd_show "$@" ;;
+  edit) cmd_edit "$@" ;;
+  age) cmd_age "$@" ;;
+  check) cmd_check "$@" ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

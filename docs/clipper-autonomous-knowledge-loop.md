@@ -27,7 +27,7 @@ Companion vault playbook:
 
 ### A) Validate harness contracts
 ```bash
-cd ~/control/frameworks/lacp
+cd "${LACP_ROOT:-~/.lacp}"
 ./scripts/ci/test-harness-contracts.sh
 ```
 
@@ -53,7 +53,7 @@ bin/lacp harness-replay --run-id <run-id> --task-id <task-id> --workdir . --json
 
 ### E) Evidence and quality gates
 ```bash
-bin/lacp knowledge-doctor --root ~/control/knowledge/knowledge-memory --json | jq
+bin/lacp knowledge-doctor --root "${LACP_KNOWLEDGE_ROOT:-~/.lacp/knowledge}" --json | jq
 bin/lacp canary --json | jq
 ```
 

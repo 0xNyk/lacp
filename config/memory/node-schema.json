@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LACP Canonical Memory Node",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "layer",
+    "status",
+    "confidence",
+    "source_urls",
+    "source_sessions",
+    "last_verified",
+    "tags",
+    "links"
+  ],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "type": {
+      "type": "string",
+      "enum": [
+        "person",
+        "project",
+        "session",
+        "decision",
+        "task",
+        "concept",
+        "source",
+        "artifact",
+        "metric",
+        "event",
+        "policy",
+        "workflow",
+        "research"
+      ]
+    },
+    "layer": {"type": "integer", "minimum": 1, "maximum": 5},
+    "status": {"type": "string", "enum": ["draft", "active", "stale", "archived", "inbox"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "source_urls": {"type": "array", "items": {"type": "string"}},
+    "source_sessions": {"type": "array", "items": {"type": "string"}},
+    "last_verified": {"type": "string", "minLength": 1},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "links": {
+      "type": "object",
+      "required": ["supports", "contradicts", "supersedes", "derived_from", "related_to", "belongs_to"],
+      "properties": {
+        "supports": {"type": "array", "items": {"type": "string"}},
+        "contradicts": {"type": "array", "items": {"type": "string"}},
+        "supersedes": {"type": "array", "items": {"type": "string"}},
+        "derived_from": {"type": "array", "items": {"type": "string"}},
+        "related_to": {"type": "array", "items": {"type": "string"}},
+        "belongs_to": {"type": "array", "items": {"type": "string"}},
+        "decided_in": {"type": "array", "items": {"type": "string"}},
+        "implemented_by": {"type": "array", "items": {"type": "string"}},
+        "validated_by": {"type": "array", "items": {"type": "string"}},
+        "blocked_by": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

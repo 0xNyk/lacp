@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp eval [--days N] [--json]
+
+Evaluate quality of recent agent sessions using telemetry, SMS episodes,
+and hook contracts. Produces a session quality report with per-dimension
+scores and trends.
+
+Graders:
+  - Code-based: test pass rate, handoff generation, contract completion
+  - Metric: quality gate scores, checkpoint pass rate, files per session
+  - Trend: are sessions improving or degrading over time?
+
+Options:
+  --days N    Lookback window (default: 7)
+  --json      Machine-readable output
+  -h, --help  Show help
+EOF
+}
+
+DAYS=7
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days)  DAYS="$2"; shift 2 ;;
+    --json)  AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+TELEMETRY_FILE="${HOME}/.local/share/claude-hooks/telemetry.jsonl"
+
+python3 - "${TELEMETRY_FILE}" "${DAYS}" "${AS_JSON}" "${ROOT}/hooks" <<'PYTHON'
+import json
+import sys
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+telemetry_file = sys.argv[1]
+days = int(sys.argv[2])
+as_json = sys.argv[3] == "1"
+hooks_dir = sys.argv[4]
+
+cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+# -- Collect telemetry data --
+
+sessions = defaultdict(lambda: {
+    "stop_events": 0, "blocks": 0, "allows": 0, "skips": 0,
+    "test_verifications": 0, "test_failures": 0,
+    "first_seen": None, "last_seen": None,
+    "scoring_details": [],
+})
+
+for line_path in [telemetry_file] + [f"{telemetry_file}.{i}" for i in range(1, 4)]:
+    p = Path(line_path)
+    if not p.exists():
+        continue
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts_str = entry.get("ts", "")
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if ts < cutoff:
+                continue
+        except (ValueError, TypeError):
+            continue
+
+        sid = entry.get("session_id", "unknown")
+        hook = entry.get("hook", "")
+        decision = entry.get("decision", "")
+        details = entry.get("details", {})
+
+        if hook == "stop":
+            s = sessions[sid]
+            s["stop_events"] += 1
+            if decision == "block":
+                s["blocks"] += 1
+            elif decision == "allow":
+                s["allows"] += 1
+            else:
+                s["skips"] += 1
+
+            if details.get("source") == "test_verification":
+                s["test_verifications"] += 1
+                if decision == "block":
+                    s["test_failures"] += 1
+
+            if ts_str < (s["first_seen"] or "9"):
+                s["first_seen"] = ts_str
+            if ts_str > (s["last_seen"] or "0"):
+                s["last_seen"] = ts_str
+
+# -- Collect SMS episodes --
+
+sys.path.insert(0, hooks_dir)
+try:
+    from self_memory_system import read_episodes
+    episodes = read_episodes(days=days, apply_decay=False)
+except Exception:
+    episodes = []
+
+# -- Compute quality dimensions --
+
+total_sessions = len(sessions)
+total_stop_events = sum(s["stop_events"] for s in sessions.values())
+total_blocks = sum(s["blocks"] for s in sessions.values())
+total_test_failures = sum(s["test_failures"] for s in sessions.values())
+
+# Quality gate pass rate
+gate_pass_rate = ((total_stop_events - total_blocks) / total_stop_events * 100) if total_stop_events > 0 else 100
+
+# Average significance of episodes
+avg_significance = (sum(ep.get("significance", 0) for ep in episodes) / len(episodes)) if episodes else 0
+
+# Handoff generation rate
+handoff_dir = Path.home() / ".lacp" / "handoffs"
+handoff_count = len(list(handoff_dir.glob("*-latest.json"))) if handoff_dir.is_dir() else 0
+
+# Files changed per episode
+avg_files = (sum(len(ep.get("files_touched", [])) for ep in episodes) / len(episodes)) if episodes else 0
+
+# Trend: compare first half vs second half of window
+if episodes and len(episodes) >= 4:
+    mid = len(episodes) // 2
+    first_half_sig = sum(ep.get("significance", 0) for ep in episodes[:mid]) / mid
+    second_half_sig = sum(ep.get("significance", 0) for ep in episodes[mid:]) / (len(episodes) - mid)
+    trend = "improving" if second_half_sig > first_half_sig + 0.05 else (
+            "degrading" if second_half_sig < first_half_sig - 0.05 else "stable")
+    trend_delta = second_half_sig - first_half_sig
+else:
+    trend = "insufficient_data"
+    trend_delta = 0
+
+# -- Output --
+
+report = {
+    "window_days": days,
+    "sessions": total_sessions,
+    "stop_events": total_stop_events,
+    "dimensions": {
+        "quality_gate_pass_rate": round(gate_pass_rate, 1),
+        "blocks": total_blocks,
+        "test_failures": total_test_failures,
+        "avg_significance": round(avg_significance, 3),
+        "avg_files_per_episode": round(avg_files, 1),
+        "handoff_artifacts": handoff_count,
+        "episodes_recorded": len(episodes),
+    },
+    "trend": {
+        "direction": trend,
+        "delta": round(trend_delta, 3),
+    },
+}
+
+if as_json:
+    print(json.dumps(report, indent=2))
+else:
+    print(f"Session Quality Report ({days}d window)\n")
+    print(f"  Sessions:              {total_sessions}")
+    print(f"  Stop events:           {total_stop_events}")
+    print(f"  Quality gate pass:     {gate_pass_rate:.1f}%")
+    print(f"  Blocks:                {total_blocks}")
+    print(f"  Test failures:         {total_test_failures}")
+    print(f"  Episodes recorded:     {len(episodes)}")
+    print(f"  Avg significance:      {avg_significance:.3f}")
+    print(f"  Avg files/episode:     {avg_files:.1f}")
+    print(f"  Handoff artifacts:     {handoff_count}")
+    print()
+
+    trend_arrow = {"improving": "^", "degrading": "v", "stable": "=", "insufficient_data": "?"}
+    print(f"  Trend: {trend} {trend_arrow.get(trend, '?')} (delta={trend_delta:+.3f})")
+
+    # Recommendations
+    recs = []
+    if gate_pass_rate < 95:
+        recs.append("Quality gate blocking >5% of stops — review threshold or heuristic patterns")
+    if avg_significance < 0.3 and len(episodes) > 5:
+        recs.append("Low average significance — sessions may lack focus. Update focus brief.")
+    if handoff_count == 0:
+        recs.append("No handoff artifacts — context may be lost between sessions")
+    if len(episodes) == 0:
+        recs.append("No SMS episodes — stop hook may not have SMS integration enabled")
+    if trend == "degrading":
+        recs.append("Significance trending down — check if work is becoming routine")
+
+    if recs:
+        print(f"\n  Recommendations:")
+        for r in recs:
+            print(f"    - {r}")
+PYTHON

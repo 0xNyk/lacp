@@ -12,22 +12,25 @@ Usage: lacp-obsidian <command> [options]
 Manage Obsidian configuration as code.
 
 Commands:
-  status        Show vault status (path, plugins, graph config)
-  audit         Compare live .obsidian/ against manifest.json
-  apply         Apply manifest.json to live .obsidian/ files
-  backup        Snapshot .obsidian/ config files
-  restore       Restore from a snapshot (--snapshot TIMESTAMP or latest)
-  plugins       List installed community plugins with versions
-  graph-config  Show current graph configuration
-  optimize      Delegate to optimize_obsidian_config.py
+  status           Show vault status (path, plugins, graph config)
+  audit            Compare live .obsidian/ against manifest.json
+  apply            Apply manifest.json to live .obsidian/ files
+  backup           Snapshot .obsidian/ config files
+  restore          Restore from a snapshot (--snapshot TIMESTAMP or latest)
+  plugins          List installed community plugins with versions
+  install-plugins  Download & install missing community plugins from manifest
+  graph-config     Show current graph configuration
+  optimize         Delegate to optimize_obsidian_config.py
 
 Options:
   --json        Machine-readable JSON output
+  --dry-run     Show what would be done without making changes
   -h, --help    Show this help
 EOF
 }
 
 AS_JSON=0
+DRY_RUN=0
 SNAPSHOT_TS=""
 
 MANIFEST_PATH="${ROOT}/config/obsidian/manifest.json"
@@ -51,10 +54,10 @@ elif [[ -f "${MANIFEST_PATH}" ]]; then
   if [[ -n "${_manifest_vault}" ]]; then
     VAULT_ROOT="$(resolve_vault_path "${_manifest_vault}")"
   else
-    VAULT_ROOT="${HOME}/obsidian/nyk"
+    VAULT_ROOT="${HOME}/obsidian/vault"
   fi
 else
-  VAULT_ROOT="${HOME}/obsidian/nyk"
+  VAULT_ROOT="${HOME}/obsidian/vault"
 fi
 OBSIDIAN_DIR="${VAULT_ROOT}/.obsidian"
 
@@ -86,7 +89,20 @@ for p in d:
 
   local installed_count=0
   if [[ -d "${OBSIDIAN_DIR}/plugins" ]]; then
-    installed_count="$(find "${OBSIDIAN_DIR}/plugins" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+    installed_count="$(python3 -c "
+import pathlib
+p = pathlib.Path('${OBSIDIAN_DIR}/plugins')
+count = 0
+for d in p.iterdir():
+    if not d.is_dir():
+        continue
+    name = d.name
+    if name.startswith('.') or '.backup.' in name:
+        continue
+    if (d / 'manifest.json').exists():
+        count += 1
+print(count)
+" 2>/dev/null || echo 0)"
   fi
 
   if [[ -f "${OBSIDIAN_DIR}/graph.json" ]]; then
@@ -357,16 +373,19 @@ plugins = []
 for d in sorted(plugins_dir.iterdir()):
     if not d.is_dir():
         continue
+    if d.name.startswith(".") or ".backup." in d.name:
+        continue
     manifest = d / "manifest.json"
+    if not manifest.exists():
+        continue
     name = d.name
     version = "unknown"
-    if manifest.exists():
-        try:
-            m = json.loads(manifest.read_text())
-            version = m.get("version", "unknown")
-            name = m.get("name", d.name)
-        except Exception:
-            pass
+    try:
+        m = json.loads(manifest.read_text())
+        version = m.get("version", "unknown")
+        name = m.get("name", d.name)
+    except Exception:
+        pass
     plugins.append({"id": d.name, "name": name, "version": version})
 
 if as_json:
@@ -407,6 +426,172 @@ else:
 PY
 }
 
+PLUGIN_CACHE_DIR="${HOME}/.lacp/cache"
+PLUGIN_REGISTRY_CACHE="${PLUGIN_CACHE_DIR}/obsidian-plugin-registry.json"
+REGISTRY_URL="https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json"
+
+fetch_plugin_registry() {
+  mkdir -p "${PLUGIN_CACHE_DIR}"
+  local cache_age=999999
+  if [[ -f "${PLUGIN_REGISTRY_CACHE}" ]]; then
+    local cache_mtime now_epoch
+    cache_mtime="$(stat -f %m "${PLUGIN_REGISTRY_CACHE}" 2>/dev/null || echo 0)"
+    now_epoch="$(date -u +%s)"
+    cache_age="$(((now_epoch - cache_mtime) / 3600))"
+  fi
+  # Refresh if cache is >24h old or missing
+  if [[ "${cache_age}" -gt 24 ]]; then
+    if curl -fsSL "${REGISTRY_URL}" -o "${PLUGIN_REGISTRY_CACHE}.tmp" 2>/dev/null; then
+      mv "${PLUGIN_REGISTRY_CACHE}.tmp" "${PLUGIN_REGISTRY_CACHE}"
+    else
+      if [[ ! -f "${PLUGIN_REGISTRY_CACHE}" ]]; then
+        die "Failed to fetch Obsidian plugin registry and no cache exists"
+      fi
+    fi
+  fi
+}
+
+resolve_plugin_repo() {
+  local plugin_id="$1"
+  python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    registry = json.load(f)
+for p in registry:
+    if p.get('id') == sys.argv[2]:
+        print(p.get('repo', ''))
+        sys.exit(0)
+print('')
+" "${PLUGIN_REGISTRY_CACHE}" "${plugin_id}"
+}
+
+cmd_install_plugins() {
+  require_file "${MANIFEST_PATH}"
+  require_dir "${OBSIDIAN_DIR}"
+
+  fetch_plugin_registry
+
+  local manifest_plugins
+  manifest_plugins="$(python3 -c "
+import json
+with open('${MANIFEST_PATH}') as f:
+    m = json.load(f)
+for p in m.get('community_plugins', []):
+    print(p)
+")"
+
+  local installed=() skipped=() failed=()
+
+  while IFS= read -r plugin_id; do
+    [[ -n "${plugin_id}" ]] || continue
+    local plugin_dir="${OBSIDIAN_DIR}/plugins/${plugin_id}"
+
+    # Skip if already installed
+    if [[ -f "${plugin_dir}/manifest.json" ]]; then
+      skipped+=("${plugin_id}")
+      continue
+    fi
+
+    local repo
+    repo="$(resolve_plugin_repo "${plugin_id}")"
+    if [[ -z "${repo}" ]]; then
+      failed+=("${plugin_id}")
+      [[ "${AS_JSON}" -eq 0 ]] && log "SKIP ${plugin_id}: not found in Obsidian plugin registry"
+      continue
+    fi
+
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      installed+=("${plugin_id}")
+      [[ "${AS_JSON}" -eq 0 ]] && log "WOULD INSTALL ${plugin_id} (${repo})"
+      continue
+    fi
+
+    # Fetch latest release
+    local release_json
+    release_json="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null || true)"
+    if [[ -z "${release_json}" ]]; then
+      failed+=("${plugin_id}")
+      [[ "${AS_JSON}" -eq 0 ]] && log "FAIL ${plugin_id}: could not fetch latest release from ${repo}"
+      continue
+    fi
+
+    mkdir -p "${plugin_dir}"
+    local got_main=0
+
+    # Download assets: main.js, manifest.json, styles.css
+    for asset in main.js manifest.json styles.css; do
+      local asset_url
+      asset_url="$(printf '%s' "${release_json}" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if a['name'] == sys.argv[1]:
+        print(a['browser_download_url'])
+        sys.exit(0)
+print('')
+" "${asset}")"
+
+      if [[ -n "${asset_url}" ]]; then
+        if curl -fsSL "${asset_url}" -o "${plugin_dir}/${asset}" 2>/dev/null; then
+          [[ "${asset}" == "main.js" ]] && got_main=1
+        fi
+      fi
+    done
+
+    if [[ "${got_main}" -eq 1 ]]; then
+      installed+=("${plugin_id}")
+      [[ "${AS_JSON}" -eq 0 ]] && log "INSTALLED ${plugin_id} (${repo})"
+    else
+      # Clean up partial install
+      rm -rf "${plugin_dir}"
+      failed+=("${plugin_id}")
+      [[ "${AS_JSON}" -eq 0 ]] && log "FAIL ${plugin_id}: main.js not found in release assets"
+    fi
+  done <<< "${manifest_plugins}"
+
+  # Register installed plugins in community-plugins.json
+  if [[ "${DRY_RUN}" -eq 0 && "${#installed[@]}" -gt 0 ]]; then
+    local community_path="${OBSIDIAN_DIR}/community-plugins.json"
+    python3 -c "
+import json, sys
+from pathlib import Path
+cp = Path(sys.argv[1])
+existing = json.loads(cp.read_text()) if cp.exists() else []
+new_plugins = sys.argv[2:]
+merged = sorted(set(existing + new_plugins))
+cp.write_text(json.dumps(merged, indent=2) + '\n')
+" "${community_path}" "${installed[@]}"
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    python3 -c "
+import json, sys
+installed = sys.argv[1].split(',') if sys.argv[1] else []
+skipped = sys.argv[2].split(',') if sys.argv[2] else []
+failed = sys.argv[3].split(',') if sys.argv[3] else []
+dry_run = sys.argv[4] == '1'
+print(json.dumps({
+    'ok': len(failed) == 0,
+    'dry_run': dry_run,
+    'installed': installed,
+    'skipped': skipped,
+    'failed': failed,
+    'installed_count': len(installed),
+    'skipped_count': len(skipped),
+    'failed_count': len(failed)
+}, indent=2))
+" "$(IFS=,; echo "${installed[*]+"${installed[*]}"}")" \
+  "$(IFS=,; echo "${skipped[*]+"${skipped[*]}"}")" \
+  "$(IFS=,; echo "${failed[*]+"${failed[*]}"}")" \
+  "${DRY_RUN}"
+  else
+    log "install-plugins: installed=${#installed[@]} skipped=${#skipped[@]} failed=${#failed[@]} dry_run=${DRY_RUN}"
+    if [[ "${DRY_RUN}" -eq 0 && "${#installed[@]}" -gt 0 ]]; then
+      log "Restart Obsidian to activate new plugins"
+    fi
+  fi
+}
+
 cmd_optimize() {
   local script="${ROOT}/scripts/runners/optimize_obsidian_config.py"
   if [[ ! -f "${script}" ]]; then
@@ -432,6 +617,7 @@ shift
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) AS_JSON=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
     --snapshot) SNAPSHOT_TS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument: $1" ;;
@@ -444,8 +630,9 @@ case "${COMMAND}" in
   apply)        cmd_apply ;;
   backup)       cmd_backup ;;
   restore)      cmd_restore ;;
-  plugins)      cmd_plugins ;;
-  graph-config) cmd_graph_config ;;
+  plugins)          cmd_plugins ;;
+  install-plugins)  cmd_install_plugins ;;
+  graph-config)     cmd_graph_config ;;
   optimize)     cmd_optimize ;;
   -h|--help)    usage; exit 0 ;;
   *)            die "Unknown command: ${COMMAND}" ;;

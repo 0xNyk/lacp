@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -113,11 +114,13 @@ def _detect_test_command() -> str | None:
 
 
 def _cache_test_command(cmd: str) -> None:
-    """Write test command to /tmp for stop hook to pick up."""
+    """Write test command to session state dir for stop hook to pick up."""
     session_id = os.getenv("CLAUDE_SESSION_ID", "default")
-    path = Path(f"/tmp/lacp-session-test-cmd-{session_id}")
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", session_id)
+    state_dir = Path.home() / ".lacp" / "hooks" / "state" / safe_id
     try:
-        path.write_text(cmd)
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (state_dir / "test-cmd").write_text(cmd)
     except OSError:
         pass
 
@@ -177,12 +180,130 @@ def main() -> None:
             "Verify build/test commands before making changes."
         )
 
+    # Focus brief injection
+    focus_file = Path(os.getenv("LACP_FOCUS_FILE", Path.home() / ".lacp" / "focus.md"))
+    if focus_file.is_file():
+        try:
+            focus_content = focus_file.read_text().strip()
+            if focus_content:
+                # Check staleness (warn if >7 days old)
+                age_days = int((time.time() - focus_file.stat().st_mtime) / 86400)
+                stale_note = ""
+                if age_days > 7:
+                    stale_note = (
+                        f" (STALE: {age_days} days old — run `lacp-focus edit` to refresh)"
+                    )
+                parts.append(f"Focus brief{stale_note}:\n{focus_content}")
+        except OSError:
+            pass
+
+    # Handoff artifact injection
+    try:
+        import hashlib
+        cwd_hash = hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:12]
+        handoff_file = Path.home() / ".lacp" / "handoffs" / f"{cwd_hash}-latest.json"
+        if handoff_file.is_file():
+            age_hours = (time.time() - handoff_file.stat().st_mtime) / 3600
+            if age_hours < 24:
+                handoff = json.loads(handoff_file.read_text())
+                summary = handoff.get("task_summary", "")[:200]
+                branch = handoff.get("git_branch", "")
+                test_status = handoff.get("test_status", "unknown")
+                files = handoff.get("files_modified", [])
+                next_steps = handoff.get("next_steps", [])
+                handoff_parts = [f"Previous session handoff ({int(age_hours)}h ago):"]
+                if summary:
+                    handoff_parts.append(f"  Summary: {summary}")
+                if branch:
+                    handoff_parts.append(f"  Branch: {branch}")
+                if test_status != "unknown":
+                    handoff_parts.append(f"  Tests: {test_status}")
+                if files:
+                    handoff_parts.append(f"  Modified: {', '.join(files[:10])}")
+                if next_steps:
+                    handoff_parts.append(f"  Next: {'; '.join(next_steps[:5])}")
+                parts.append("\n".join(handoff_parts))
+    except Exception:
+        pass
+
+    # Health snapshot context — inject latest health score
+    try:
+        snapshot_dir = Path.home() / ".lacp" / "health" / "snapshots"
+        if snapshot_dir.is_dir():
+            snapshots = sorted(snapshot_dir.glob("snapshot-*.json"))
+            if snapshots:
+                latest = json.loads(snapshots[-1].read_text())
+                score = latest.get("health_score", "?")
+                penalties = latest.get("penalties", [])
+                age_h = int((time.time() - snapshots[-1].stat().st_mtime) / 3600)
+                if age_h < 24:
+                    health_line = f"System health: {score}/100 ({age_h}h ago)"
+                    if penalties:
+                        health_line += f" [{'; '.join(penalties[:3])}]"
+                    parts.append(health_line)
+    except Exception:
+        pass
+
+    # Self-Memory System context injection (Conway SMS — psychology-informed)
+    try:
+        from self_memory_system import build_session_context
+        sms_context = build_session_context()
+        if sms_context:
+            parts.append(f"Agent memory (SMS):\n{sms_context}")
+    except Exception:
+        pass  # SMS is optional — fail silently
+
     # LACP context mode
     mode = os.getenv("LACP_CONTEXT_MODE", "").strip()
     if mode:
         mode_content = _load_context_mode(mode)
         if mode_content:
             parts.append(mode_content)
+
+    # Cleanup stale contracts/state from old sessions (cheap, best-effort)
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from hook_contracts import cleanup_stale_contracts, cleanup_stale_state
+        stale_contracts = cleanup_stale_contracts(max_age_hours=48)
+        stale_state = cleanup_stale_state(max_age_hours=48)
+        if stale_contracts > 0 or stale_state > 0:
+            parts.append(f"Cleaned {stale_contracts} stale contracts, {stale_state} stale state dirs")
+    except Exception:
+        pass
+
+    # Write session start contract for stop hook and other consumers
+    try:
+        from hook_contracts import SessionStartOutput, write_contract as _write_contract
+
+        _branch = None
+        if _is_git_repo():
+            try:
+                _branch = subprocess.run(
+                    ["git", "branch", "--show-current"],
+                    capture_output=True, text=True, timeout=5,
+                ).stdout.strip() or None
+            except Exception:
+                pass
+
+        _contract = SessionStartOutput(
+            test_cmd=test_cmd,
+            git_branch=_branch,
+            context_mode=mode if mode else None,
+            started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            context_budget_hint=int(os.getenv("LACP_CONTEXT_BUDGET_HINT", "180000")),
+        )
+        _write_contract("session_start", _contract)
+    except Exception:
+        pass  # Contract writing is best-effort
+
+    # Graceful degradation feedback — surface silently disabled features
+    degraded = []
+    if not test_cmd:
+        degraded.append("test verification (no test command detected)")
+    if os.getenv("LACP_EVAL_CHECKPOINT_ENABLED") == "1" and not test_cmd:
+        degraded.append("eval checkpoint (requires test command)")
+    if degraded:
+        parts.append(f"Degraded: {', '.join(degraded)}")
 
     if parts:
         print(json.dumps({"systemMessage": "\n".join(parts)}))

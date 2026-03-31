@@ -27,6 +27,8 @@ run_expect_rc() {
 }
 
 export LACP_SKIP_DOTENV="1"
+# Unset recursion guard so sandbox-run exercises actual gate logic
+unset LACP_SANDBOX_RECURSION_GUARD LACP_SANDBOX_DEPTH 2>/dev/null || true
 export LACP_AUTOMATION_ROOT="${TMP}/automation"
 export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"

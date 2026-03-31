@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp [options] [prompt...]
+
+Launch a hardened agent session with LACP hooks, context modes,
+handoff injection, and quality gates active.
+
+Options:
+  --agent <name>               Agent backend (default: auto-detect)
+                               Supported: claude, codex, hermes, opencode,
+                               gemini, goose, aider, openclaw
+  --mode <context-mode>        Set LACP_CONTEXT_MODE (tdd, debugging, sprint, etc.)
+  --resume                     Continue most recent session (-c)
+  --profile <hook-profile>     Apply hook profile before launch
+  --bypass                     Pass through to native agent without LACP gates
+  --print                      Non-interactive mode (pass -p to agent)
+  --dry-run                    Show what would be launched
+  --json                       Emit JSON launch manifest
+  -h, --help                   Show help
+
+Available context modes:
+  brainstorm      Design exploration before implementation
+  debugging       4-phase systematic root cause investigation
+  handoff-resume  Continue from previous session handoff
+  implementation  Focused implementation partner
+  review          Code review mode
+  sprint          Pre-agreed completion criteria
+  tdd             Strict red-green-refactor discipline
+  thinking-partner Challenge assumptions, surface blind spots
+  verification    Evidence-before-claims discipline
+
+Examples:
+  lacp                              # interactive session with hooks
+  lacp --mode tdd                   # TDD mode with eval checkpoints
+  lacp --resume                     # continue last session
+  lacp "fix the auth bug"           # one-shot prompt
+  lacp --print "explain this code"  # non-interactive, pipeable
+  cat error.log | lacp "diagnose"   # pipe input
+EOF
+}
+
+AGENT=""
+CONTEXT_MODE=""
+RESUME=0
+HOOK_PROFILE=""
+BYPASS=0
+PRINT_MODE=0
+DRY_RUN=0
+AS_JSON=0
+PROMPT_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)     AGENT="$2"; shift 2 ;;
+    --mode)      CONTEXT_MODE="$2"; shift 2 ;;
+    --resume)    RESUME=1; shift ;;
+    --profile)   HOOK_PROFILE="$2"; shift 2 ;;
+    --bypass)    BYPASS=1; shift ;;
+    --print)     PRINT_MODE=1; shift ;;
+    --dry-run)   DRY_RUN=1; shift ;;
+    --json)      AS_JSON=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
+    -*)          PROMPT_ARGS+=("$1"); shift ;;
+    *)           PROMPT_ARGS+=("$1"); shift ;;
+  esac
+done
+
+# -- Detect agent binary --
+
+detect_agent() {
+  local name="$1"
+  local native_path="${HOME}/.local/bin/${name}.native"
+
+  # Prefer .native (the real binary, not LACP wrapper)
+  if [[ -x "${native_path}" ]]; then
+    echo "${native_path}"
+    return 0
+  fi
+
+  # Fall back to whatever is in PATH
+  local found
+  found="$(command -v "${name}" 2>/dev/null || true)"
+  if [[ -n "${found}" ]]; then
+    echo "${found}"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_agent() {
+  if [[ -n "${AGENT}" ]]; then
+    local path
+    path="$(detect_agent "${AGENT}")" || die "Agent '${AGENT}' not found in PATH"
+    echo "${path}"
+    return 0
+  fi
+
+  # Auto-detect: prefer claude > codex > hermes > opencode > gemini > goose > aider > openclaw
+  for candidate in claude codex hermes opencode gemini goose aider openclaw; do
+    local path
+    path="$(detect_agent "${candidate}" 2>/dev/null || true)"
+    if [[ -n "${path}" ]]; then
+      # Extract agent name for display
+      AGENT="${candidate}"
+      echo "${path}"
+      return 0
+    fi
+  done
+
+  die "No agent found. Install one of: claude, codex, hermes, opencode, gemini, goose, aider, openclaw"
+}
+
+AGENT_PATH="$(resolve_agent)"
+
+# -- Apply context mode --
+
+if [[ -n "${CONTEXT_MODE}" ]]; then
+  mode_file="${ROOT}/config/context-modes/${CONTEXT_MODE}.md"
+  if [[ ! -f "${mode_file}" ]]; then
+    die "Unknown context mode: ${CONTEXT_MODE}. See: ls ${ROOT}/config/context-modes/"
+  fi
+  export LACP_CONTEXT_MODE="${CONTEXT_MODE}"
+fi
+
+# -- Apply hook profile --
+
+if [[ -n "${HOOK_PROFILE}" ]]; then
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    "${ROOT}/bin/lacp-claude-hooks" apply-profile --profile "${HOOK_PROFILE}" 2>/dev/null || true
+  fi
+fi
+
+# -- Enable eval checkpoint for discipline modes --
+
+case "${CONTEXT_MODE}" in
+  tdd|sprint|debugging|verification|orchestrate|think)
+    export LACP_EVAL_CHECKPOINT_ENABLED=1
+    ;;
+esac
+
+# -- Build agent command (agent-specific flag mapping) --
+
+declare -a AGENT_CMD=("${AGENT_PATH}")
+
+case "${AGENT}" in
+  claude)
+    [[ "${RESUME}" -eq 1 ]] && AGENT_CMD+=("-c")
+    if [[ "${PRINT_MODE}" -eq 1 ]]; then
+      AGENT_CMD+=("-p")
+    elif [[ "${#PROMPT_ARGS[@]}" -gt 0 ]]; then
+      AGENT_CMD+=("-p")
+    fi
+    ;;
+  codex)
+    if [[ "${PRINT_MODE}" -eq 1 || "${#PROMPT_ARGS[@]}" -gt 0 ]]; then
+      # codex uses 'exec' subcommand for non-interactive
+      AGENT_CMD=("${AGENT_PATH}" "exec")
+    fi
+    ;;
+  gemini)
+    if [[ "${PRINT_MODE}" -eq 1 ]]; then
+      AGENT_CMD+=("-p")
+    elif [[ "${#PROMPT_ARGS[@]}" -gt 0 ]]; then
+      AGENT_CMD+=("-p")
+    fi
+    ;;
+  hermes|opencode|goose|aider|openclaw)
+    # These agents accept prompts as trailing args or via their own flags
+    if [[ "${PRINT_MODE}" -eq 1 && "${AGENT}" == "aider" ]]; then
+      AGENT_CMD+=("--message")
+    fi
+    ;;
+esac
+
+# Pass remaining args (prompt text) to agent
+if [[ "${#PROMPT_ARGS[@]}" -gt 0 ]]; then
+  AGENT_CMD+=("${PROMPT_ARGS[@]}")
+fi
+
+# -- Pre-launch: inject handoff if available --
+
+if [[ "${RESUME}" -eq 0 && "${PRINT_MODE}" -eq 0 ]]; then
+  handoff_hash="$(echo -n "$(pwd)" | shasum -a 256 | cut -c1-12)"
+  handoff_file="${HOME}/.lacp/handoffs/${handoff_hash}-latest.json"
+  if [[ -f "${handoff_file}" ]]; then
+    age_hours=$(( ( $(date +%s) - $(stat -f %m "${handoff_file}" 2>/dev/null || stat -c %Y "${handoff_file}" 2>/dev/null) ) / 3600 ))
+    if [[ "${age_hours}" -lt 24 ]]; then
+      log "Handoff artifact available (${age_hours}h old) — will be injected at session start"
+    fi
+  fi
+fi
+
+# -- Dry run / JSON output --
+
+if [[ "${DRY_RUN}" -eq 1 || "${AS_JSON}" -eq 1 ]]; then
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg agent "${AGENT}" \
+      --arg agent_path "${AGENT_PATH}" \
+      --arg context_mode "${CONTEXT_MODE}" \
+      --arg hook_profile "${HOOK_PROFILE}" \
+      --argjson resume "$([[ "${RESUME}" -eq 1 ]] && echo true || echo false)" \
+      --argjson print_mode "$([[ "${PRINT_MODE}" -eq 1 ]] && echo true || echo false)" \
+      --argjson bypass "$([[ "${BYPASS}" -eq 1 ]] && echo true || echo false)" \
+      --argjson eval_checkpoint "$([[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]] && echo true || echo false)" \
+      --arg prompt "$(IFS=' '; echo "${PROMPT_ARGS[*]:-}")" \
+      --arg cmd "$(IFS=' '; echo "${AGENT_CMD[*]}")" \
+      '{
+        agent: $agent,
+        agent_path: $agent_path,
+        context_mode: $context_mode,
+        hook_profile: $hook_profile,
+        resume: $resume,
+        print_mode: $print_mode,
+        bypass: $bypass,
+        eval_checkpoint: $eval_checkpoint,
+        prompt: $prompt,
+        command: $cmd
+      }'
+  else
+    log "Would run: ${AGENT_CMD[*]}"
+    [[ -n "${CONTEXT_MODE}" ]] && log "  Context mode: ${CONTEXT_MODE}"
+    [[ -n "${HOOK_PROFILE}" ]] && log "  Hook profile: ${HOOK_PROFILE}"
+    [[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]] && log "  Eval checkpoint: enabled"
+  fi
+  exit 0
+fi
+
+# -- Launch --
+
+if [[ "${BYPASS}" -eq 1 ]]; then
+  exec "${AGENT_PATH}" "${PROMPT_ARGS[@]}"
+fi
+
+log "Launching ${AGENT} session"
+[[ -n "${CONTEXT_MODE}" ]] && log "  Mode: ${CONTEXT_MODE}"
+[[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]] && log "  Eval checkpoints: active"
+
+exec "${AGENT_CMD[@]}"

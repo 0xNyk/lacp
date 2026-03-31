@@ -56,6 +56,11 @@ assert_lt() {
 
 SCRIPTS_DIR="${LACP_AUTOMATION_ROOT:-${ROOT}/automation}/scripts"
 
+if ! python3 -c "import sys; sys.path.insert(0, '${SCRIPTS_DIR}'); import sync_research_knowledge" >/dev/null 2>&1; then
+  echo "[brain-memory-test] SKIP sync_research_knowledge.py missing under ${SCRIPTS_DIR}"
+  exit 0
+fi
+
 # --- Test 1: Spreading activation ---
 echo "--- Test 1: Spreading activation ---"
 result="$(python3 -c "
@@ -375,6 +380,113 @@ result = run_consolidation(apply=False, config={
 print('protected_tendrils' in result)
 ")"
 assert_eq "${result_tendril}" "True" "tendril_protection_key_in_result"
+
+# --- Test 12: Zone classification ---
+echo "--- Test 12: Zone classification ---"
+result_zone="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from sync_research_knowledge import classify_zone
+import json
+zones = {
+    'high': classify_zone(0.8),
+    'mid': classify_zone(0.45),
+    'low': classify_zone(0.15),
+    'very_low': classify_zone(0.05),
+}
+print(json.dumps(zones))
+")"
+z_high="$(echo "${result_zone}" | python3 -c "import json,sys; print(json.load(sys.stdin)['high'])")"
+z_mid="$(echo "${result_zone}" | python3 -c "import json,sys; print(json.load(sys.stdin)['mid'])")"
+z_low="$(echo "${result_zone}" | python3 -c "import json,sys; print(json.load(sys.stdin)['low'])")"
+z_very_low="$(echo "${result_zone}" | python3 -c "import json,sys; print(json.load(sys.stdin)['very_low'])")"
+
+assert_eq "${z_high}" "active" "zone_classify_active"
+assert_eq "${z_mid}" "stale" "zone_classify_stale"
+assert_eq "${z_low}" "fading" "zone_classify_fading"
+assert_eq "${z_very_low}" "archived" "zone_classify_archived"
+
+# --- Test 13: Bridge protection (Tarjan's articulation points) ---
+echo "--- Test 13: Bridge protection ---"
+result_bridge="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from sync_research_knowledge import find_articulation_points
+
+# Linear graph: A-B-C. B is the bridge.
+items = {
+    'a': {'edges': [{'id': 'b', 'similarity': 0.8}]},
+    'b': {'edges': [{'id': 'a', 'similarity': 0.8}, {'id': 'c', 'similarity': 0.8}]},
+    'c': {'edges': [{'id': 'b', 'similarity': 0.8}]},
+}
+ap = find_articulation_points(items)
+print('b' in ap)
+")"
+assert_eq "${result_bridge}" "True" "tarjan_bridge_node_detected"
+
+# Non-bridge: fully connected triangle has no articulation points
+result_no_bridge="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from sync_research_knowledge import find_articulation_points
+
+items = {
+    'a': {'edges': [{'id': 'b', 'similarity': 0.8}, {'id': 'c', 'similarity': 0.8}]},
+    'b': {'edges': [{'id': 'a', 'similarity': 0.8}, {'id': 'c', 'similarity': 0.8}]},
+    'c': {'edges': [{'id': 'a', 'similarity': 0.8}, {'id': 'b', 'similarity': 0.8}]},
+}
+ap = find_articulation_points(items)
+print(len(ap))
+")"
+assert_eq "${result_no_bridge}" "0" "tarjan_triangle_no_bridge"
+
+# Bridge protection in consolidation result
+result_bridge_key="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from memory_consolidation import run_consolidation
+result = run_consolidation(apply=False, config={
+    'cluster_threshold': 0.75,
+    'merge_threshold': 0.80,
+    'min_cluster_size': 3,
+    'prune_r_threshold': 0.1,
+    'prune_s_threshold': 0.3,
+    'prune_edge_threshold': 0.5,
+    'max_prune_per_run': 50,
+})
+print('bridge_protected' in result)
+")"
+assert_eq "${result_bridge_key}" "True" "bridge_protected_key_in_consolidation"
+
+# --- Test 14: Metabolic rates ---
+echo "--- Test 14: Metabolic rates ---"
+result_metabolic="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from sync_research_knowledge import compute_retrieval_strength
+
+# Use an older item so decay is visible
+item = {'count': 1, 'last_seen': '2025-06-01'}
+r_identity = compute_retrieval_strength(item, edge_count=0, content_type='identity')
+r_session = compute_retrieval_strength(item, edge_count=0, content_type='session')
+r_default = compute_retrieval_strength(item, edge_count=0)
+print(f'{r_identity} {r_session} {r_default}')
+")"
+r_id="$(echo "${result_metabolic}" | cut -d' ' -f1)"
+r_sess="$(echo "${result_metabolic}" | cut -d' ' -f2)"
+assert_gt "${r_id}" "${r_sess}" "metabolic_identity_decays_slower_than_session"
+
+# Backward compat: no content_type still works
+result_metabolic_bc="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPTS_DIR}')
+from sync_research_knowledge import compute_retrieval_strength
+from datetime import UTC, datetime
+item = {'count': 5, 'last_seen': datetime.now(UTC).isoformat()}
+r = compute_retrieval_strength(item, edge_count=2)
+print(isinstance(r, float))
+")"
+assert_eq "${result_metabolic_bc}" "True" "metabolic_backward_compat"
 
 # --- Summary ---
 echo ""

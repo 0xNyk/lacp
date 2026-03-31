@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp health-snapshot [--json] [--store] [--days N]
+
+Capture a unified health snapshot aggregating all LACP diagnostic sources
+into a single JSON document. Optionally store to ~/.lacp/health/ for
+time-series analysis and autoresearch optimization.
+
+Sources collected:
+  - Runtime pressure (CPU, memory, fork headroom)
+  - Hook telemetry summary (gate pass rate, blocks, decisions)
+  - SMS episode summary (significance, episode count, trend)
+  - Cache effectiveness (hit rate, token savings)
+  - Brain health (pass/warn/fail counts)
+  - Session quality (eval dimensions)
+
+Options:
+  --store     Write snapshot to ~/.lacp/health/snapshots/ (time-indexed)
+  --days N    Lookback window for session metrics (default: 7)
+  --json      JSON output (default)
+  --text      Human-readable output
+  -h, --help  Show help
+EOF
+}
+
+STORE=0
+DAYS=7
+TEXT_MODE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --store)  STORE=1; shift ;;
+    --days)   DAYS="$2"; shift 2 ;;
+    --json)   shift ;;
+    --text)   TEXT_MODE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)        die "Unknown argument: $1" ;;
+  esac
+done
+
+# Collect all health data in parallel where possible
+python3 - "${ROOT}" "${DAYS}" "${STORE}" "${TEXT_MODE}" <<'PYTHON'
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+lacp_root = sys.argv[1]
+days = int(sys.argv[2])
+store = sys.argv[3] == "1"
+text_mode = sys.argv[4] == "1"
+
+def run_cmd(cmd, timeout=15):
+    """Run a command and return parsed JSON or None."""
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                          timeout=timeout, cwd=lacp_root)
+        if r.returncode == 0 and r.stdout.strip():
+            return json.loads(r.stdout.strip())
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        pass
+    return None
+
+def safe_get(data, *keys, default=None):
+    """Safely navigate nested dict."""
+    d = data
+    for k in keys:
+        if isinstance(d, dict):
+            d = d.get(k, default)
+        else:
+            return default
+    return d
+
+snapshot = {
+    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "window_days": days,
+    "sources": {},
+    "health_score": 0,  # computed below
+}
+
+# -- 1. Runtime pressure --
+try:
+    pressure = json.loads(subprocess.run(
+        ["bash", "-c", f"source {lacp_root}/scripts/lacp-lib.sh && lacp_runtime_pressure_json"],
+        capture_output=True, text=True, timeout=5,
+    ).stdout.strip())
+    snapshot["sources"]["runtime"] = {
+        "high": pressure.get("high", False),
+        "load_per_cpu": safe_get(pressure, "metrics", "load_per_cpu", default=0),
+        "fork_headroom": safe_get(pressure, "metrics", "fork_headroom", default=0),
+    }
+except Exception:
+    snapshot["sources"]["runtime"] = {"high": None, "error": "unavailable"}
+
+# -- 2. Hook telemetry summary --
+scaffold = run_cmd(f"bin/lacp-scaffold-audit --json --days {days}")
+if scaffold:
+    snapshot["sources"]["hooks"] = {
+        "total_stop_events": scaffold.get("total_stop_events", 0),
+        "stages": [
+            {"stage": s["stage"], "activations": s["activations"],
+             "blocks": s["blocks"], "flagged": s["flagged"]}
+            for s in scaffold.get("stages", [])
+        ],
+    }
+else:
+    snapshot["sources"]["hooks"] = {"error": "unavailable"}
+
+# -- 3. Session quality (eval) --
+eval_data = run_cmd(f"bin/lacp-eval --json --days {days}")
+if eval_data:
+    dims = eval_data.get("dimensions", {})
+    snapshot["sources"]["sessions"] = {
+        "count": eval_data.get("sessions", 0),
+        "quality_gate_pass_rate": dims.get("quality_gate_pass_rate", 0),
+        "blocks": dims.get("blocks", 0),
+        "test_failures": dims.get("test_failures", 0),
+        "episodes_recorded": dims.get("episodes_recorded", 0),
+        "avg_significance": dims.get("avg_significance", 0),
+        "trend": eval_data.get("trend", {}).get("direction", "unknown"),
+    }
+else:
+    snapshot["sources"]["sessions"] = {"error": "unavailable"}
+
+# -- 4. Cache effectiveness --
+cache = run_cmd(f"bin/lacp-cache-audit --json --hours {days * 24}")
+if cache:
+    overall = cache.get("overall", {})
+    snapshot["sources"]["cache"] = {
+        "hit_rate": overall.get("cache_hit_rate_estimate", 0),
+        "prompt_tokens": overall.get("prompt_tokens", 0),
+        "cached_tokens": overall.get("cached_tokens", 0),
+        "records": overall.get("records_with_usage", 0),
+    }
+else:
+    snapshot["sources"]["cache"] = {"error": "unavailable"}
+
+# -- 5. SMS summary --
+sms_data = run_cmd(f"bin/lacp-sms significance --json")
+if sms_data:
+    snapshot["sources"]["sms"] = {
+        "total_episodes": sms_data.get("total", 0),
+        "avg_significance": sms_data.get("avg_significance", 0),
+        "distribution": sms_data.get("distribution", {}),
+    }
+else:
+    snapshot["sources"]["sms"] = {"error": "unavailable"}
+
+# -- 6. Brain health (quick check) --
+brain = run_cmd("bin/lacp-brain-doctor --json", timeout=30)
+if brain:
+    summary = brain.get("summary", {})
+    snapshot["sources"]["brain"] = {
+        "pass": summary.get("pass", 0),
+        "warn": summary.get("warn", 0),
+        "fail": summary.get("fail", 0),
+        "ok": brain.get("ok", False),
+    }
+else:
+    snapshot["sources"]["brain"] = {"error": "unavailable"}
+
+# -- Compute unified health score (0-100) --
+score = 100
+penalties = []
+
+# Runtime penalty
+rt = snapshot["sources"].get("runtime", {})
+if rt.get("high"):
+    score -= 15
+    penalties.append("runtime pressure high (-15)")
+
+# Quality gate penalty
+sessions = snapshot["sources"].get("sessions", {})
+gpr = sessions.get("quality_gate_pass_rate", 100)
+if gpr < 95:
+    penalty = int((100 - gpr) * 2)
+    score -= penalty
+    penalties.append(f"quality gate {gpr}% (-{penalty})")
+
+# Test failure penalty
+tf = sessions.get("test_failures", 0)
+if tf > 0:
+    score -= min(20, tf * 5)
+    penalties.append(f"test failures: {tf} (-{min(20, tf * 5)})")
+
+# Cache penalty
+cache_src = snapshot["sources"].get("cache", {})
+hr = cache_src.get("hit_rate", 0)
+if isinstance(hr, (int, float)) and cache_src.get("records", 0) > 10 and hr < 0.5:
+    score -= 10
+    penalties.append(f"cache hit rate {hr:.0%} (-10)")
+
+# Brain penalty
+brain_src = snapshot["sources"].get("brain", {})
+brain_fails = brain_src.get("fail", 0)
+if brain_fails > 0:
+    score -= min(15, brain_fails * 3)
+    penalties.append(f"brain failures: {brain_fails} (-{min(15, brain_fails * 3)})")
+
+# Trend bonus/penalty
+trend = sessions.get("trend", "unknown")
+if trend == "degrading":
+    score -= 5
+    penalties.append("trend degrading (-5)")
+elif trend == "improving":
+    score += 5
+    penalties.append("trend improving (+5)")
+
+snapshot["health_score"] = max(0, min(100, score))
+snapshot["penalties"] = penalties
+
+# -- Store if requested --
+if store:
+    snapshot_dir = Path.home() / ".lacp" / "health" / "snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ts_safe = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    snapshot_file = snapshot_dir / f"snapshot-{ts_safe}.json"
+    snapshot_file.write_text(json.dumps(snapshot, indent=2))
+    snapshot["stored_at"] = str(snapshot_file)
+
+# -- Output --
+if text_mode:
+    print(f"LACP Health Snapshot ({days}d window)")
+    print(f"  Health Score: {snapshot['health_score']}/100\n")
+
+    for source_name, source_data in snapshot["sources"].items():
+        if source_data.get("error"):
+            print(f"  {source_name:12s}  unavailable")
+            continue
+        metrics = " | ".join(f"{k}={v}" for k, v in source_data.items()
+                            if k not in ("error", "stages", "distribution") and v is not None)
+        print(f"  {source_name:12s}  {metrics}")
+
+    if penalties:
+        print(f"\n  Penalties/bonuses:")
+        for p in penalties:
+            print(f"    {p}")
+else:
+    print(json.dumps(snapshot, indent=2))
+PYTHON

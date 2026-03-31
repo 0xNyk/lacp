@@ -7,14 +7,15 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize]
+Usage: lacp-onboard [--with-verify] [--hours N] [--no-auto-deps] [--auto-deps-dry-run] [--auto-deps-force] [--no-auto-adopt] [--no-auto-hook-optimize] [--with-ollama]
 
 Initial setup helper:
 - creates .env from config/lacp.env.example when missing
 - auto-detects and installs missing core dependencies on macOS/Homebrew by default
 - runs bootstrap checks
-- adopts local claude/codex wrappers when both binaries are present (default-on)
+- adopts local claude/codex/hermes wrappers when binaries are present (default-on)
 - repairs/applies Claude hook profile when local Claude config exists (default-on)
+- optionally installs Ollama + recommended models for quality gate
 - optionally runs a full verify cycle
 EOF
 }
@@ -93,14 +94,10 @@ log "Running bootstrap checks"
 "${ROOT}/bin/lacp-bootstrap"
 
 if [[ "${AUTO_ADOPT}" -eq 1 ]]; then
-  if command -v claude >/dev/null 2>&1 && command -v codex >/dev/null 2>&1; then
-    if "${ROOT}/bin/lacp-adopt-local" --json >/dev/null 2>&1; then
-      log "Auto-adopted local claude/codex wrappers"
-    else
-      log "Auto-adopt skipped: wrapper install failed (run bin/lacp-adopt-local manually)"
-    fi
+  if "${ROOT}/bin/lacp-adopt-local" --json >/dev/null 2>&1; then
+    log "Auto-adopted available local claude/codex/hermes wrappers"
   else
-    log "Auto-adopt skipped: claude/codex binaries not both present"
+    log "Auto-adopt skipped: wrapper install failed (run bin/lacp-adopt-local manually)"
   fi
 fi
 

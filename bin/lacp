@@ -5,7 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp <command> [args...]
+Usage: lacp [prompt...]              Launch hardened agent session
+       lacp <command> [args...]      Run LACP subcommand
+       lacp watch [--follow]         Monitor active sessions
+       lacp help                     Show this help
 
 Core:
   start         Run onboarding flow (alias: onboard)
@@ -18,6 +21,14 @@ Core:
   mode          Show/set operating mode
   posture       Evaluate local-first/no-external-ci posture contract
   claude-hooks  Audit/repair/optimize local Claude hooks + plugin cache drift
+  watch         Real-time session monitoring dashboard
+  handoff       View/manage session handoff artifacts
+  scaffold-audit Identify pipeline stages no longer load-bearing
+  eval          Session quality evaluation report
+  health-snapshot Unified health snapshot across all diagnostic sources
+  research      Autoresearch — autonomous self-improvement experiments
+  sms           Self-Memory System — psychology-informed agent memory
+  tools         Machine-readable catalog of all LACP commands
   console       Interactive LACP shell with slash commands
   time          Monthly project/client session time tracking
 
@@ -66,8 +77,8 @@ Ops:
   migrate       Migrate roots into .env
   incident-drill Run incident readiness checklist/drill
   workflow-run  Deterministic multi-role workflow runner
-  adopt-local   Install local claude/codex wrappers that route through LACP
-  unadopt-local Remove LACP-managed local claude/codex wrappers
+  adopt-local   Install local claude/codex/hermes wrappers that route through LACP
+  unadopt-local Remove LACP-managed local claude/codex/hermes wrappers
   route         Show routing decision
   run           Execute routed sandbox run
   bootstrap     Run bootstrap checks
@@ -77,11 +88,13 @@ System:
 
 Knowledge:
   knowledge-doctor   Validate knowledge graph/docs hygiene
-  brain-ingest       Ingest text/audio/video sources and links into the Obsidian inbox
+  brain-ingest       Ingest text/audio/video sources, links, and transcripts into the Obsidian inbox
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
   brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
-  brain-ingest       Ingest transcripts/urls/files into structured Obsidian notes
-  brain-stack        Bootstrap official 3-layer memory stack (MCP + memory scaffolding)
+  brain-stack        Bootstrap official 5-layer memory stack (MCP + memory scaffolding)
+  brain-promote      Promote inbox notes to permanent vault locations
+  agent-id           Persistent agent identity registry (show/list/register/revoke/touch)
+  provenance         Cryptographic session provenance chain (start/end/verify/log/export)
   repo-research-sync Mirror repo docs/research notes into Obsidian knowledge graph
   skill-sync-anthropic Sync official Anthropic skills into local Claude/Codex skill paths
   mcp-health         Probe MCP server connectivity and latency
@@ -91,21 +104,72 @@ Remote:
   remote-smoke  Run remote provider smoke test
 
 Examples:
-  lacp start --with-verify
+  lacp                              # launch agent session (auto-detects claude/codex/hermes/etc.)
+  lacp --mode tdd                   # launch with TDD context mode
+  lacp "fix the auth bug"           # one-shot prompt
+  lacp watch --follow               # live telemetry stream
+  lacp watch --summary              # session health overview
   lacp test --isolated
   lacp doctor --json | jq
 EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  usage
-  exit 0
+  # No args: launch hardened agent session
+  exec "${ROOT}/bin/lacp-stream"
 fi
 
+# Stream flags → forward everything to lacp-stream
+case "$1" in
+  --mode|--resume|--agent|--bypass|--print|--profile)
+    exec "${ROOT}/bin/lacp-stream" "$@"
+    ;;
+esac
+
 cmd="$1"
+
+# If first arg is an unknown flag, forward to lacp-stream
+if [[ "${cmd}" == -* && "${cmd}" != "-h" && "${cmd}" != "--help" ]]; then
+  exec "${ROOT}/bin/lacp-stream" "$@"
+fi
+
+# If first arg is not a known subcommand (no lacp-<cmd> binary exists),
+# treat it as bare prompt text for lacp-stream (one-shot mode)
+if [[ "${cmd}" != "help" && ! -x "${ROOT}/bin/lacp-${cmd}" ]]; then
+  # Check aliases (start→onboard, status→status-report, run→sandbox-run)
+  case "${cmd}" in
+    start|onboard|status|run) ;;  # known aliases — fall through
+    *) exec "${ROOT}/bin/lacp-stream" "$@" ;;
+  esac
+fi
+
 shift || true
 
 case "${cmd}" in
+  watch)
+    exec "${ROOT}/bin/lacp-watch" "$@"
+    ;;
+  handoff)
+    exec "${ROOT}/bin/lacp-handoff" "$@"
+    ;;
+  scaffold-audit)
+    exec "${ROOT}/bin/lacp-scaffold-audit" "$@"
+    ;;
+  eval)
+    exec "${ROOT}/bin/lacp-eval" "$@"
+    ;;
+  health-snapshot)
+    exec "${ROOT}/bin/lacp-health-snapshot" "$@"
+    ;;
+  research)
+    exec "${ROOT}/bin/lacp-research" "$@"
+    ;;
+  sms)
+    exec "${ROOT}/bin/lacp-sms" "$@"
+    ;;
+  tools)
+    exec "${ROOT}/bin/lacp-tools" "$@"
+    ;;
   start|onboard)
     exec "${ROOT}/bin/lacp-onboard" "$@"
     ;;
@@ -141,6 +205,15 @@ case "${cmd}" in
     ;;
   brain-stack)
     exec "${ROOT}/bin/lacp-brain-stack" "$@"
+    ;;
+  brain-promote)
+    exec "${ROOT}/bin/lacp-brain-promote" "$@"
+    ;;
+  agent-id)
+    exec "${ROOT}/bin/lacp-agent-id" "$@"
+    ;;
+  provenance)
+    exec "${ROOT}/bin/lacp-provenance" "$@"
     ;;
   repo-research-sync)
     exec "${ROOT}/bin/lacp-repo-research-sync" "$@"

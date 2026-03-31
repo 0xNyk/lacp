@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+AGENTS_ROOT="${HOME}/.lacp/agents"
+REGISTRY_FILE="${AGENTS_ROOT}/registry.json"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-agent-id show [--json]
+  lacp-agent-id list [--json]
+  lacp-agent-id register [--json]
+  lacp-agent-id revoke <agent_id> [--json]
+  lacp-agent-id touch [--json]
+
+Persistent agent identity registry. Each (hostname, project_slug) pair
+gets a stable agent_id that survives across sessions.
+
+Subcommands:
+  show       Show agent identity for current project (auto-registers if needed)
+  list       List all registered agents
+  register   Explicitly register current project (idempotent)
+  revoke     Mark an agent as revoked
+  touch      Update last_seen timestamp for current agent
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+REVOKE_TARGET=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      if [[ "${sub}" == "revoke" && -z "${REVOKE_TARGET}" ]]; then
+        REVOKE_TARGET="$1"; shift
+      else
+        die "Unknown argument: $1"
+      fi
+      ;;
+  esac
+done
+
+HOST_SHORT="$(hostname -s 2>/dev/null || hostname)"
+
+project_slug() {
+  local cwd="${1:-$(pwd)}"
+  printf '%s' "${cwd}" | tr '/' '-'
+}
+
+ensure_registry() {
+  mkdir -p "${AGENTS_ROOT}"
+  if [[ ! -f "${REGISTRY_FILE}" ]]; then
+    printf '[]\n' > "${REGISTRY_FILE}"
+  fi
+}
+
+generate_agent_id() {
+  # Generate agent ID with 128 bits of entropy: agent-<32 hex chars>
+  python3 -c "import secrets; print(f'agent-{secrets.token_hex(16)}')"
+}
+
+lookup_agent() {
+  local hostname="$1" slug="$2"
+  python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
+import json, sys, datetime
+
+registry_path = sys.argv[1]
+hostname = sys.argv[2].lower()
+slug = sys.argv[3]
+
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+        import shutil
+        shutil.copy2(path, backup)
+        print(f"WARNING: corrupted registry backed up to {backup}, recreating", file=sys.stderr)
+        with open(path, "w") as f:
+            json.dump([], f)
+            f.write("\n")
+        return []
+
+registry = load_registry(registry_path)
+for entry in registry:
+    if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
+        print(json.dumps(entry))
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+register_agent() {
+  local hostname="$1" slug="$2"
+  python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
+import json, sys, secrets, datetime, fcntl, shutil
+
+registry_path = sys.argv[1]
+hostname = sys.argv[2].lower()
+slug = sys.argv[3]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
+
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    registry = load_registry(registry_path)
+
+    # Check if already registered
+    for entry in registry:
+        if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
+            print(json.dumps(entry))
+            sys.exit(0)
+
+    # Generate new agent
+    agent_id = f"agent-{secrets.token_hex(16)}"
+    entry = {
+        "agent_id": agent_id,
+        "hostname": hostname,
+        "project_slug": slug,
+        "created_at": now,
+        "last_seen": now,
+        "session_count": 0,
+        "revoked": False
+    }
+    registry.append(entry)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(entry))
+PY
+}
+
+touch_agent() {
+  local hostname="$1" slug="$2"
+  python3 - <<'PY' "${REGISTRY_FILE}" "${hostname}" "${slug}"
+import json, sys, datetime, fcntl, shutil
+
+registry_path = sys.argv[1]
+hostname = sys.argv[2].lower()
+slug = sys.argv[3]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
+
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    registry = load_registry(registry_path)
+    found = False
+    for entry in registry:
+        if entry.get("hostname", "").lower() == hostname and entry.get("project_slug") == slug:
+            entry["last_seen"] = now
+            entry["session_count"] = entry.get("session_count", 0) + 1
+            found = True
+            result = entry
+            break
+
+    if not found:
+        sys.exit(1)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(result))
+PY
+}
+
+revoke_agent() {
+  local target_id="$1"
+  python3 - <<'PY' "${REGISTRY_FILE}" "${target_id}"
+import json, sys, datetime, fcntl, shutil
+
+registry_path = sys.argv[1]
+target = sys.argv[2]
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def load_registry(path):
+    try:
+        return json.load(open(path))
+    except (json.JSONDecodeError, ValueError):
+        backup = path + ".corrupt." + now.replace(":", "").replace("-", "")
+        shutil.copy2(path, backup + ".json")
+        print(f"WARNING: corrupted registry backed up, recreating", file=sys.stderr)
+        return []
+
+lock_path = registry_path + ".lock"
+with open(lock_path, "w") as lock_fd:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    registry = load_registry(registry_path)
+    found = False
+    for entry in registry:
+        if entry.get("agent_id") == target:
+            entry["revoked"] = True
+            entry["revoked_at"] = now
+            found = True
+            result = entry
+            break
+
+    if not found:
+        print(json.dumps({"ok": False, "error": f"agent_id not found: {target}"}))
+        sys.exit(1)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+    print(json.dumps(result))
+PY
+}
+
+show_cmd() {
+  ensure_registry
+  local slug
+  slug="$(project_slug)"
+
+  local entry
+  if entry="$(lookup_agent "${HOST_SHORT}" "${slug}")"; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${entry}" | jq '{schema_version:"1",kind:"agent_id_show",ok:true} + .'
+    else
+      local agent_id
+      agent_id="$(printf '%s' "${entry}" | jq -r '.agent_id')"
+      echo "agent-id: ${agent_id}"
+      echo "  hostname: ${HOST_SHORT}"
+      echo "  project: ${slug}"
+      echo "  sessions: $(printf '%s' "${entry}" | jq -r '.session_count')"
+      echo "  last seen: $(printf '%s' "${entry}" | jq -r '.last_seen')"
+    fi
+  else
+    # Auto-register
+    entry="$(register_agent "${HOST_SHORT}" "${slug}")"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${entry}" | jq '{schema_version:"1",kind:"agent_id_show",ok:true,newly_registered:true} + .'
+    else
+      local agent_id
+      agent_id="$(printf '%s' "${entry}" | jq -r '.agent_id')"
+      echo "agent-id: ${agent_id} (newly registered)"
+      echo "  hostname: ${HOST_SHORT}"
+      echo "  project: ${slug}"
+    fi
+  fi
+}
+
+list_cmd() {
+  ensure_registry
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n --argjson agents "$(cat "${REGISTRY_FILE}")" \
+      '{schema_version:"1",kind:"agent_id_list",ok:true,count:($agents|length),agents:$agents}'
+  else
+    echo "Registered agents:"
+    python3 -c "
+import json, sys
+registry = json.load(open(sys.argv[1]))
+if not registry:
+    print('  (none)')
+else:
+    for e in registry:
+        status = ' [REVOKED]' if e.get('revoked') else ''
+        print(f'  {e[\"agent_id\"]}  {e[\"hostname\"]}:{e[\"project_slug\"]}  sessions={e.get(\"session_count\",0)}{status}')
+" "${REGISTRY_FILE}"
+  fi
+}
+
+register_cmd() {
+  ensure_registry
+  local slug
+  slug="$(project_slug)"
+  local entry
+  entry="$(register_agent "${HOST_SHORT}" "${slug}")"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${entry}" | jq '{schema_version:"1",kind:"agent_id_register",ok:true} + .'
+  else
+    local agent_id
+    agent_id="$(printf '%s' "${entry}" | jq -r '.agent_id')"
+    echo "Registered: ${agent_id} (${HOST_SHORT}:${slug})"
+  fi
+}
+
+revoke_cmd() {
+  if [[ -z "${REVOKE_TARGET}" ]]; then
+    die "Usage: lacp-agent-id revoke <agent_id> [--json]"
+  fi
+  ensure_registry
+  local result
+  if result="$(revoke_agent "${REVOKE_TARGET}")"; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${result}" | jq '{schema_version:"1",kind:"agent_id_revoke",ok:true} + .'
+    else
+      echo "Revoked: ${REVOKE_TARGET}"
+    fi
+  else
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --arg id "${REVOKE_TARGET}" '{schema_version:"1",kind:"agent_id_revoke",ok:false,error:("agent_id not found: " + $id)}'
+    else
+      echo "Error: agent_id not found: ${REVOKE_TARGET}" >&2
+    fi
+    exit 1
+  fi
+}
+
+touch_cmd() {
+  ensure_registry
+  local slug
+  slug="$(project_slug)"
+
+  # Auto-register if needed
+  if ! lookup_agent "${HOST_SHORT}" "${slug}" >/dev/null 2>&1; then
+    register_agent "${HOST_SHORT}" "${slug}" >/dev/null
+  fi
+
+  local entry
+  entry="$(touch_agent "${HOST_SHORT}" "${slug}")"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${entry}" | jq '{schema_version:"1",kind:"agent_id_touch",ok:true} + .'
+  else
+    local agent_id
+    agent_id="$(printf '%s' "${entry}" | jq -r '.agent_id')"
+    echo "Touched: ${agent_id} (session_count=$(printf '%s' "${entry}" | jq -r '.session_count'))"
+  fi
+}
+
+case "${sub}" in
+  show) show_cmd ;;
+  list) list_cmd ;;
+  register) register_cmd ;;
+  revoke) revoke_cmd ;;
+  touch) touch_cmd ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac

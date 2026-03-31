@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Report memory-quality KPIs for LACP Obsidian vault")
+    p.add_argument("--vault", default=os.environ.get("LACP_OBSIDIAN_VAULT", ""), help="Vault path")
+    p.add_argument("--json", action="store_true")
+    return p
+
+
+def resolve_vault(raw: str) -> Path:
+    value = raw.strip() if raw else ""
+    if not value:
+        value = "~/obsidian/vault"
+    return Path(value).expanduser().resolve()
+
+
+def frontmatter(text: str) -> str:
+    if not text.startswith("---\n"):
+        return ""
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return ""
+    return text[4:end]
+
+
+def has_field(fm: str, field: str) -> bool:
+    return re.search(rf"(?m)^{re.escape(field)}:\s*", fm) is not None
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    vault = resolve_vault(args.vault)
+    if not vault.exists():
+        payload = {"ok": False, "kind": "memory_kpi", "error": f"vault_missing:{vault}"}
+        print(json.dumps(payload, indent=2) if args.json else payload["error"])
+        return 2
+
+    note_files = [p for p in vault.rglob("*.md") if "/.obsidian/" not in p.as_posix()]
+
+    total = len(note_files)
+    canonical = 0
+    required_ok = 0
+    contradiction_notes = 0
+    stale_notes = 0
+    source_backed = 0
+
+    required = ["id", "type", "layer", "status", "confidence", "source_urls", "last_verified", "links"]
+
+    for p in note_files:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        fm = frontmatter(text)
+        if not fm:
+            continue
+
+        has_canonical_shape = any(has_field(fm, f) for f in ["layer", "confidence", "source_urls", "links"])
+        if has_canonical_shape:
+            canonical += 1
+
+        if all(has_field(fm, f) for f in required):
+            required_ok += 1
+
+        if "contradicts:" in fm and re.search(r"(?m)^\s*-\s", fm):
+            contradiction_notes += 1
+
+        if re.search(r"(?m)^status:\s*stale\s*$", fm):
+            stale_notes += 1
+
+        if re.search(r"(?m)^source_urls:\s*\n\s{2}-\s", fm):
+            source_backed += 1
+
+    payload = {
+        "ok": True,
+        "kind": "memory_kpi",
+        "vault": str(vault),
+        "kpis": {
+            "total_notes": total,
+            "canonical_notes": canonical,
+            "required_schema_coverage_pct": round((required_ok / canonical) * 100, 2) if canonical else 0,
+            "source_backed_pct": round((source_backed / canonical) * 100, 2) if canonical else 0,
+            "contradiction_notes": contradiction_notes,
+            "stale_notes": stale_notes,
+        },
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        k = payload["kpis"]
+        print("memory-kpi")
+        print(f"  total_notes: {k['total_notes']}")
+        print(f"  canonical_notes: {k['canonical_notes']}")
+        print(f"  required_schema_coverage_pct: {k['required_schema_coverage_pct']}")
+        print(f"  source_backed_pct: {k['source_backed_pct']}")
+        print(f"  contradiction_notes: {k['contradiction_notes']}")
+        print(f"  stale_notes: {k['stale_notes']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
