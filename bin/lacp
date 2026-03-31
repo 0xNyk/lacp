@@ -5,10 +5,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp [prompt...]              Launch hardened agent session
+Usage: lacp                          Launch agent session (with LACP banner)
+       lacp --model <name>           Launch with specific model
+       lacp "prompt text"            One-shot agent prompt
+       lacp tui                      Open TUI control plane dashboard
        lacp <command> [args...]      Run LACP subcommand
-       lacp watch [--follow]         Monitor active sessions
        lacp help                     Show this help
+
+Session:
+  (no args)     Launch hardened agent session with LACP hooks
+                  --agent <name>     Agent backend (claude, codex, hermes, ...)
+                  --model <name>     LLM model (opus, sonnet, o3, ...)
+                  --mode <mode>      Context mode (tdd, debugging, sprint, ...)
+  stream        Explicit session launch (alias: session)
+  tui           Open TUI control plane dashboard (alias: hub)
 
 Core:
   start         Run onboarding flow (alias: onboard)
@@ -115,13 +125,13 @@ EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  # No args: launch hardened agent session
+  # No args: launch optimized agent session stream
   exec "${ROOT}/bin/lacp-stream"
 fi
 
-# Stream flags → forward everything to lacp-stream
+# Stream/session flags → forward to lacp-stream
 case "$1" in
-  --mode|--resume|--agent|--bypass|--print|--profile)
+  --mode|--resume|--agent|--bypass|--print|--profile|--model|--no-banner)
     exec "${ROOT}/bin/lacp-stream" "$@"
     ;;
 esac
@@ -146,6 +156,14 @@ fi
 shift || true
 
 case "${cmd}" in
+  tui|hub)
+    # TUI control plane dashboard
+    exec python3 "${ROOT}/tui/app.py"
+    ;;
+  stream|session)
+    # Launch agent session
+    exec "${ROOT}/bin/lacp-stream" "$@"
+    ;;
   watch)
     exec "${ROOT}/bin/lacp-watch" "$@"
     ;;

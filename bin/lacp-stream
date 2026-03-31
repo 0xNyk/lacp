@@ -106,6 +106,67 @@ detect_agent() {
   return 1
 }
 
+# Interactive agent picker — runs when no --agent flag and stdin is a terminal
+pick_agent_interactive() {
+  local -a available_agents=()
+  local -a available_paths=()
+
+  for candidate in claude codex hermes opencode gemini goose aider openclaw; do
+    local p
+    p="$(detect_agent "${candidate}" 2>/dev/null || true)"
+    if [[ -n "${p}" ]]; then
+      available_agents+=("${candidate}")
+      available_paths+=("${p}")
+    fi
+  done
+
+  if [[ ${#available_agents[@]} -eq 0 ]]; then
+    die "No agent found. Install one of: claude, codex, hermes, opencode, gemini, goose, aider"
+  fi
+
+  # If only one agent, use it directly
+  if [[ ${#available_agents[@]} -eq 1 ]]; then
+    AGENT="${available_agents[0]}"
+    echo "${available_paths[0]}"
+    return 0
+  fi
+
+  # Show picker
+  printf '\033[1;36m  ⚡ LACP — Select Agent\033[0m\n' >&2
+  printf '  ─────────────────────────\n' >&2
+  local i
+  for i in "${!available_agents[@]}"; do
+    local num=$((i + 1))
+    local name="${available_agents[$i]}"
+    printf '  \033[1m%d)\033[0m  %s\n' "${num}" "${name}" >&2
+  done
+  printf '  ─────────────────────────\n' >&2
+  printf '  \033[90mSelect [1-%d] or press Enter for %s:\033[0m ' "${#available_agents[@]}" "${available_agents[0]}" >&2
+
+  local choice
+  read -r choice </dev/tty 2>/dev/null || choice=""
+
+  if [[ -z "${choice}" ]]; then
+    # Default: first agent
+    AGENT="${available_agents[0]}"
+    echo "${available_paths[0]}"
+  elif [[ "${choice}" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#available_agents[@]} )); then
+    local idx=$((choice - 1))
+    AGENT="${available_agents[$idx]}"
+    echo "${available_paths[$idx]}"
+  else
+    # Try as agent name
+    for i in "${!available_agents[@]}"; do
+      if [[ "${available_agents[$i]}" == "${choice}" ]]; then
+        AGENT="${available_agents[$i]}"
+        echo "${available_paths[$i]}"
+        return 0
+      fi
+    done
+    die "Invalid selection: ${choice}"
+  fi
+}
+
 resolve_agent() {
   if [[ -n "${AGENT}" ]]; then
     local path
@@ -114,12 +175,17 @@ resolve_agent() {
     return 0
   fi
 
-  # Auto-detect: prefer claude > codex > hermes > opencode > gemini > goose > aider > openclaw
+  # Interactive picker if terminal and no --print mode
+  if [[ -t 0 && "${PRINT_MODE}" -eq 0 && "${#PROMPT_ARGS[@]}" -eq 0 ]]; then
+    pick_agent_interactive
+    return $?
+  fi
+
+  # Non-interactive fallback: auto-detect first available
   for candidate in claude codex hermes opencode gemini goose aider openclaw; do
     local path
     path="$(detect_agent "${candidate}" 2>/dev/null || true)"
     if [[ -n "${path}" ]]; then
-      # Extract agent name for display
       AGENT="${candidate}"
       echo "${path}"
       return 0
@@ -130,6 +196,58 @@ resolve_agent() {
 }
 
 AGENT_PATH="$(resolve_agent)"
+
+# -- Interactive model picker (if no --model and terminal is interactive) --
+
+if [[ -z "${MODEL}" && -t 0 && "${PRINT_MODE}" -eq 0 && "${DRY_RUN}" -eq 0 && "${#PROMPT_ARGS[@]}" -eq 0 ]]; then
+  # Show model options based on agent
+  case "${AGENT}" in
+    claude)
+      MODELS=("opus" "sonnet" "haiku")
+      DEFAULT_MODEL="sonnet"
+      ;;
+    codex)
+      MODELS=("o3" "o4-mini" "gpt-4.1")
+      DEFAULT_MODEL="o3"
+      ;;
+    gemini)
+      MODELS=("gemini-2.5-pro" "gemini-2.5-flash" "gemini-2.0-flash")
+      DEFAULT_MODEL="gemini-2.5-pro"
+      ;;
+    hermes)
+      MODELS=("default" "opus" "sonnet")
+      DEFAULT_MODEL="default"
+      ;;
+    *)
+      MODELS=("default")
+      DEFAULT_MODEL="default"
+      ;;
+  esac
+
+  if [[ ${#MODELS[@]} -gt 1 ]]; then
+    printf '\n  \033[90mModels for %s:\033[0m ' "${AGENT}" >&2
+    local model_list=""
+    for m in "${MODELS[@]}"; do
+      if [[ "${m}" == "${DEFAULT_MODEL}" ]]; then
+        model_list+="[\033[1m${m}\033[0m] "
+      else
+        model_list+="${m} "
+      fi
+    done
+    printf '%b\n' "${model_list}" >&2
+    printf '  \033[90mSelect model or press Enter for %s:\033[0m ' "${DEFAULT_MODEL}" >&2
+
+    local model_choice
+    read -r model_choice </dev/tty 2>/dev/null || model_choice=""
+
+    if [[ -n "${model_choice}" ]]; then
+      MODEL="${model_choice}"
+    else
+      MODEL="${DEFAULT_MODEL}"
+    fi
+  fi
+  printf '\n' >&2
+fi
 
 # -- Apply context mode --
 
