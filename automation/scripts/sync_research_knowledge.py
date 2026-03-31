@@ -781,18 +781,133 @@ def compute_related_signals(
     return related, edge_counts
 
 
+def compute_temporal_edges(
+    items: dict[str, dict[str, Any]],
+    window_days: int = 3,
+    top_k: int = 5,
+) -> dict[str, list[tuple[str, float]]]:
+    """Temporal graph layer: items observed within the same time window are linked.
+
+    MAGMA pattern — temporal edges capture co-occurrence in time.
+    Score = 1.0 for same day, decaying linearly to 0 at window boundary.
+    """
+    temporal: dict[str, list[tuple[str, float]]] = {}
+
+    # Build day-to-items index
+    day_items: dict[str, list[str]] = {}
+    for item_id, item in items.items():
+        for day in (item.get("days") or []):
+            day_items.setdefault(day, []).append(item_id)
+
+    sorted_days = sorted(day_items.keys())
+    for i, day_a in enumerate(sorted_days):
+        for item_a in day_items[day_a]:
+            scored: list[tuple[str, float]] = []
+            # Look at neighboring days within window
+            for j in range(max(0, i - window_days), min(len(sorted_days), i + window_days + 1)):
+                day_b = sorted_days[j]
+                try:
+                    distance = abs((datetime.fromisoformat(day_a) - datetime.fromisoformat(day_b)).days)
+                except (ValueError, TypeError):
+                    continue
+                if distance > window_days:
+                    continue
+                score = 1.0 - (distance / (window_days + 1))
+                for item_b in day_items[day_b]:
+                    if item_a != item_b:
+                        scored.append((item_b, score))
+
+            # Deduplicate (keep max score per item)
+            best: dict[str, float] = {}
+            for item_b, score in scored:
+                if item_b not in best or score > best[item_b]:
+                    best[item_b] = score
+            top = sorted(best.items(), key=lambda x: x[1], reverse=True)[:top_k]
+            if top:
+                temporal[item_a] = top
+
+    return temporal
+
+
+def compute_causal_edges(
+    items: dict[str, dict[str, Any]],
+) -> dict[str, list[tuple[str, float]]]:
+    """Causal graph layer: provenance chain edges.
+
+    MAGMA pattern — items from the same source observed in sequence
+    suggest a causal/informational relationship (A informed B).
+    Also captures explicit supersedes relationships.
+    """
+    causal: dict[str, list[tuple[str, float]]] = {}
+
+    # Explicit supersedes relationships
+    for item_id, item in items.items():
+        sup = item.get("supersedes")
+        if sup and sup in items:
+            causal.setdefault(item_id, []).append((sup, 0.9))
+            causal.setdefault(sup, []).append((item_id, 0.9))
+
+    # Source-sequence causal links: items from same source on consecutive days
+    source_items: dict[str, list[tuple[str, str]]] = {}  # source -> [(day, item_id)]
+    for item_id, item in items.items():
+        for obs in (item.get("observations") or [])[:5]:
+            src = obs.get("source", "")
+            day = obs.get("day", "")
+            if src and day:
+                source_items.setdefault(src, []).append((day, item_id))
+
+    for src, entries in source_items.items():
+        entries.sort(key=lambda x: x[0])
+        for i in range(len(entries) - 1):
+            day_a, id_a = entries[i]
+            day_b, id_b = entries[i + 1]
+            if id_a == id_b:
+                continue
+            try:
+                gap = abs((datetime.fromisoformat(day_b) - datetime.fromisoformat(day_a)).days)
+            except (ValueError, TypeError):
+                continue
+            if gap <= 1:
+                # Same or next day from same source = likely causal
+                score = 0.7 if gap == 0 else 0.5
+                causal.setdefault(id_a, []).append((id_b, score))
+
+    # Deduplicate per-item
+    for item_id in list(causal.keys()):
+        best: dict[str, float] = {}
+        for target, score in causal[item_id]:
+            if target not in best or score > best[target]:
+                best[target] = score
+        causal[item_id] = sorted(best.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return causal
+
+
+# Layer weights for multi-graph spreading activation (MAGMA pattern)
+LAYER_WEIGHTS = {
+    "semantic": 1.0,    # full propagation through semantic edges
+    "temporal": 0.6,    # moderate propagation through temporal co-occurrence
+    "causal": 0.8,      # strong propagation through causal chains
+}
+
+
 def spreading_activation(
     query_scores: dict[str, float],
     items: dict[str, dict[str, Any]],
     alpha: float = 0.7,
     max_hops: int = 3,
     min_activation: float = 0.01,
+    layer_weights: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Collins & Loftus spreading activation over the knowledge graph.
+    """Collins & Loftus spreading activation over the multi-layer knowledge graph.
 
     Propagates activation from anchor nodes through edges, decaying by
     alpha per hop. Uses max (not sum) to prevent runaway accumulation
     at hub nodes.
+
+    Multi-graph aware (MAGMA): different edge layers propagate with
+    different weights. Semantic edges propagate fully, temporal edges
+    at 60%, causal edges at 80%.
 
     Args:
         query_scores: anchor nodes with initial activation (e.g. from importance scores)
@@ -800,9 +915,11 @@ def spreading_activation(
         alpha: decay factor per hop (0.7 = 30% loss per hop)
         max_hops: maximum propagation depth
         min_activation: prune activations below this threshold
+        layer_weights: per-layer propagation weights (default: LAYER_WEIGHTS)
     Returns:
         node_id -> activation score (max across all paths)
     """
+    weights = layer_weights or LAYER_WEIGHTS
     activation: dict[str, float] = dict(query_scores)
 
     for _hop in range(max_hops):
@@ -819,7 +936,9 @@ def spreading_activation(
                 target = edge.get("id", "")
                 if not target or target not in items:
                     continue
-                propagated = alpha * act
+                layer = edge.get("layer", "semantic")
+                layer_w = weights.get(layer, 1.0)
+                propagated = alpha * layer_w * act
                 if propagated >= min_activation:
                     updates[target] = max(updates.get(target, 0.0), propagated)
         # Apply updates using max semantics
@@ -1728,14 +1847,19 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
         except Exception:
             pass
 
-    # Persist edges to registry items
+    # Multi-graph decomposition (MAGMA pattern): compute temporal and causal edge layers
+    temporal_edges = compute_temporal_edges(items, window_days=3, top_k=5)
+    causal_edges = compute_causal_edges(items)
+
+    # Persist edges to registry items with graph layer annotations
     for item_id, edges in related_map.items():
         if item_id in items:
-            items[item_id]["edges"] = [
+            semantic_edges = [
                 {
                     "id": rel_id,
                     "similarity": round(sim, 4),
                     "type": etype,
+                    "layer": "semantic",
                     "confidence": compute_edge_confidence(
                         sim,
                         compute_importance_score(items.get(rel_id, {}), edge_count=edge_counts.get(rel_id, 0)),
@@ -1743,6 +1867,30 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
                 }
                 for rel_id, sim, etype in edges
             ]
+            # Add temporal edges for this item
+            temporal = [
+                {
+                    "id": rel_id,
+                    "similarity": round(score, 4),
+                    "type": "co_temporal",
+                    "layer": "temporal",
+                    "confidence": round(score, 4),
+                }
+                for rel_id, score in temporal_edges.get(item_id, [])
+            ]
+            # Add causal edges for this item
+            causal = [
+                {
+                    "id": rel_id,
+                    "similarity": round(score, 4),
+                    "type": "causal",
+                    "layer": "causal",
+                    "confidence": round(score, 4),
+                }
+                for rel_id, score in causal_edges.get(item_id, [])
+            ]
+            # Merge all layers, semantic first (backward compat)
+            items[item_id]["edges"] = semantic_edges + temporal[:3] + causal[:3]
 
     # Evolution: mark related nodes when NEW signals have high similarity to existing nodes
     for new_id in new_item_ids:
