@@ -17,7 +17,8 @@ if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
     value="${value#\'}" ; value="${value%\'}"
     # Validate key is a valid identifier
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Safe expansion: $HOME and ~ (no general variable/command expansion)
+    # Safe expansion: $HOME, ${HOME}, and ~ (no general variable/command expansion)
+    value="${value//\$\{HOME\}/${HOME}}"
     value="${value//\$HOME/${HOME}}"
     value="${value/#\~\//${HOME}/}"
     export "${key}=${value}"

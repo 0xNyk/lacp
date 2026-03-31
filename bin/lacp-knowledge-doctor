@@ -142,8 +142,8 @@ for path in md_files:
         if resolved:
             backlinks[str(resolved)] += 1
             outlinks[str(path)] += 1
-            adj[str(path)].append(str(note_titles[target]))
-            adj.setdefault(str(note_titles[target]), []).append(str(path))
+            adj[str(path)].append(str(resolved))
+            adj.setdefault(str(resolved), []).append(str(path))
         else:
             unresolved_links.append({"file": str(path), "target": target})
 
