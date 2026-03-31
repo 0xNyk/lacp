@@ -13,17 +13,24 @@ Launch a hardened agent session with LACP hooks, context modes,
 handoff injection, and quality gates active.
 
 Options:
-  --agent <name>               Agent backend (default: auto-detect)
+  --agent <name>               Agent backend (default: auto-detect or LACP_DEFAULT_AGENT)
                                Supported: claude, codex, hermes, opencode,
                                gemini, goose, aider, openclaw
+  --model <name>               LLM model override (default: LACP_DEFAULT_MODEL)
+                               Examples: opus, sonnet, o3, gpt-4.1, gemini-2.5-pro
   --mode <context-mode>        Set LACP_CONTEXT_MODE (tdd, debugging, sprint, etc.)
   --resume                     Continue most recent session (-c)
   --profile <hook-profile>     Apply hook profile before launch
   --bypass                     Pass through to native agent without LACP gates
   --print                      Non-interactive mode (pass -p to agent)
+  --no-banner                  Skip the LACP startup banner
   --dry-run                    Show what would be launched
   --json                       Emit JSON launch manifest
   -h, --help                   Show help
+
+Set defaults in .env:
+  LACP_DEFAULT_AGENT=claude    Default agent backend
+  LACP_DEFAULT_MODEL=opus      Default LLM model
 
 Available context modes:
   brainstorm      Design exploration before implementation
@@ -46,7 +53,8 @@ Examples:
 EOF
 }
 
-AGENT=""
+AGENT="${LACP_DEFAULT_AGENT:-}"
+MODEL="${LACP_DEFAULT_MODEL:-}"
 CONTEXT_MODE=""
 RESUME=0
 HOOK_PROFILE=""
@@ -54,11 +62,13 @@ BYPASS=0
 PRINT_MODE=0
 DRY_RUN=0
 AS_JSON=0
+NO_BANNER=0
 PROMPT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)     AGENT="$2"; shift 2 ;;
+    --model)     MODEL="$2"; shift 2 ;;
     --mode)      CONTEXT_MODE="$2"; shift 2 ;;
     --resume)    RESUME=1; shift ;;
     --profile)   HOOK_PROFILE="$2"; shift 2 ;;
@@ -66,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --print)     PRINT_MODE=1; shift ;;
     --dry-run)   DRY_RUN=1; shift ;;
     --json)      AS_JSON=1; shift ;;
+    --no-banner) NO_BANNER=1; shift ;;
     -h|--help)   usage; exit 0 ;;
     -*)          PROMPT_ARGS+=("$1"); shift ;;
     *)           PROMPT_ARGS+=("$1"); shift ;;
@@ -185,6 +196,28 @@ if [[ "${#PROMPT_ARGS[@]}" -gt 0 ]]; then
   AGENT_CMD+=("${PROMPT_ARGS[@]}")
 fi
 
+# -- Model flag injection (agent-specific) --
+
+if [[ -n "${MODEL}" ]]; then
+  case "${AGENT}" in
+    claude)
+      AGENT_CMD=("${AGENT_CMD[0]}" "--model" "${MODEL}" "${AGENT_CMD[@]:1}")
+      ;;
+    codex)
+      AGENT_CMD=("${AGENT_CMD[0]}" "-m" "${MODEL}" "${AGENT_CMD[@]:1}")
+      ;;
+    gemini)
+      AGENT_CMD=("${AGENT_CMD[0]}" "-m" "${MODEL}" "${AGENT_CMD[@]:1}")
+      ;;
+    hermes)
+      AGENT_CMD=("${AGENT_CMD[0]}" "--model" "${MODEL}" "${AGENT_CMD[@]:1}")
+      ;;
+    *)
+      AGENT_CMD=("${AGENT_CMD[0]}" "--model" "${MODEL}" "${AGENT_CMD[@]:1}")
+      ;;
+  esac
+fi
+
 # -- Pre-launch: inject handoff if available --
 
 if [[ "${RESUME}" -eq 0 && "${PRINT_MODE}" -eq 0 ]]; then
@@ -205,6 +238,7 @@ if [[ "${DRY_RUN}" -eq 1 || "${AS_JSON}" -eq 1 ]]; then
     jq -n \
       --arg agent "${AGENT}" \
       --arg agent_path "${AGENT_PATH}" \
+      --arg model "${MODEL}" \
       --arg context_mode "${CONTEXT_MODE}" \
       --arg hook_profile "${HOOK_PROFILE}" \
       --argjson resume "$([[ "${RESUME}" -eq 1 ]] && echo true || echo false)" \
@@ -216,6 +250,7 @@ if [[ "${DRY_RUN}" -eq 1 || "${AS_JSON}" -eq 1 ]]; then
       '{
         agent: $agent,
         agent_path: $agent_path,
+        model: $model,
         context_mode: $context_mode,
         hook_profile: $hook_profile,
         resume: $resume,
@@ -234,14 +269,39 @@ if [[ "${DRY_RUN}" -eq 1 || "${AS_JSON}" -eq 1 ]]; then
   exit 0
 fi
 
+# -- Banner --
+
+LACP_VERSION="$(cat "${ROOT}/version" 2>/dev/null || echo "dev")"
+
+show_banner() {
+  local agent_display="${AGENT}"
+  local model_display="${MODEL:-default}"
+  local mode_display="${CONTEXT_MODE:-interactive}"
+
+  printf '\033[1;36m'
+  cat <<'BANNER'
+  ╔═══════════════════════════════════╗
+  ║          L A C P                  ║
+  ║   Local Agent Control Plane       ║
+  ╚═══════════════════════════════════╝
+BANNER
+  printf '\033[0m'
+  printf '  \033[90mAgent:\033[0m  %-12s  \033[90mModel:\033[0m %s\n' "${agent_display}" "${model_display}"
+  printf '  \033[90mMode:\033[0m   %-12s  \033[90mVer:\033[0m   %s\n' "${mode_display}" "${LACP_VERSION}"
+  if [[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]]; then
+    printf '  \033[90mEval:\033[0m   \033[32mactive\033[0m\n'
+  fi
+  echo ""
+}
+
 # -- Launch --
 
 if [[ "${BYPASS}" -eq 1 ]]; then
   exec "${AGENT_PATH}" "${PROMPT_ARGS[@]}"
 fi
 
-log "Launching ${AGENT} session"
-[[ -n "${CONTEXT_MODE}" ]] && log "  Mode: ${CONTEXT_MODE}"
-[[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]] && log "  Eval checkpoints: active"
+if [[ "${NO_BANNER}" -eq 0 && "${PRINT_MODE}" -eq 0 && "${DRY_RUN}" -eq 0 && "${AS_JSON}" -eq 0 ]]; then
+  show_banner
+fi
 
 exec "${AGENT_CMD[@]}"
