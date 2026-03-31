@@ -46,11 +46,34 @@ SIMILARITY_UPDATE_THRESHOLD = 0.75  # above this → UPDATE existing
 SIMILARITY_DUPLICATE_THRESHOLD = 0.90  # above this → NOOP (duplicate)
 MIN_SIGNAL_LENGTH = 10  # tokens below this → NOOP (too short)
 LOW_QUALITY_PATTERNS = [
-    "users nyk",       # conversational noise
     "lets try",        # command fragments
     "please and",      # instruction fragments
     "ok so",           # filler
+    "can you",         # request fragments
 ]
+
+# Derivability patterns — if it's derivable from code/git, don't persist
+# (Claude Code principle: "if derivable, don't persist")
+DERIVABLE_PATTERNS = [
+    r"/[A-Za-z_][A-Za-z0-9_/.-]+\.[a-z]{1,4}",  # file paths
+    r"(?:class|def|function|const|let|var|fn)\s+\w+",  # code definitions
+    r"git\s+(?:log|diff|blame|show|commit)",  # git commands
+    r"(?:0x)?[a-fA-F0-9]{40}",  # commit SHAs
+    r"```[\s\S]{50,}```",  # large code blocks
+]
+
+
+def is_derivable(text: str) -> bool:
+    """Check if signal text contains derivable content that shouldn't be persisted.
+
+    Claude Code principle: code patterns, architecture, file paths, git history,
+    and debugging solutions are derivable from the current project state.
+    """
+    import re as _re
+    for pattern in DERIVABLE_PATTERNS:
+        if _re.search(pattern, text):
+            return True
+    return False
 
 
 def compute_signal_quality(text: str) -> float:
@@ -58,6 +81,10 @@ def compute_signal_quality(text: str) -> float:
     tokens = tokenize(text)
     if len(tokens) < MIN_SIGNAL_LENGTH:
         return 0.1
+
+    # Check for derivable content
+    if is_derivable(text):
+        return 0.15
 
     # Check for low-quality patterns
     lower = text.lower()
@@ -121,6 +148,15 @@ def decide_operation(
     """
     normalized = normalize_text(signal_text)
     quality = compute_signal_quality(signal_text)
+
+    # NOOP: derivable content (code, file paths, git history)
+    if is_derivable(signal_text):
+        return MemoryOp(
+            action="NOOP",
+            target_id="",
+            confidence=0.85,
+            reason="derivable (code/paths/git — derive from project state instead)",
+        )
 
     # NOOP: signal too short or low quality
     if quality < 0.3:

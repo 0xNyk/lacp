@@ -324,7 +324,23 @@ fi
 run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 
-# 10.5) SMS epoch synthesis (psychology-informed memory consolidation)
+# 10.5) Memory index guard — enforce MEMORY.md size caps
+if [[ -f "${SCRIPTS_DIR}/memory_index_guard.py" ]]; then
+  # Find all MEMORY.md files in Claude project memory dirs
+  for memfile in "${HOME}/.claude/projects/"*/memory/MEMORY.md; do
+    if [[ -f "${memfile}" ]]; then
+      if [[ "${APPLY}" -eq 1 ]]; then
+        run_step_soft "memory_index_guard" python3 "${SCRIPTS_DIR}/memory_index_guard.py" --enforce "${memfile}"
+      else
+        run_step_soft "memory_index_guard" python3 "${SCRIPTS_DIR}/memory_index_guard.py" --check "${memfile}"
+      fi
+    fi
+  done
+else
+  log_step "WARN" "memory_index_guard" "missing ${SCRIPTS_DIR}/memory_index_guard.py"
+fi
+
+# 10.6) SMS epoch synthesis (psychology-informed memory consolidation)
 if python3 -c "
 import sys; sys.path.insert(0, '${ROOT}/hooks')
 from self_memory_system import read_episodes, synthesize_epoch, write_epoch

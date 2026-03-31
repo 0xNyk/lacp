@@ -45,6 +45,8 @@ from sync_research_knowledge import (
 
 import os
 
+from consolidation_lock import acquire_lock, release_lock, rollback_lock
+
 DEFAULT_CONFIG_PATH = Path.home() / "control" / "frameworks" / "lacp" / "config" / "consolidation.json"
 ARCHIVE_DIR = Path(os.environ.get("LACP_OBSIDIAN_VAULT", str(Path.home() / "obsidian" / "vault"))) / "inbox" / "archive"
 PROBE_DIR = Path.home() / "control" / "knowledge" / "knowledge-memory" / "data" / "probes"
@@ -441,7 +443,21 @@ def main() -> int:
 
     config_path = Path(args.config) if args.config else None
     config = load_config(config_path)
-    result = run_consolidation(apply=args.apply, config=config)
+
+    # Acquire consolidation lock (PID-based mutex)
+    prior_mtime = acquire_lock()
+    if prior_mtime is None:
+        print(json.dumps({"ok": False, "error": "consolidation lock held by another process"}))
+        return 0  # not an error — just skip
+
+    try:
+        result = run_consolidation(apply=args.apply, config=config)
+    except Exception:
+        rollback_lock(prior_mtime)
+        raise
+    finally:
+        release_lock()
+
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
 
