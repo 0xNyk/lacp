@@ -160,6 +160,23 @@ def main() -> None:
     matcher = payload.get("matcher") or ""
     parts: list[str] = []
 
+    # LACP identity injection (shows in agent context, not just terminal)
+    lacp_agent = os.environ.get("LACP_BANNER_AGENT", "")
+    lacp_model = os.environ.get("LACP_BANNER_MODEL", "")
+    lacp_mode = os.environ.get("LACP_BANNER_MODE", "")
+    lacp_ver = os.environ.get("LACP_BANNER_VERSION", "")
+    if lacp_agent or lacp_ver:
+        identity_parts = ["Session managed by LACP (Local Agent Control Plane)"]
+        if lacp_ver:
+            identity_parts[0] += f" v{lacp_ver}"
+        if lacp_agent:
+            identity_parts.append(f"Agent: {lacp_agent}")
+        if lacp_model:
+            identity_parts.append(f"Model: {lacp_model}")
+        if lacp_mode:
+            identity_parts.append(f"Mode: {lacp_mode}")
+        parts.append(" | ".join(identity_parts))
+
     # Git context (always, when in a repo)
     if _is_git_repo():
         git_parts = _git_context()

@@ -278,20 +278,32 @@ show_banner() {
   local model_display="${MODEL:-default}"
   local mode_display="${CONTEXT_MODE:-interactive}"
 
-  printf '\033[1;36m'
-  cat <<'BANNER'
+  # Set terminal title to LACP (persists even when agent clears screen)
+  printf '\033]0;LACP — %s/%s\007' "${agent_display}" "${model_display}"
+
+  # Export LACP identity so agent's session_start hook can display it
+  export LACP_BANNER_AGENT="${agent_display}"
+  export LACP_BANNER_MODEL="${model_display}"
+  export LACP_BANNER_MODE="${mode_display}"
+  export LACP_BANNER_VERSION="${LACP_VERSION}"
+
+  # Print banner to stderr (survives agent screen clear in scroll-back)
+  {
+    printf '\033[1;36m'
+    cat <<'BANNER'
   ╔═══════════════════════════════════╗
   ║          L A C P                  ║
   ║   Local Agent Control Plane       ║
   ╚═══════════════════════════════════╝
 BANNER
-  printf '\033[0m'
-  printf '  \033[90mAgent:\033[0m  %-12s  \033[90mModel:\033[0m %s\n' "${agent_display}" "${model_display}"
-  printf '  \033[90mMode:\033[0m   %-12s  \033[90mVer:\033[0m   %s\n' "${mode_display}" "${LACP_VERSION}"
-  if [[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]]; then
-    printf '  \033[90mEval:\033[0m   \033[32mactive\033[0m\n'
-  fi
-  echo ""
+    printf '\033[0m'
+    printf '  \033[90mAgent:\033[0m  %-12s  \033[90mModel:\033[0m %s\n' "${agent_display}" "${model_display}"
+    printf '  \033[90mMode:\033[0m   %-12s  \033[90mVer:\033[0m   %s\n' "${mode_display}" "${LACP_VERSION}"
+    if [[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]]; then
+      printf '  \033[90mEval:\033[0m   \033[32mactive\033[0m\n'
+    fi
+    echo ""
+  } >&2
 }
 
 # -- Launch --
