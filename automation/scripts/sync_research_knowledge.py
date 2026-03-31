@@ -538,15 +538,38 @@ def compute_storage_strength(item: dict[str, Any]) -> float:
 
 
 def compute_retrieval_strength(item: dict[str, Any], edge_count: int = 0, content_type: str = "") -> float:
-    """Retrieval strength R — decays over time (FSRS curve).
+    """Retrieval strength R — decays over time (FSRS curve) with bi-temporal awareness.
 
     Low R + high S = 'tip of tongue' — perfect review candidate.
     R decays exponentially but is slowed by edge density (more connections
     = more retrieval pathways = slower forgetting).
+
+    Bi-temporal model:
+    - last_seen drives the primary decay (when was this last accessed)
+    - ingestion freshness provides a temporary boost for recently learned items
+      (new items need time to integrate; boost decays over 14 days)
+    - valid_until: if set and in the past, item is expired (R forced to 0.05)
     """
+    now = datetime.now(UTC)
+
+    # Check temporal validity — expired facts get near-zero R
+    valid_until = item.get("valid_until")
+    if valid_until:
+        try:
+            vu = datetime.fromisoformat(str(valid_until))
+            if vu.tzinfo is None:
+                vu = vu.replace(tzinfo=UTC)
+            if vu < now:
+                return 0.05
+        except (ValueError, TypeError):
+            pass
+
     last_seen = item.get("last_seen", "")
     try:
-        age_days = (datetime.now(UTC) - datetime.fromisoformat(last_seen)).days
+        ls_dt = datetime.fromisoformat(last_seen)
+        if ls_dt.tzinfo is None:
+            ls_dt = ls_dt.replace(tzinfo=UTC)
+        age_days = (now - ls_dt).days
     except (ValueError, TypeError):
         age_days = 365
     metabolic_rate = METABOLIC_RATES.get(content_type, 1.0)
@@ -555,7 +578,47 @@ def compute_retrieval_strength(item: dict[str, Any], edge_count: int = 0, conten
     retrievability = 0.9 ** (age_days / stability)
     count = int(item.get("count", 1))
     access_boost = math.log1p(count) / math.log1p(20)
-    return round(retrievability * (0.6 + 0.4 * access_boost), 4)
+    base_r = retrievability * (0.6 + 0.4 * access_boost)
+
+    # Ingestion freshness boost — recently ingested items get a temporary lift
+    # that decays over 14 days (helps new items surface before they decay)
+    ingested_at = item.get("ingested_at", "")
+    ingestion_boost = 0.0
+    if ingested_at:
+        try:
+            ingestion_age_days = (now - datetime.fromisoformat(ingested_at.replace("Z", "+00:00"))).days
+            if ingestion_age_days < 14:
+                ingestion_boost = 0.1 * (1.0 - ingestion_age_days / 14.0)
+        except (ValueError, TypeError):
+            pass
+
+    return round(min(1.0, base_r + ingestion_boost), 4)
+
+
+def compute_temporal_relevance(item: dict[str, Any], reference_date: str = "") -> float:
+    """Bi-temporal relevance score for a given reference date.
+
+    Measures how temporally relevant an item is to a specific point in time.
+    Uses event_time (when it happened) rather than ingestion time.
+    Returns 0.0-1.0 where 1.0 = same day, decaying with temporal distance.
+    """
+    event_time = item.get("event_time", item.get("first_seen", ""))
+    if not event_time or not reference_date:
+        return 0.5  # neutral when no temporal context
+
+    try:
+        event_dt = datetime.fromisoformat(event_time)
+        ref_dt = datetime.fromisoformat(reference_date)
+        # Normalize to naive for comparison (avoid tz mismatch)
+        if event_dt.tzinfo is not None:
+            event_dt = event_dt.replace(tzinfo=None)
+        if ref_dt.tzinfo is not None:
+            ref_dt = ref_dt.replace(tzinfo=None)
+        distance_days = abs((event_dt - ref_dt).days)
+        # Gaussian-like decay: half-life of 30 days
+        return round(math.exp(-(distance_days ** 2) / (2 * 30 ** 2)), 4)
+    except (ValueError, TypeError):
+        return 0.5
 
 
 def compute_importance_score(item: dict[str, Any], edge_count: int = 0) -> float:
@@ -1516,12 +1579,18 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
                 created += 1
             else:
                 # Novel: standard new item creation
+                now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
                 entry = {
                     "text": signal.text,
                     "normalized": normalized,
                     "count": 0,
                     "first_seen": signal.day,
                     "last_seen": signal.day,
+                    # Bi-temporal fields (Graphiti pattern)
+                    "event_time": signal.day,      # when the fact/event occurred
+                    "ingested_at": now_iso,         # when we learned about it
+                    "valid_from": signal.day,       # temporal validity start
+                    "valid_until": None,            # None = still valid
                     "days": [],
                     "sources": {},
                     "categories": classify_categories(
@@ -1581,6 +1650,13 @@ def sync(days: int, apply_changes: bool, no_semantic: bool = False, reclassify: 
         if obs not in observations:
             observations.append(obs)
         entry["observations"] = observations[-100:]
+
+        # Bi-temporal: update event_time if signal is older (backdated evidence)
+        if signal.day < str(entry.get("event_time", signal.day)):
+            entry["event_time"] = signal.day
+        # Track latest ingestion
+        if "ingested_at" not in entry:
+            entry["ingested_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         items[item_id] = entry
         updated += 1
