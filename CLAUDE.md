@@ -11,6 +11,7 @@ Framework for hardening, orchestrating, and validating Claude Code sessions on l
 | `scripts/lacp-lib.sh` | Shared shell library — sourced by all bin/ commands |
 | `scripts/ci/` | CI test scripts (`test-*.sh`) |
 | `scripts/runners/` | Pipeline runners (brain-expand steps, etc.) |
+| `automation/scripts/` | 44 Python + 22 shell automation scripts (brain-expand steps, RAG, benchmarks, sync) |
 | `config/` | Policy files (sandbox, MCP auth, route policy) |
 | `dist/` | Distribution/packaging assets |
 | `Formula/` | Homebrew formula |
@@ -60,7 +61,7 @@ Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate`, `quality-
 
 All configurable via env or `.env` file. Key ones:
 
-- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `~/.lacp/automation`)
+- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `<repo>/automation`)
 - `LACP_KNOWLEDGE_ROOT` — knowledge graph root (default: `~/.lacp/knowledge`)
 - `LACP_DRAFTS_ROOT` — article drafts root (default: `~/.lacp/drafts`)
 - `LACP_OBSIDIAN_VAULT` — Obsidian vault path (default: `~/obsidian/vault`)

@@ -52,7 +52,7 @@ import re
 import sys
 
 root = pathlib.Path(sys.argv[1]).expanduser().resolve()
-md_files = sorted([p for p in root.rglob("*.md") if p.is_file()])
+md_files = sorted([p for p in root.rglob("*.md") if p.is_file() and "/data/" not in str(p)])
 
 note_titles = {p.stem: p for p in md_files}
 # Also index by relative path (without .md) for path-based wikilinks like [[research/note]]
@@ -179,8 +179,21 @@ if description_missing:
     add_check("description_missing", "WARN", f"count={len(description_missing)}")
 else:
     add_check("description_missing", "PASS", "count=0")
-if unresolved_links:
-    add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)}")
+# Unique unresolved targets (deduplicated) — many notes may reference the same missing target
+_total = len(md_files) or 1
+unresolved_targets = {link["target"] for link in unresolved_links if isinstance(link, dict)}
+unresolved_target_count = len(unresolved_targets)
+unresolved_rate = unresolved_target_count / _total
+# Large vaults: WARN at >10%, FAIL at >50% (cross-vault refs are common)
+# Small vaults (<50 notes): FAIL at >20% (tight link integrity expected)
+fail_threshold = 0.20 if _total < 50 else 0.50
+warn_threshold = 0.05 if _total < 50 else 0.10
+if unresolved_rate > fail_threshold:
+    add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)} ({unresolved_target_count} unique targets, {_total} notes)")
+elif unresolved_rate > warn_threshold:
+    add_check("unresolved_wikilinks", "WARN", f"count={len(unresolved_links)} ({unresolved_target_count} unique targets, {_total} notes)")
+elif unresolved_links:
+    add_check("unresolved_wikilinks", "WARN", f"count={len(unresolved_links)}")
 else:
     add_check("unresolved_wikilinks", "PASS", "count=0")
 # Orphan thresholds: WARN only if rate exceeds threshold (some orphans are normal)

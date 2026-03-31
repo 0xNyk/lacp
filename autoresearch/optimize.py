@@ -43,7 +43,7 @@ SYMLINK_TARGETS = {
     "skills": str(Path.home() / ".lacp" / "skills"),
     "knowledge": str(KNOWLEDGE_ROOT),
     "docs": str(Path.home() / "docs"),
-    "automation-scripts": str(Path.home() / "control" / "automation" / "ai-dev-optimization" / "scripts"),
+    "automation-scripts": str(LACP_ROOT / "automation" / "scripts"),
 }
 
 # Knowledge graph parameters

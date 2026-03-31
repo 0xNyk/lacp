@@ -11,3 +11,4 @@ be7f7d2	83.5302	93.48	96.11	50.00	keep	added 115 descriptions, cleaned locks, kn
 3aa728d	97.8720	95.65	98.89	100.00	keep	doctor respects local-first policy for runners/e2b/smoke + descriptions fixed + stale locks cleaned
 aecddfa	98.0664	95.65	99.44	100.00	keep	adopted claude wrapper via lacp-adopt-local
 1b030ca	98.0664	95.65	99.44	100.00	keep	improved benchmark gate detail parsing
+fa12b22	96.1768	84.86	100.00	100.00	keep	created taxonomy.json + shellcheck clean + memory evaluator

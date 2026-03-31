@@ -18,7 +18,7 @@ assert_eq() {
 
 export HOME="${TMP}/home"
 export LACP_SKIP_DOTENV="1"
-export LACP_AUTOMATION_ROOT="${HOME}/control/automation/ai-dev-optimization"
+export LACP_AUTOMATION_ROOT="${ROOT}/automation"
 mkdir -p "${LACP_AUTOMATION_ROOT}/scripts" "${HOME}/obsidian/vault/inbox"
 
 DELEGATE_ARGS_FILE="${TMP}/delegate-args.txt"

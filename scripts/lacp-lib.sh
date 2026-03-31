@@ -8,7 +8,7 @@ if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
   source "${LACP_ROOT}/.env"
 fi
 
-export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-$HOME/.lacp/automation}"
+export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-${LACP_ROOT}/automation}"
 export LACP_KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.lacp/knowledge}"
 export LACP_DRAFTS_ROOT="${LACP_DRAFTS_ROOT:-$HOME/.lacp/drafts}"
 export LACP_OBSIDIAN_VAULT="${LACP_OBSIDIAN_VAULT:-$HOME/obsidian/vault}"

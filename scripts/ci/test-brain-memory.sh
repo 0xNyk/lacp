@@ -54,7 +54,7 @@ assert_lt() {
   PASS_COUNT=$((PASS_COUNT + 1))
 }
 
-SCRIPTS_DIR="${LACP_AUTOMATION_ROOT:-$HOME/control/automation/ai-dev-optimization}/scripts"
+SCRIPTS_DIR="${LACP_AUTOMATION_ROOT:-${ROOT}/automation}/scripts"
 
 # --- Test 1: Spreading activation ---
 echo "--- Test 1: Spreading activation ---"
