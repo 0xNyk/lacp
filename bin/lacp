@@ -5,12 +5,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp [prompt...]              Launch hardened agent session
+Usage: lacp                          Open LACP Control Plane (TUI hub)
+       lacp stream [options]         Launch agent session
        lacp <command> [args...]      Run LACP subcommand
-       lacp watch [--follow]         Monitor active sessions
+       lacp "prompt text"            One-shot agent prompt
        lacp help                     Show this help
 
+Session:
+  stream        Launch hardened agent session (alias: session)
+                  --agent <name>     Agent backend (claude, codex, hermes, ...)
+                  --model <name>     LLM model (opus, sonnet, o3, ...)
+                  --mode <mode>      Context mode (tdd, debugging, sprint, ...)
+
 Core:
+  hub           Open TUI control plane (same as no args)
   start         Run onboarding flow (alias: onboard)
   install       Run installer profile workflow
   bootstrap-system Run full install/onboard/doctor bootstrap flow
@@ -115,13 +123,13 @@ EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  # No args: launch hardened agent session
-  exec "${ROOT}/bin/lacp-stream"
+  # No args: launch TUI control plane hub
+  exec python3 "${ROOT}/tui/app.py"
 fi
 
-# Stream flags → forward everything to lacp-stream
+# Stream/session flags → forward to lacp-stream
 case "$1" in
-  --mode|--resume|--agent|--bypass|--print|--profile)
+  --mode|--resume|--agent|--bypass|--print|--profile|--model|--no-banner)
     exec "${ROOT}/bin/lacp-stream" "$@"
     ;;
 esac
@@ -146,6 +154,14 @@ fi
 shift || true
 
 case "${cmd}" in
+  hub)
+    # Explicit TUI hub launch
+    exec python3 "${ROOT}/tui/app.py"
+    ;;
+  stream|session)
+    # Launch agent session (old default behavior)
+    exec "${ROOT}/bin/lacp-stream" "$@"
+    ;;
   watch)
     exec "${ROOT}/bin/lacp-watch" "$@"
     ;;
