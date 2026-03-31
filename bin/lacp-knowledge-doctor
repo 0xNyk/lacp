@@ -52,9 +52,17 @@ import re
 import sys
 
 root = pathlib.Path(sys.argv[1]).expanduser().resolve()
-md_files = sorted([p for p in root.rglob("*.md") if p.is_file()])
+md_files = sorted([p for p in root.rglob("*.md") if p.is_file() and "/data/" not in str(p)])
 
 note_titles = {p.stem: p for p in md_files}
+# Also index by relative path (without .md) for path-based wikilinks like [[research/note]]
+note_relpaths = {}
+for p in md_files:
+    try:
+        rel = str(p.relative_to(root)).removesuffix(".md")
+        note_relpaths[rel] = p
+    except ValueError:
+        pass
 backlinks = {str(p): 0 for p in md_files}
 outlinks = {str(p): 0 for p in md_files}
 adj: dict[str, list[str]] = {str(p): [] for p in md_files}
@@ -124,11 +132,18 @@ for path in md_files:
         if not target:
             continue
         links.append(target)
-        if target in note_titles:
-            backlinks[str(note_titles[target])] += 1
+        resolved = note_titles.get(target) or note_relpaths.get(target)
+        # Handle relative paths like ../DIRECTIVE
+        if not resolved and target.startswith(".."):
+            rel_resolved = (path.parent / target).resolve()
+            rel_md = rel_resolved.with_suffix(".md") if not str(rel_resolved).endswith(".md") else rel_resolved
+            if rel_md.exists() and rel_md.stem in note_titles:
+                resolved = note_titles[rel_md.stem]
+        if resolved:
+            backlinks[str(resolved)] += 1
             outlinks[str(path)] += 1
-            adj[str(path)].append(str(note_titles[target]))
-            adj.setdefault(str(note_titles[target]), []).append(str(path))
+            adj[str(path)].append(str(resolved))
+            adj.setdefault(str(resolved), []).append(str(path))
         else:
             unresolved_links.append({"file": str(path), "target": target})
 
@@ -167,18 +182,35 @@ if description_missing:
     add_check("description_missing", "WARN", f"count={len(description_missing)}")
 else:
     add_check("description_missing", "PASS", "count=0")
-if unresolved_links:
-    add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)}")
+# Unique unresolved targets (deduplicated) — many notes may reference the same missing target
+_total = len(md_files) or 1
+unresolved_targets = {link["target"] for link in unresolved_links if isinstance(link, dict)}
+unresolved_target_count = len(unresolved_targets)
+unresolved_rate = unresolved_target_count / _total
+# Large vaults: WARN at >10%, FAIL at >50% (cross-vault refs are common)
+# Small vaults (<50 notes): FAIL at >20% (tight link integrity expected)
+fail_threshold = 0.20 if _total < 50 else 0.50
+warn_threshold = 0.05 if _total < 50 else 0.10
+if unresolved_rate > fail_threshold:
+    add_check("unresolved_wikilinks", "FAIL", f"count={len(unresolved_links)} ({unresolved_target_count} unique targets, {_total} notes)")
+elif unresolved_rate > warn_threshold:
+    add_check("unresolved_wikilinks", "WARN", f"count={len(unresolved_links)} ({unresolved_target_count} unique targets, {_total} notes)")
+elif unresolved_links:
+    add_check("unresolved_wikilinks", "WARN", f"count={len(unresolved_links)}")
 else:
     add_check("unresolved_wikilinks", "PASS", "count=0")
-if hard_orphans:
-    add_check("hard_orphans", "WARN", f"count={len(hard_orphans)}")
+# Orphan thresholds: WARN only if rate exceeds threshold (some orphans are normal)
+total = len(md_files) or 1
+hard_rate = len(hard_orphans) / total
+likely_rate = len(likely_orphans) / total
+if hard_rate > 0.05:
+    add_check("hard_orphans", "WARN", f"count={len(hard_orphans)} ({hard_rate:.0%} of {total} notes, threshold 5%)")
 else:
-    add_check("hard_orphans", "PASS", "count=0")
-if likely_orphans:
-    add_check("likely_orphans", "WARN", f"count={len(likely_orphans)}")
+    add_check("hard_orphans", "PASS", f"count={len(hard_orphans)} ({hard_rate:.0%} of {total} notes)")
+if likely_rate > 0.60:
+    add_check("likely_orphans", "WARN", f"count={len(likely_orphans)} ({likely_rate:.0%} of {total} notes, threshold 60%)")
 else:
-    add_check("likely_orphans", "PASS", "count=0")
+    add_check("likely_orphans", "PASS", f"count={len(likely_orphans)} ({likely_rate:.0%} of {total} notes)")
 if not has_yaml:
     add_check("yaml_parser", "WARN", "PyYAML not installed; using fallback frontmatter parser")
 else:

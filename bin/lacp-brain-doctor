@@ -304,6 +304,15 @@ else
   add_check "brain:obsidian_app" "WARN" "Obsidian.app not running"
 fi
 
+# --- 9b. Obsidian CLI (official, 1.12+) ---
+if command -v obsidian >/dev/null 2>&1; then
+  obs_version="$(obsidian version 2>/dev/null || echo "unknown")"
+  add_check "brain:obsidian_cli" "PASS" "obsidian CLI available (${obs_version})"
+else
+  add_check "brain:obsidian_cli" "WARN" "obsidian CLI not on PATH (install Obsidian 1.12+ and enable CLI)"
+  add_hint "Enable Obsidian CLI: Obsidian Settings > General > Enable CLI, then add to PATH"
+fi
+
 # --- 10. Stale remote locks ---
 stale_locks=0
 lock_dir="${HOME}/.claude/hooks"

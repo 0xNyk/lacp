@@ -37,19 +37,35 @@ SESSION_FILTER=""
 HOOK_FILTER=""
 AS_JSON=0
 SUMMARY=0
+DASHBOARD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tail)     TAIL_N="$2"; shift 2 ;;
-    --follow)   FOLLOW=1; shift ;;
-    --session)  SESSION_FILTER="$2"; shift 2 ;;
-    --hook)     HOOK_FILTER="$2"; shift 2 ;;
-    --json)     AS_JSON=1; shift ;;
-    --summary)  SUMMARY=1; shift ;;
-    -h|--help)  usage; exit 0 ;;
-    *)          die "Unknown argument: $1" ;;
+    --tail)       TAIL_N="$2"; shift 2 ;;
+    --follow)     FOLLOW=1; shift ;;
+    --session)    SESSION_FILTER="$2"; shift 2 ;;
+    --hook)       HOOK_FILTER="$2"; shift 2 ;;
+    --json)       AS_JSON=1; shift ;;
+    --summary)    SUMMARY=1; shift ;;
+    --dashboard)  DASHBOARD=1; shift ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            die "Unknown argument: $1" ;;
   esac
 done
+
+# Dashboard mode — interactive TUI
+if [[ "${DASHBOARD}" -eq 1 ]]; then
+  DASHBOARD_SCRIPT="${LACP_AUTOMATION_ROOT}/scripts/watch_dashboard.py"
+  if [[ -f "${DASHBOARD_SCRIPT}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      exec python3 "${DASHBOARD_SCRIPT}" --json
+    else
+      exec python3 "${DASHBOARD_SCRIPT}"
+    fi
+  else
+    die "Dashboard script not found at ${DASHBOARD_SCRIPT}"
+  fi
+fi
 
 TELEMETRY_FILE="${HOME}/.local/share/claude-hooks/telemetry.jsonl"
 

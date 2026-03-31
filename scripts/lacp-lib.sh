@@ -17,14 +17,15 @@ if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
     value="${value#\'}" ; value="${value%\'}"
     # Validate key is a valid identifier
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Safe expansion: $HOME and ~ (no general variable/command expansion)
+    # Safe expansion: $HOME, ${HOME}, and ~ (no general variable/command expansion)
+    value="${value//\$\{HOME\}/${HOME}}"
     value="${value//\$HOME/${HOME}}"
     value="${value/#\~\//${HOME}/}"
     export "${key}=${value}"
   done < "${LACP_ROOT}/.env"
 fi
 
-export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-$HOME/.lacp/automation}"
+export LACP_AUTOMATION_ROOT="${LACP_AUTOMATION_ROOT:-${LACP_ROOT}/automation}"
 export LACP_KNOWLEDGE_ROOT="${LACP_KNOWLEDGE_ROOT:-$HOME/.lacp/knowledge}"
 export LACP_DRAFTS_ROOT="${LACP_DRAFTS_ROOT:-$HOME/.lacp/drafts}"
 export LACP_OBSIDIAN_VAULT="${LACP_OBSIDIAN_VAULT:-$HOME/obsidian/vault}"
