@@ -1,0 +1,26 @@
+# LACP Profile — default
+# Copy to ~/.lacp/profile.yaml and customize
+# Or create new profiles in this directory
+
+identity:
+  name: "LACP"
+  tagline: "Local Agent Control Plane"
+  emoji: "⚡"
+
+banner:
+  style: "box"       # box, minimal, none
+  color: "cyan"      # cyan, green, yellow, white, none
+
+defaults:
+  agent: ""           # auto-detect if empty
+  model: ""           # agent default if empty
+  mode: ""            # interactive if empty
+
+session:
+  greeting: ""        # shown after banner (empty = none)
+  budget_tokens: 1500 # max tokens for session injection
+
+focus:
+  auto_inject: true
+  stale_warn_days: 7
+  show_in_banner: true
