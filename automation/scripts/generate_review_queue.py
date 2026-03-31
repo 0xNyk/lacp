@@ -28,8 +28,11 @@ from sync_research_knowledge import (
 KNOWLEDGE_ROOT = Path.home() / "control" / "knowledge" / "knowledge-memory"
 DATA_RESEARCH_DIR = KNOWLEDGE_ROOT / "data" / "research"
 REGISTRY_FILE = DATA_RESEARCH_DIR / "registry.json"
+PROBE_DIR = KNOWLEDGE_ROOT / "data" / "probes"
 OUTPUT_DIR = Path.home() / "obsidian" / "nyk" / "_generated"
 OUTPUT_FILE = OUTPUT_DIR / "review-queue.md"
+
+RETRIEVAL_FAILURE_BOOST = 0.2
 
 
 def load_registry() -> dict[str, Any]:
@@ -41,15 +44,31 @@ def load_registry() -> dict[str, Any]:
         return {"version": 1, "updated_at": "", "items": {}}
 
 
+def load_latest_probe_results() -> dict[str, dict[str, Any]]:
+    """Load the most recent probe results file, keyed by item_id."""
+    if not PROBE_DIR.exists():
+        return {}
+    probe_files = sorted(PROBE_DIR.glob("probe-*.json"), reverse=True)
+    if not probe_files:
+        return {}
+    try:
+        data = json.loads(probe_files[0].read_text(encoding="utf-8"))
+        probes = data.get("probes", [])
+        return {p["item_id"]: p for p in probes if isinstance(p, dict) and "item_id" in p}
+    except (json.JSONDecodeError, KeyError):
+        return {}
+
+
 def generate_queue(threshold: float, max_items: int) -> dict[str, Any]:
     registry = load_registry()
     items = registry.get("items", {})
     blocked = set(registry.get("blocked_ids", []))
+    probe_results = load_latest_probe_results()
 
     if not isinstance(items, dict):
         return {"ok": False, "error": "Invalid registry"}
 
-    scored: list[tuple[str, float, float, float, dict[str, Any]]] = []
+    scored: list[tuple[str, float, float, float, str, dict[str, Any]]] = []
     total_score = 0.0
 
     for item_id, item in items.items():
@@ -59,29 +78,53 @@ def generate_queue(threshold: float, max_items: int) -> dict[str, Any]:
         r = compute_retrieval_strength(item, edge_count=0)
         score = compute_importance_score(item, edge_count=0)
         total_score += score
-        if score < threshold:
-            scored.append((item_id, score, s, r, item))
 
-    # Sort by retrieval strength ascending — low R + high S = best review candidates
-    scored.sort(key=lambda x: (x[3], x[1]))
+        # Active recall probe adjustment
+        probe = probe_results.get(item_id)
+        probe_status = ""
+        if probe:
+            probe_status = probe.get("status", "")
+            if probe_status == "CRITICAL_RETRIEVAL_GAP":
+                score += RETRIEVAL_FAILURE_BOOST
+            elif probe_status == "WEAK_RETRIEVAL":
+                score += RETRIEVAL_FAILURE_BOOST * 0.5
+
+        if score < threshold or probe_status in ("CRITICAL_RETRIEVAL_GAP", "WEAK_RETRIEVAL"):
+            scored.append((item_id, score, s, r, probe_status, item))
+
+    # Sort: critical gaps first, then by (retrieval strength asc, score asc)
+    scored.sort(key=lambda x: (
+        0 if x[4] == "CRITICAL_RETRIEVAL_GAP" else (1 if x[4] == "WEAK_RETRIEVAL" else 2),
+        x[3],  # R ascending
+        x[1],  # score ascending
+    ))
     decaying = scored[:max_items]
 
     active_count = len(items) - len(blocked)
     avg_score = total_score / active_count if active_count else 0.0
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    probe_count = len(probe_results)
+    critical_count = sum(1 for x in decaying if x[4] == "CRITICAL_RETRIEVAL_GAP")
+    weak_count = sum(1 for x in decaying if x[4] == "WEAK_RETRIEVAL")
 
     rows: list[str] = []
-    for item_id, score, s, r, item in decaying:
+    for item_id, score, s, r, probe_status, item in decaying:
         last_seen = item.get("last_seen", "unknown")
         categories = ", ".join(item.get("categories", ["uncategorized"]))
         edge_count = len(item.get("edges", []))
-        tip = " *" if s > 0.5 and r < 0.2 else ""
-        rows.append(f"| [[{item_id}]] | {score:.4f} | S={s:.2f} | R={r:.4f} | {last_seen} | {edge_count} | {categories} |{tip}")
+        flags = ""
+        if probe_status == "CRITICAL_RETRIEVAL_GAP":
+            flags = " **GAP**"
+        elif probe_status == "WEAK_RETRIEVAL":
+            flags = " *weak*"
+        elif s > 0.5 and r < 0.2:
+            flags = " *"
+        rows.append(f"| [[{item_id}]] | {score:.4f} | S={s:.2f} | R={r:.4f} | {last_seen} | {edge_count} | {categories} |{flags}")
 
     note = f"""---
 id: review-queue
-description: FSRS-based review queue - nodes with decaying retrievability.
-tags: [review, fsrs, maintenance]
+description: FSRS-based review queue with active recall probe integration.
+tags: [review, fsrs, maintenance, active-recall]
 ---
 
 # Review Queue
@@ -91,9 +134,13 @@ tags: [review, fsrs, maintenance]
 - items_below_threshold: {len(decaying)}
 - avg_retrievability: {avg_score:.4f}
 - threshold: {threshold:.2f}
-- tip_of_tongue: items marked * have high S but low R (best review candidates)
+- probe_coverage: {probe_count} items probed
+- retrieval_gaps: {critical_count} critical, {weak_count} weak
+- tip_of_tongue: items marked * have high S but low R
+- **GAP**: item is important but RAG index cannot find it
+- *weak*: item found but ranked below position 3
 
-## Decaying Nodes
+## Review Candidates
 
 | Node | Score | Storage | Retrieval | Last Seen | Edges | Categories |
 |------|-------|---------|-----------|-----------|-------|------------|
@@ -110,6 +157,9 @@ tags: [review, fsrs, maintenance]
         "items_below_threshold": len(decaying),
         "avg_retrievability": round(avg_score, 4),
         "threshold": threshold,
+        "probe_coverage": probe_count,
+        "retrieval_gaps": critical_count,
+        "retrieval_weak": weak_count,
         "output_file": str(OUTPUT_FILE),
     }
     return result

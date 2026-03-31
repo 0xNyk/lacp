@@ -274,7 +274,18 @@ else
   log_step "WARN" "detect_knowledge_gaps" "missing ${SCRIPTS_DIR}/detect_knowledge_gaps.py"
 fi
 
-# 7.6) FSRS review queue
+# 7.6) Active Recall Probes (test actual retrievability before review queue)
+if [[ -f "${SCRIPTS_DIR}/active_recall_probes.py" ]]; then
+  PROBE_ARGS=(--threshold 0.3 --max-items 100)
+  if [[ "${APPLY}" -eq 1 ]]; then
+    PROBE_ARGS+=(--apply)
+  fi
+  run_step_soft "active_recall_probes" python3 "${SCRIPTS_DIR}/active_recall_probes.py" "${PROBE_ARGS[@]}"
+else
+  log_step "WARN" "active_recall_probes" "missing ${SCRIPTS_DIR}/active_recall_probes.py"
+fi
+
+# 7.7) FSRS review queue (now informed by probe results)
 if [[ -f "${SCRIPTS_DIR}/generate_review_queue.py" ]]; then
   run_step_soft "review_queue" python3 "${SCRIPTS_DIR}/generate_review_queue.py"
 else
