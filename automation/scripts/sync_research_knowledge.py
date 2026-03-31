@@ -157,6 +157,29 @@ def detect_agent_id() -> str:
     return socket.gethostname()
 
 
+def detect_agent_from_path(file_path: str) -> str:
+    """Infer agent identity from file path for multi-agent provenance.
+
+    Checks for patterns like agents/{name}/, workspace-{name}/, or
+    session directories that indicate which agent wrote a file.
+    Falls back to detect_agent_id() for generic paths.
+    """
+    import re as _re
+    # Pattern: /agents/{agent_name}/
+    m = _re.search(r"/agents/([^/]+)/", file_path)
+    if m:
+        return m.group(1)
+    # Pattern: /workspace-{agent_name}/
+    m = _re.search(r"/workspace-([^/]+)/", file_path)
+    if m:
+        return m.group(1)
+    # Pattern: /{agent_name}-brain/ (e.g. quant-brain)
+    m = _re.search(r"/([a-z]+-brain)/", file_path)
+    if m:
+        return m.group(1).replace("-brain", "")
+    return ""
+
+
 def clean_text(value: str, limit: int = 280) -> str:
     text = " ".join(value.strip().split())
     return text[:limit]
@@ -322,12 +345,31 @@ def read_inbox_signals() -> list[ResearchSignal]:
         day = created if created else datetime.now(UTC).strftime("%Y-%m-%d")
         sig_source = source if source else "inbox"
 
+        # Multi-agent provenance: check frontmatter for agent_id, or infer from path
+        agent_id = ""
+        agent_match = re.search(r"^agent_id:\s*(.+)$", text, re.MULTILINE)
+        if agent_match:
+            agent_id = agent_match.group(1).strip()
+        if not agent_id:
+            agent_id = detect_agent_from_path(str(path))
+
+        confidence = 0.7
+        conf_match = re.search(r"^confidence:\s*([0-9.]+)$", text, re.MULTILINE)
+        if conf_match:
+            try:
+                confidence = float(conf_match.group(1))
+            except ValueError:
+                pass
+
         signals.append(
             ResearchSignal(
                 day=day,
                 source=sig_source,
                 text=clean_text(content, limit=280),
                 urls=extract_urls(content),
+                agent_id=agent_id,
+                confidence=confidence,
+                evidence_type="observation" if source == "x-bookmarks" else "research",
             )
         )
 
