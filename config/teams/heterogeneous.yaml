@@ -1,0 +1,23 @@
+# Heterogeneous team — different providers for different strengths
+# Requires: claude, codex (or opencode), and hermes installed
+name: "heterogeneous"
+description: "Multi-provider team — Claude leads, Codex executes, Hermes operates"
+
+roles:
+  - name: "lead"
+    agent: "claude"
+    model: "opus"
+    purpose: "Strategic orchestration — planning, architecture, code review"
+    count: 1
+
+  - name: "executor"
+    agent: "codex"
+    model: "o3"
+    purpose: "Implementation — write code, run tests, fast iteration"
+    count: 1
+
+  - name: "ops"
+    agent: "hermes"
+    model: "default"
+    purpose: "Operations — deploy, monitor, server management, cron"
+    count: 1

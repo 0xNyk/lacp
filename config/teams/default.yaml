@@ -1,0 +1,24 @@
+# LACP Team Configuration — default heterogeneous team
+# Each role specifies an agent backend + model + purpose
+#
+# Usage:
+#   lacp up --team default
+#   lacp up --team config/teams/research.yaml
+#
+# Roles launch as separate instances. The first role is the lead.
+
+name: "default"
+description: "Balanced team — lead orchestrates, executor implements"
+
+roles:
+  - name: "lead"
+    agent: "claude"
+    model: "opus"
+    purpose: "Strategic orchestration — decompose tasks, coordinate, review"
+    count: 1
+
+  - name: "executor"
+    agent: "claude"
+    model: "sonnet"
+    purpose: "Implementation — write code, run tests, fix bugs"
+    count: 1

@@ -19,6 +19,8 @@ Options:
   --session <name>                Session name (default: <brand>-dev)
   --instances <n>                 Number of instances to launch (default: 2)
   --command <cmd>                 Agent command for each instance (default: claude)
+  --team <name|path>             Launch heterogeneous team (config/teams/*.yaml)
+                                 Available: default, research, heterogeneous
   --backend dmux|tmux|claude_worktree
                                   Default: ${LACP_ORCHESTRATOR_BACKEND:-dmux}
   --repo-trust trusted|unknown    Default: trusted
@@ -53,6 +55,7 @@ BRAND="lacp"
 SESSION=""
 INSTANCES=""
 COMMAND_TEXT="claude"
+TEAM=""
 BACKEND="${LACP_ORCHESTRATOR_BACKEND:-dmux}"
 REPO_TRUST="trusted"
 INTERNET="false"
@@ -75,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --session) SESSION="$2"; SESSION_SET="true"; shift 2 ;;
     --instances) INSTANCES="$2"; INSTANCES_SET="true"; shift 2 ;;
     --command) COMMAND_TEXT="$2"; shift 2 ;;
+    --team) TEAM="$2"; shift 2 ;;
     --backend) BACKEND="$2"; shift 2 ;;
     --repo-trust) REPO_TRUST="$2"; shift 2 ;;
     --internet) INTERNET="$(bool_arg "$2")"; shift 2 ;;
@@ -133,6 +137,50 @@ if [[ "${BACKEND}" == "dmux" && -z "${LACP_DMUX_TUI_TEMPLATE:-}" ]]; then
   export LACP_DMUX_TUI_TEMPLATE='dmux attach --session "{session}"'
 fi
 
+# -- Team mode: expand roles into instance-level commands --
+
+declare -a INSTANCE_COMMANDS=()
+declare -a INSTANCE_LABELS=()
+
+if [[ -n "${TEAM}" ]]; then
+  TEAM_JSON="$(LACP_ROOT="${ROOT}" python3 "${ROOT}/automation/scripts/load_team.py" "${TEAM}" 2>/dev/null || echo '{"error":"load failed"}')"
+  if echo "${TEAM_JSON}" | jq -e '.error' >/dev/null 2>&1; then
+    die "Failed to load team '${TEAM}': $(echo "${TEAM_JSON}" | jq -r '.error')"
+  fi
+
+  TEAM_NAME="$(echo "${TEAM_JSON}" | jq -r '.name')"
+  log "Team: ${TEAM_NAME}"
+
+  # Expand roles into per-instance commands
+  while IFS=$'\t' read -r agent model purpose count role_name; do
+    for j in $(seq 1 "${count}"); do
+      cmd="${ROOT}/bin/lacp-stream --agent ${agent}"
+      if [[ -n "${model}" && "${model}" != "default" ]]; then
+        cmd+=" --model ${model}"
+      fi
+      INSTANCE_COMMANDS+=("${cmd}")
+      INSTANCE_LABELS+=("${role_name}")
+      log "  Role: ${role_name} → ${agent}/${model}"
+    done
+  done < <(echo "${TEAM_JSON}" | jq -r '.roles[] | [.agent, .model, .purpose, (.count // 1 | tostring), .name] | @tsv')
+
+  if [[ "${INSTANCES_SET}" != "true" ]]; then
+    INSTANCES="${#INSTANCE_COMMANDS[@]}"
+  fi
+
+  if [[ ! "${SESSION_SET}" == "true" ]]; then
+    SESSION="${BRAND}-${TEAM_NAME}"
+  fi
+fi
+
+# If not team mode, fill commands array with uniform command
+if [[ ${#INSTANCE_COMMANDS[@]} -eq 0 ]]; then
+  for i in $(seq 1 "${INSTANCES}"); do
+    INSTANCE_COMMANDS+=("${COMMAND_TEXT}")
+    INSTANCE_LABELS+=("instance-${i}")
+  done
+fi
+
 results='[]'
 succeeded=0
 failed=0
@@ -143,9 +191,14 @@ for i in $(seq 1 "${INSTANCES}"); do
     launch_session="${SESSION}-${i}"
   fi
 
-  launch_task="up:${SESSION} instance ${i}/${INSTANCES}"
+  # Get instance-specific command and label
+  idx=$((i - 1))
+  instance_cmd="${INSTANCE_COMMANDS[$idx]:-${COMMAND_TEXT}}"
+  instance_label="${INSTANCE_LABELS[$idx]:-instance-${i}}"
+
+  launch_task="up:${SESSION} ${instance_label} ${i}/${INSTANCES}"
   if [[ "${BACKEND}" == "dmux" ]]; then
-    launch_task="up:${SESSION} pane ${i}/${INSTANCES}"
+    launch_task="up:${SESSION} ${instance_label} pane ${i}/${INSTANCES}"
   fi
 
   args=(
@@ -153,7 +206,7 @@ for i in $(seq 1 "${INSTANCES}"); do
     --task "${launch_task}"
     --backend "${BACKEND}"
     --session "${launch_session}"
-    --command "${COMMAND_TEXT}"
+    --command "${instance_cmd}"
     --repo-trust "${REPO_TRUST}"
     --internet "${INTERNET}"
     --external-code "${EXTERNAL_CODE}"
@@ -180,7 +233,8 @@ for i in $(seq 1 "${INSTANCES}"); do
     --argjson index "${i}" \
     --arg backend "${BACKEND}" \
     --arg session "${launch_session}" \
-    --arg command "${COMMAND_TEXT}" \
+    --arg command "${instance_cmd}" \
+    --arg role "${instance_label}" \
     --argjson ok "$( [[ "${rc}" -eq 0 ]] && echo true || echo false )" \
     --argjson exit_code "${rc}" \
     --arg output "${output}" \

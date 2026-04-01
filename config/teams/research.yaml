@@ -1,0 +1,22 @@
+# Research team — deep analysis with diverse perspectives
+name: "research"
+description: "Research team — analyst explores, critic challenges, writer synthesizes"
+
+roles:
+  - name: "analyst"
+    agent: "claude"
+    model: "opus"
+    purpose: "Deep research — explore codebases, read papers, gather evidence"
+    count: 1
+
+  - name: "critic"
+    agent: "claude"
+    model: "sonnet"
+    purpose: "Challenge findings — find flaws, test assumptions, adversarial review"
+    count: 1
+
+  - name: "writer"
+    agent: "claude"
+    model: "sonnet"
+    purpose: "Synthesize findings into actionable recommendations and documentation"
+    count: 1
