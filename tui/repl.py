@@ -42,6 +42,7 @@ from providers import (
     read_codex_oauth,
 )
 from skins import Skin, load_skin, list_skins
+from tui.tools import TOOL_REGISTRY, execute_tool, get_tool_definitions
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -422,57 +423,141 @@ class LACPRepl(App):
 
     @work(thread=True)
     def _stream_response(self) -> None:
-        """Stream a response from the current provider (runs in worker thread)."""
+        """Agentic loop: stream response, execute tool calls, continue until done."""
         if not self.provider:
             return
 
         msgs = self.query_one("#messages", MessageDisplay)
-        self.streaming_content = ""
+        tools = get_tool_definitions()
+        max_turns = 20  # safety limit
 
-        # Create streaming placeholder
-        self.call_from_thread(lambda: msgs.add_streaming_placeholder())
+        for turn in range(max_turns):
+            self.streaming_content = ""
+            self.call_from_thread(lambda: msgs.add_streaming_placeholder())
 
-        try:
-            # Run the async generator in a new event loop (we're in a thread)
-            loop = asyncio.new_event_loop()
+            # Collect tool calls from this turn
+            pending_tool_calls: list[dict] = []
+            current_tool_call: dict | None = None
+            tool_input_json = ""
+
             try:
-                async def _consume():
-                    async for event in self.provider.stream(
-                        messages=self.messages,
-                        system=self.system_prompt,
-                    ):
-                        if event.type == "text":
-                            self.streaming_content += event.text
-                            content = self.streaming_content
-                            def update_placeholder(text: str = content) -> None:
-                                try:
-                                    widget = msgs.query_one("#streaming", Static)
-                                    widget.update(text)
-                                    msgs.scroll_end(animate=False)
-                                except Exception:
-                                    pass
-                            self.call_from_thread(update_placeholder)
+                loop = asyncio.new_event_loop()
+                try:
+                    async def _consume():
+                        nonlocal pending_tool_calls, current_tool_call, tool_input_json
+                        async for event in self.provider.stream(
+                            messages=self.messages,
+                            system=self.system_prompt,
+                            tools=tools if isinstance(self.provider, AnthropicProvider) else None,
+                        ):
+                            if event.type == "text":
+                                self.streaming_content += event.text
+                                content = self.streaming_content
+                                def update_ph(text: str = content) -> None:
+                                    try:
+                                        widget = msgs.query_one("#streaming", Static)
+                                        widget.update(text)
+                                        msgs.scroll_end(animate=False)
+                                    except Exception:
+                                        pass
+                                self.call_from_thread(update_ph)
 
-                        elif event.type == "done":
-                            if event.usage:
-                                self.total_input_tokens += event.usage.get("input_tokens", 0)
-                                self.total_output_tokens += event.usage.get("output_tokens", 0)
+                            elif event.type == "tool_use":
+                                if event.tool_call:
+                                    # content_block_stop emits complete tool call with parsed input
+                                    if event.tool_call.input:
+                                        pending_tool_calls.append({
+                                            "id": event.tool_call.id,
+                                            "name": event.tool_call.name,
+                                            "input": event.tool_call.input,
+                                        })
+                                    else:
+                                        # content_block_start — just track for display
+                                        current_tool_call = {
+                                            "id": event.tool_call.id,
+                                            "name": event.tool_call.name,
+                                            "input": {},
+                                        }
 
-                loop.run_until_complete(_consume())
-            finally:
-                loop.close()
+                            elif event.type == "done":
+                                if event.usage:
+                                    self.total_input_tokens += event.usage.get("input_tokens", 0)
+                                    self.total_output_tokens += event.usage.get("output_tokens", 0)
 
-        except Exception as e:
-            self.streaming_content = f"**Error**: {e}"
+                    loop.run_until_complete(_consume())
+                finally:
+                    loop.close()
 
-        # Finalize: replace placeholder with rendered markdown
-        final_content = self.streaming_content
-        if final_content:
-            self.messages.append({"role": "assistant", "content": final_content})
-            def finalize(content: str = final_content) -> None:
-                msgs.finalize_streaming(content)
+            except Exception as e:
+                self.streaming_content = f"**Error**: {e}"
+
+            # Finalize streaming text for this turn
+            final_content = self.streaming_content
+            if final_content:
+                def finalize_text(content: str = final_content) -> None:
+                    msgs.finalize_streaming(content)
+                self.call_from_thread(finalize_text)
+            else:
+                # Remove empty placeholder
+                def remove_ph() -> None:
+                    try:
+                        msgs.query_one("#streaming", Static).remove()
+                    except Exception:
+                        pass
+                self.call_from_thread(remove_ph)
+
+            # If no tool calls, we're done — add assistant message and break
+            if not pending_tool_calls:
+                if final_content:
+                    self.messages.append({"role": "assistant", "content": final_content})
+                def update_ui() -> None:
+                    self._update_status()
+                self.call_from_thread(update_ui)
+                break
+
+            # Build assistant message with tool use blocks
+            content_blocks = []
+            if final_content:
+                content_blocks.append({"type": "text", "text": final_content})
+            for tc in pending_tool_calls:
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                })
+            self.messages.append({"role": "assistant", "content": content_blocks})
+
+            # Execute tools and collect results
+            tool_results = []
+            for tc in pending_tool_calls:
+                tool_name = tc["name"]
+                tool_input = tc["input"]
+
+                # Show tool execution in UI
+                def show_tool(name: str = tool_name, inp: dict = tool_input) -> None:
+                    short_input = json.dumps(inp)[:100]
+                    msgs.add_message("system", f"🔧 {name}({short_input})")
+                self.call_from_thread(show_tool)
+
+                # Execute
+                result = execute_tool(tool_name, tool_input)
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc["id"],
+                    "content": result[:50000],  # truncate large results
+                })
+
+            # Add tool results to conversation
+            self.messages.append({"role": "user", "content": tool_results})
+
+            # Update status
+            def update_status_mid() -> None:
                 self._update_status()
-            self.call_from_thread(finalize)
+            self.call_from_thread(update_status_mid)
+
+            # Loop continues — next turn will get the model's response to tool results
 
 
 def main() -> None:

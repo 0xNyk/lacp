@@ -131,30 +131,59 @@ class AnthropicProvider(Provider):
             kwargs["tools"] = tools
 
         with client.messages.stream(**kwargs) as stream:
+            current_tool_id = ""
+            current_tool_name = ""
+            tool_json_parts: list[str] = []
+
             for event in stream:
-                if hasattr(event, "type"):
-                    if event.type == "content_block_delta":
-                        delta = event.delta
-                        if hasattr(delta, "text"):
-                            yield StreamEvent(type="text", text=delta.text)
-                        elif hasattr(delta, "partial_json"):
-                            yield StreamEvent(type="text", text=delta.partial_json)
-                    elif event.type == "content_block_start":
-                        block = event.content_block
-                        if hasattr(block, "type") and block.type == "tool_use":
-                            yield StreamEvent(
-                                type="tool_use",
-                                tool_call=ToolCall(id=block.id, name=block.name, input={}),
-                            )
-                    elif event.type == "message_stop":
-                        msg = stream.get_final_message()
+                if not hasattr(event, "type"):
+                    continue
+
+                if event.type == "content_block_start":
+                    block = event.content_block
+                    if hasattr(block, "type") and block.type == "tool_use":
+                        current_tool_id = block.id
+                        current_tool_name = block.name
+                        tool_json_parts = []
                         yield StreamEvent(
-                            type="done",
-                            usage={
-                                "input_tokens": msg.usage.input_tokens,
-                                "output_tokens": msg.usage.output_tokens,
-                            },
+                            type="tool_use",
+                            tool_call=ToolCall(id=block.id, name=block.name, input={}),
                         )
+
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if hasattr(delta, "text"):
+                        yield StreamEvent(type="text", text=delta.text)
+                    elif hasattr(delta, "partial_json"):
+                        # Accumulate tool input JSON
+                        tool_json_parts.append(delta.partial_json)
+
+                elif event.type == "content_block_stop":
+                    # If we were accumulating tool JSON, emit the complete tool call
+                    if current_tool_id and tool_json_parts:
+                        full_json = "".join(tool_json_parts)
+                        try:
+                            import json as _json
+                            tool_input = _json.loads(full_json)
+                        except Exception:
+                            tool_input = {}
+                        yield StreamEvent(
+                            type="tool_use",
+                            tool_call=ToolCall(id=current_tool_id, name=current_tool_name, input=tool_input),
+                        )
+                        current_tool_id = ""
+                        current_tool_name = ""
+                        tool_json_parts = []
+
+                elif event.type == "message_stop":
+                    msg = stream.get_final_message()
+                    yield StreamEvent(
+                        type="done",
+                        usage={
+                            "input_tokens": msg.usage.input_tokens,
+                            "output_tokens": msg.usage.output_tokens,
+                        },
+                    )
 
 
 class OpenAIProvider(Provider):

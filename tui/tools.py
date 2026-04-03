@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""LACP Tool Registry — built-in tools for the native REPL.
+
+Provides file operations, bash execution, grep, and glob —
+the minimum tool set for a coding agent.
+
+Each tool is defined with:
+- name: tool identifier
+- description: what the tool does
+- input_schema: JSON Schema for parameters
+- handler: function that executes the tool
+
+Usage:
+    from tools import TOOL_REGISTRY, execute_tool, get_tool_definitions
+
+    # Get Anthropic-format tool definitions
+    tools = get_tool_definitions()
+
+    # Execute a tool call
+    result = execute_tool("bash", {"command": "ls -la"})
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[[dict[str, Any]], str]
+
+
+# ─── Tool Handlers ────────────────────────────────────────────────
+
+
+def _handle_bash(params: dict[str, Any]) -> str:
+    """Execute a bash command and return output."""
+    command = params.get("command", "")
+    if not command:
+        return json.dumps({"error": "No command provided"})
+
+    # Safety: block obviously destructive commands
+    dangerous = ["rm -rf /", "mkfs", "dd if=", "> /dev/sd"]
+    for d in dangerous:
+        if d in command:
+            return json.dumps({"error": f"Blocked dangerous command: {command[:50]}"})
+
+    timeout = min(params.get("timeout", 30), 120)
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=os.getcwd(),
+        )
+        output = result.stdout
+        if result.stderr:
+            output += f"\n{result.stderr}" if output else result.stderr
+
+        # Truncate large outputs
+        if len(output) > 50000:
+            head = output[:20000]
+            tail = output[-30000:]
+            output = f"{head}\n\n... (truncated {len(output) - 50000} chars) ...\n\n{tail}"
+
+        return json.dumps({
+            "stdout": result.stdout[:30000],
+            "stderr": result.stderr[:10000],
+            "exit_code": result.returncode,
+        })
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": f"Command timed out after {timeout}s"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_read_file(params: dict[str, Any]) -> str:
+    """Read a file and return its contents."""
+    path = params.get("file_path", "")
+    if not path:
+        return json.dumps({"error": "No file_path provided"})
+
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        return json.dumps({"error": f"File not found: {path}"})
+    if not file_path.is_file():
+        return json.dumps({"error": f"Not a file: {path}"})
+
+    try:
+        size = file_path.stat().st_size
+        if size > 10_000_000:  # 10MB limit
+            return json.dumps({"error": f"File too large: {size} bytes (max 10MB)"})
+
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+
+        # Optional line range
+        offset = params.get("offset", 0)
+        limit = params.get("limit", 0)
+        if offset or limit:
+            lines = content.split("\n")
+            if offset:
+                lines = lines[offset:]
+            if limit:
+                lines = lines[:limit]
+            content = "\n".join(lines)
+
+        return content
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_write_file(params: dict[str, Any]) -> str:
+    """Write content to a file."""
+    path = params.get("file_path", "")
+    content = params.get("content", "")
+    if not path:
+        return json.dumps({"error": "No file_path provided"})
+
+    file_path = Path(path).expanduser()
+
+    # Safety: don't write to system dirs
+    blocked_prefixes = ["/System", "/usr", "/bin", "/sbin", "/etc"]
+    for prefix in blocked_prefixes:
+        if str(file_path).startswith(prefix):
+            return json.dumps({"error": f"Cannot write to system path: {path}"})
+
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        return json.dumps({"ok": True, "path": str(file_path), "bytes": len(content)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_edit_file(params: dict[str, Any]) -> str:
+    """Edit a file by replacing old_string with new_string."""
+    path = params.get("file_path", "")
+    old_string = params.get("old_string", "")
+    new_string = params.get("new_string", "")
+
+    if not path:
+        return json.dumps({"error": "No file_path provided"})
+    if not old_string:
+        return json.dumps({"error": "No old_string provided"})
+
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        return json.dumps({"error": f"File not found: {path}"})
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        if old_string not in content:
+            return json.dumps({"error": "old_string not found in file"})
+
+        count = content.count(old_string)
+        if count > 1 and not params.get("replace_all", False):
+            return json.dumps({"error": f"old_string found {count} times. Use replace_all=true or provide more context."})
+
+        if params.get("replace_all", False):
+            new_content = content.replace(old_string, new_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+
+        file_path.write_text(new_content, encoding="utf-8")
+        return json.dumps({"ok": True, "path": str(file_path), "replacements": count if params.get("replace_all") else 1})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_grep(params: dict[str, Any]) -> str:
+    """Search file contents with regex."""
+    pattern = params.get("pattern", "")
+    path = params.get("path", ".")
+    if not pattern:
+        return json.dumps({"error": "No pattern provided"})
+
+    try:
+        args = ["rg", "--json", "-n", "--max-count", "50"]
+        if params.get("case_insensitive", False):
+            args.append("-i")
+        file_type = params.get("type", "")
+        if file_type:
+            args.extend(["--type", file_type])
+        glob_filter = params.get("glob", "")
+        if glob_filter:
+            args.extend(["--glob", glob_filter])
+        args.extend([pattern, path])
+
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+
+        # Parse ripgrep JSON output into readable format
+        matches = []
+        for line in result.stdout.splitlines():
+            try:
+                data = json.loads(line)
+                if data.get("type") == "match":
+                    match_data = data["data"]
+                    file_path = match_data["path"]["text"]
+                    line_num = match_data["line_number"]
+                    line_text = match_data["lines"]["text"].rstrip()
+                    matches.append(f"{file_path}:{line_num}: {line_text}")
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        if not matches:
+            return "No matches found."
+        return "\n".join(matches[:50])
+    except FileNotFoundError:
+        # Fallback to grep if rg not available
+        try:
+            args = ["grep", "-rn", pattern, path]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+            return result.stdout[:20000] or "No matches found."
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_glob(params: dict[str, Any]) -> str:
+    """Find files matching a glob pattern."""
+    pattern = params.get("pattern", "")
+    path = params.get("path", ".")
+    if not pattern:
+        return json.dumps({"error": "No pattern provided"})
+
+    try:
+        base = Path(path).expanduser()
+        matches = sorted(str(p) for p in base.glob(pattern))[:100]
+        if not matches:
+            return "No files found."
+        return "\n".join(matches)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_ls(params: dict[str, Any]) -> str:
+    """List directory contents."""
+    path = params.get("path", ".")
+    try:
+        base = Path(path).expanduser()
+        if not base.exists():
+            return json.dumps({"error": f"Path not found: {path}"})
+        if base.is_file():
+            stat = base.stat()
+            return f"{base.name}  {stat.st_size} bytes"
+
+        entries = []
+        for p in sorted(base.iterdir()):
+            kind = "dir" if p.is_dir() else "file"
+            size = p.stat().st_size if p.is_file() else 0
+            entries.append(f"{'d' if kind == 'dir' else '-'}  {size:>10}  {p.name}")
+        return "\n".join(entries[:200]) or "(empty directory)"
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ─── Tool Registry ────────────────────────────────────────────────
+
+
+TOOL_REGISTRY: dict[str, Tool] = {
+    "bash": Tool(
+        name="bash",
+        description="Execute a bash command in the current working directory. Returns stdout, stderr, and exit code.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The bash command to execute"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (max 120)", "default": 30},
+            },
+            "required": ["command"],
+        },
+        handler=_handle_bash,
+    ),
+    "read_file": Tool(
+        name="read_file",
+        description="Read the contents of a file. Supports optional line offset and limit.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute or relative path to the file"},
+                "offset": {"type": "integer", "description": "Line number to start from (0-indexed)", "default": 0},
+                "limit": {"type": "integer", "description": "Max lines to read (0 = all)", "default": 0},
+            },
+            "required": ["file_path"],
+        },
+        handler=_handle_read_file,
+    ),
+    "write_file": Tool(
+        name="write_file",
+        description="Write content to a file. Creates parent directories if needed.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to write the file"},
+                "content": {"type": "string", "description": "Content to write"},
+            },
+            "required": ["file_path", "content"],
+        },
+        handler=_handle_write_file,
+    ),
+    "edit_file": Tool(
+        name="edit_file",
+        description="Edit a file by replacing old_string with new_string. The old_string must be unique in the file unless replace_all is true.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to the file"},
+                "old_string": {"type": "string", "description": "The exact string to find and replace"},
+                "new_string": {"type": "string", "description": "The replacement string"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences", "default": False},
+            },
+            "required": ["file_path", "old_string", "new_string"],
+        },
+        handler=_handle_edit_file,
+    ),
+    "grep": Tool(
+        name="grep",
+        description="Search file contents using regex pattern (uses ripgrep). Returns matching lines with file paths and line numbers.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {"type": "string", "description": "Directory or file to search in", "default": "."},
+                "case_insensitive": {"type": "boolean", "description": "Case-insensitive search", "default": False},
+                "type": {"type": "string", "description": "File type filter (e.g., py, ts, rs)"},
+                "glob": {"type": "string", "description": "Glob pattern to filter files"},
+            },
+            "required": ["pattern"],
+        },
+        handler=_handle_grep,
+    ),
+    "glob": Tool(
+        name="glob",
+        description="Find files matching a glob pattern. Returns file paths.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern (e.g., '**/*.py', 'src/**/*.ts')"},
+                "path": {"type": "string", "description": "Base directory to search from", "default": "."},
+            },
+            "required": ["pattern"],
+        },
+        handler=_handle_glob,
+    ),
+    "ls": Tool(
+        name="ls",
+        description="List directory contents with file sizes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path to list", "default": "."},
+            },
+        },
+        handler=_handle_ls,
+    ),
+}
+
+
+def get_tool_definitions() -> list[dict[str, Any]]:
+    """Get Anthropic-format tool definitions for all registered tools."""
+    return [
+        {
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": tool.input_schema,
+        }
+        for tool in TOOL_REGISTRY.values()
+    ]
+
+
+def execute_tool(name: str, params: dict[str, Any]) -> str:
+    """Execute a tool by name with given parameters."""
+    tool = TOOL_REGISTRY.get(name)
+    if tool is None:
+        return json.dumps({"error": f"Unknown tool: {name}"})
+    try:
+        return tool.handler(params)
+    except Exception as e:
+        return json.dumps({"error": f"Tool execution failed: {e}"})
