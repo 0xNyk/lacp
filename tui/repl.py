@@ -157,9 +157,9 @@ class LACPRepl(App):
     CSS = """
     Screen {
         background: $surface;
+        layout: vertical;
     }
     StatusBar {
-        dock: top;
         height: 1;
         background: $primary-darken-2;
         color: $text;
@@ -170,12 +170,15 @@ class LACPRepl(App):
         padding: 0 1;
     }
     #input-area {
-        dock: bottom;
-        height: 3;
-        padding: 0 1;
+        height: auto;
+        max-height: 5;
+        padding: 0 1 1 1;
     }
     Input {
         border: tall $accent;
+    }
+    Footer {
+        height: 1;
     }
     """
 
@@ -277,8 +280,8 @@ class LACPRepl(App):
         msgs.add_message("user", text)
         self.messages.append({"role": "user", "content": text})
 
-        # Stream response
-        await self._stream_response()
+        # Stream response (runs in background worker thread)
+        self._stream_response()
 
     async def _handle_command(self, text: str) -> None:
         msgs = self.query_one("#messages", MessageDisplay)
@@ -350,8 +353,8 @@ class LACPRepl(App):
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")
 
     @work(thread=True)
-    async def _stream_response(self) -> None:
-        """Stream a response from the current provider."""
+    def _stream_response(self) -> None:
+        """Stream a response from the current provider (runs in worker thread)."""
         if not self.provider:
             return
 
@@ -362,27 +365,34 @@ class LACPRepl(App):
         self.call_from_thread(lambda: msgs.add_streaming_placeholder())
 
         try:
-            async for event in self.provider.stream(
-                messages=self.messages,
-                system=self.system_prompt,
-            ):
-                if event.type == "text":
-                    self.streaming_content += event.text
-                    content = self.streaming_content
-                    # Update placeholder with accumulated text
-                    def update_placeholder(text: str = content) -> None:
-                        try:
-                            widget = msgs.query_one("#streaming", Static)
-                            widget.update(text)
-                            msgs.scroll_end(animate=False)
-                        except Exception:
-                            pass
-                    self.call_from_thread(update_placeholder)
+            # Run the async generator in a new event loop (we're in a thread)
+            loop = asyncio.new_event_loop()
+            try:
+                async def _consume():
+                    async for event in self.provider.stream(
+                        messages=self.messages,
+                        system=self.system_prompt,
+                    ):
+                        if event.type == "text":
+                            self.streaming_content += event.text
+                            content = self.streaming_content
+                            def update_placeholder(text: str = content) -> None:
+                                try:
+                                    widget = msgs.query_one("#streaming", Static)
+                                    widget.update(text)
+                                    msgs.scroll_end(animate=False)
+                                except Exception:
+                                    pass
+                            self.call_from_thread(update_placeholder)
 
-                elif event.type == "done":
-                    if event.usage:
-                        self.total_input_tokens += event.usage.get("input_tokens", 0)
-                        self.total_output_tokens += event.usage.get("output_tokens", 0)
+                        elif event.type == "done":
+                            if event.usage:
+                                self.total_input_tokens += event.usage.get("input_tokens", 0)
+                                self.total_output_tokens += event.usage.get("output_tokens", 0)
+
+                loop.run_until_complete(_consume())
+            finally:
+                loop.close()
 
         except Exception as e:
             self.streaming_content = f"**Error**: {e}"
