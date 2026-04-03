@@ -88,33 +88,26 @@ class AnthropicProvider(Provider):
     def _get_client(self):
         if self._client is None:
             import anthropic
-            # Try OAuth token first, then API key
-            token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
-            if not token and not api_key:
-                # Try reading from macOS Keychain (Claude Code's storage)
-                token = _read_keychain_oauth()
+            token = read_claude_oauth()
+            if not token:
+                raise RuntimeError(
+                    "No Anthropic credentials. Claude Code OAuth auto-detected from Keychain, "
+                    "or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
+                )
 
-            if token:
+            # OAuth tokens (sk-ant-oat*) use Bearer auth
+            if token.startswith("sk-ant-oat"):
                 self._client = anthropic.Anthropic(
-                    api_key="placeholder",  # SDK requires this field
+                    api_key="placeholder",
                     default_headers={"Authorization": f"Bearer {token}"},
                 )
-            elif api_key:
-                self._client = anthropic.Anthropic(api_key=api_key)
             else:
-                raise RuntimeError(
-                    "No Anthropic credentials found. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
-                )
+                self._client = anthropic.Anthropic(api_key=token)
         return self._client
 
     def is_available(self) -> bool:
-        try:
-            self._get_client()
-            return True
-        except Exception:
-            return False
+        return bool(read_claude_oauth())
 
     async def stream(
         self,
@@ -173,14 +166,18 @@ class OpenAIProvider(Provider):
     def _get_client(self):
         if self._client is None:
             import openai
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            if not api_key:
-                raise RuntimeError("No OpenAI credentials. Set OPENAI_API_KEY")
-            self._client = openai.OpenAI(api_key=api_key)
+
+            token = read_codex_oauth()
+            if not token:
+                raise RuntimeError(
+                    "No OpenAI credentials. Codex OAuth auto-detected from ~/.codex/auth.json, "
+                    "or set OPENAI_API_KEY"
+                )
+            self._client = openai.OpenAI(api_key=token)
         return self._client
 
     def is_available(self) -> bool:
-        return bool(os.environ.get("OPENAI_API_KEY"))
+        return bool(read_codex_oauth())
 
     async def stream(
         self,
@@ -278,35 +275,109 @@ class OllamaProvider(Provider):
 # ─── Keychain helpers ─────────────────────────────────────────────
 
 
-def _read_keychain_oauth() -> str:
-    """Read Claude Code's OAuth token from macOS Keychain."""
+def _read_keychain_service(service: str) -> str:
+    """Read a value from macOS Keychain by service name."""
     if sys.platform != "darwin":
         return ""
     try:
-        # Claude Code stores tokens under this service name
-        username = os.environ.get("USER", "")
-        for service in ["claude-code-credentials", "claude.ai-credentials"]:
-            try:
-                result = subprocess.run(
-                    ["security", "find-generic-password", "-a", username, "-w", "-s", service],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    raw = result.stdout.strip()
-                    # Parse JSON to get accessToken
-                    try:
-                        data = json.loads(raw)
-                        token = data.get("claudeAiOauth", {}).get("accessToken", "")
-                        if token:
-                            return token
-                    except json.JSONDecodeError:
-                        # Might be a raw token
-                        if len(raw) > 20:
-                            return raw
-            except Exception:
-                continue
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
     except Exception:
         pass
+    return ""
+
+
+def read_claude_oauth() -> str:
+    """Read Claude Code's OAuth access token.
+
+    Sources (in order):
+    1. CLAUDE_CODE_OAUTH_TOKEN env var
+    2. ANTHROPIC_API_KEY env var
+    3. macOS Keychain "Claude Code-credentials" (plain JSON, not encrypted)
+    """
+    # Env vars first
+    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if token:
+        return token
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return api_key
+
+    # Keychain: "Claude Code-credentials" stores plain JSON with OAuth tokens
+    raw = _read_keychain_service("Claude Code-credentials")
+    if raw:
+        try:
+            data = json.loads(raw)
+            token = data.get("claudeAiOauth", {}).get("accessToken", "")
+            if token:
+                return token
+        except json.JSONDecodeError:
+            pass
+    return ""
+
+
+def read_codex_oauth() -> str:
+    """Read Codex/OpenAI OAuth access token.
+
+    Sources (in order):
+    1. OPENAI_API_KEY env var
+    2. ~/.codex/auth.json (contains OAuth tokens from ChatGPT login)
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if api_key:
+        return api_key
+
+    # Codex stores auth in ~/.codex/auth.json
+    auth_file = Path.home() / ".codex" / "auth.json"
+    if auth_file.exists():
+        try:
+            data = json.loads(auth_file.read_text(encoding="utf-8"))
+            # Direct API key
+            key = data.get("OPENAI_API_KEY", "")
+            if key:
+                return key
+            # OAuth tokens (from ChatGPT login)
+            tokens = data.get("tokens", {})
+            access = tokens.get("access_token", "")
+            if access:
+                return access
+        except (json.JSONDecodeError, OSError):
+            pass
+    return ""
+
+
+def read_hermes_key() -> str:
+    """Read Hermes agent API key (typically OpenRouter).
+
+    Sources (in order):
+    1. OPENROUTER_API_KEY env var
+    2. ~/.hermes/.env file
+    3. ~/.hermes/config.yaml
+    """
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if key:
+        return key
+
+    # Check .env file
+    env_file = Path.home() / ".hermes" / ".env"
+    if env_file.exists():
+        try:
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k, v = k.strip(), v.strip()
+                if k == "OPENROUTER_API_KEY" and v:
+                    return v
+                if k == "ANTHROPIC_API_KEY" and v:
+                    return v
+        except OSError:
+            pass
     return ""
 
 
