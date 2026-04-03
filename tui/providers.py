@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""LACP Provider Abstraction — unified interface for multiple LLM providers.
+
+Supports: Anthropic (Claude), OpenAI (GPT/o-series), Google (Gemini), Ollama (local).
+Auth: API keys via env vars, OAuth tokens via env or macOS Keychain.
+
+Usage:
+    from providers import create_provider, list_providers
+
+    provider = create_provider("anthropic", model="claude-sonnet-4-20250514")
+    async for chunk in provider.stream("Hello world"):
+        print(chunk, end="")
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+# Add automation scripts to path for provider_router
+sys.path.insert(0, str(Path(__file__).parent.parent / "automation" / "scripts"))
+
+
+@dataclass
+class Message:
+    role: str       # "user", "assistant", "system"
+    content: str
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass
+class ToolResult:
+    tool_call_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclass
+class StreamEvent:
+    type: str           # "text", "tool_use", "done", "error"
+    text: str = ""
+    tool_call: ToolCall | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+
+
+class Provider(ABC):
+    """Base class for LLM providers."""
+
+    name: str
+    model: str
+
+    @abstractmethod
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream a response. Yields StreamEvents."""
+        ...
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Check if this provider has valid credentials."""
+        ...
+
+
+class AnthropicProvider(Provider):
+    """Anthropic Claude provider via official SDK."""
+
+    name = "anthropic"
+
+    def __init__(self, model: str = "claude-sonnet-4-20250514"):
+        self.model = model
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import anthropic
+            # Try OAuth token first, then API key
+            token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+            if not token and not api_key:
+                # Try reading from macOS Keychain (Claude Code's storage)
+                token = _read_keychain_oauth()
+
+            if token:
+                self._client = anthropic.Anthropic(
+                    api_key="placeholder",  # SDK requires this field
+                    default_headers={"Authorization": f"Bearer {token}"},
+                )
+            elif api_key:
+                self._client = anthropic.Anthropic(api_key=api_key)
+            else:
+                raise RuntimeError(
+                    "No Anthropic credentials found. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"
+                )
+        return self._client
+
+    def is_available(self) -> bool:
+        try:
+            self._get_client()
+            return True
+        except Exception:
+            return False
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._get_client()
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "messages": messages,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = tools
+
+        with client.messages.stream(**kwargs) as stream:
+            for event in stream:
+                if hasattr(event, "type"):
+                    if event.type == "content_block_delta":
+                        delta = event.delta
+                        if hasattr(delta, "text"):
+                            yield StreamEvent(type="text", text=delta.text)
+                        elif hasattr(delta, "partial_json"):
+                            yield StreamEvent(type="text", text=delta.partial_json)
+                    elif event.type == "content_block_start":
+                        block = event.content_block
+                        if hasattr(block, "type") and block.type == "tool_use":
+                            yield StreamEvent(
+                                type="tool_use",
+                                tool_call=ToolCall(id=block.id, name=block.name, input={}),
+                            )
+                    elif event.type == "message_stop":
+                        msg = stream.get_final_message()
+                        yield StreamEvent(
+                            type="done",
+                            usage={
+                                "input_tokens": msg.usage.input_tokens,
+                                "output_tokens": msg.usage.output_tokens,
+                            },
+                        )
+
+
+class OpenAIProvider(Provider):
+    """OpenAI GPT/o-series provider."""
+
+    name = "openai"
+
+    def __init__(self, model: str = "gpt-4.1"):
+        self.model = model
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            import openai
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("No OpenAI credentials. Set OPENAI_API_KEY")
+            self._client = openai.OpenAI(api_key=api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return bool(os.environ.get("OPENAI_API_KEY"))
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        client = self._get_client()
+
+        oai_messages = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+        oai_messages.extend(messages)
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": oai_messages,
+            "stream": True,
+        }
+
+        stream = client.chat.completions.create(**kwargs)
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield StreamEvent(type="text", text=delta.content)
+            if chunk.usage:
+                yield StreamEvent(
+                    type="done",
+                    usage={
+                        "input_tokens": chunk.usage.prompt_tokens or 0,
+                        "output_tokens": chunk.usage.completion_tokens or 0,
+                    },
+                )
+
+
+class OllamaProvider(Provider):
+    """Local Ollama provider."""
+
+    name = "ollama"
+
+    def __init__(self, model: str = "llama3.1:8b"):
+        self.model = model
+        self.host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+    def is_available(self) -> bool:
+        import urllib.request
+        try:
+            urllib.request.urlopen(f"{self.host}/api/version", timeout=2)
+            return True
+        except Exception:
+            return False
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        import urllib.request
+
+        oai_messages = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+        oai_messages.extend(messages)
+
+        payload = json.dumps({
+            "model": self.model,
+            "messages": oai_messages,
+            "stream": True,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self.host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for line in resp:
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    msg = data.get("message", {})
+                    content = msg.get("content", "")
+                    if content:
+                        yield StreamEvent(type="text", text=content)
+                    if data.get("done"):
+                        yield StreamEvent(type="done")
+                except json.JSONDecodeError:
+                    continue
+
+
+# ─── Keychain helpers ─────────────────────────────────────────────
+
+
+def _read_keychain_oauth() -> str:
+    """Read Claude Code's OAuth token from macOS Keychain."""
+    if sys.platform != "darwin":
+        return ""
+    try:
+        # Claude Code stores tokens under this service name
+        username = os.environ.get("USER", "")
+        for service in ["claude-code-credentials", "claude.ai-credentials"]:
+            try:
+                result = subprocess.run(
+                    ["security", "find-generic-password", "-a", username, "-w", "-s", service],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    raw = result.stdout.strip()
+                    # Parse JSON to get accessToken
+                    try:
+                        data = json.loads(raw)
+                        token = data.get("claudeAiOauth", {}).get("accessToken", "")
+                        if token:
+                            return token
+                    except json.JSONDecodeError:
+                        # Might be a raw token
+                        if len(raw) > 20:
+                            return raw
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ""
+
+
+# ─── Factory ──────────────────────────────────────────────────────
+
+
+PROVIDERS = {
+    "anthropic": AnthropicProvider,
+    "openai": OpenAIProvider,
+    "ollama": OllamaProvider,
+}
+
+# Model → provider mapping (from provider_router)
+MODEL_PROVIDERS = {
+    "opus": ("anthropic", "claude-opus-4-20250514"),
+    "sonnet": ("anthropic", "claude-sonnet-4-20250514"),
+    "haiku": ("anthropic", "claude-haiku-4-5-20251001"),
+    "o3": ("openai", "o3"),
+    "o4-mini": ("openai", "o4-mini"),
+    "gpt-4.1": ("openai", "gpt-4.1"),
+    "llama": ("ollama", "llama3.1:8b"),
+    "qwen": ("ollama", "qwen2.5:72b"),
+}
+
+
+def create_provider(provider_name: str = "anthropic", model: str = "") -> Provider:
+    """Create a provider instance. Accepts shorthand model names."""
+    # Check if model is a shorthand alias
+    if model in MODEL_PROVIDERS:
+        resolved_provider, resolved_model = MODEL_PROVIDERS[model]
+        provider_name = resolved_provider
+        model = resolved_model
+
+    cls = PROVIDERS.get(provider_name)
+    if cls is None:
+        raise ValueError(f"Unknown provider: {provider_name}. Available: {list(PROVIDERS.keys())}")
+
+    return cls(model=model) if model else cls()
+
+
+def list_providers() -> list[dict[str, Any]]:
+    """List all providers with availability status."""
+    result = []
+    for name, cls in PROVIDERS.items():
+        try:
+            instance = cls()
+            available = instance.is_available()
+        except Exception:
+            available = False
+        result.append({"name": name, "available": available})
+    return result
