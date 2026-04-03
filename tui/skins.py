@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import re as _re_module
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,15 +49,15 @@ DEFAULTS = {
         "agent_name": "LACP",
         "tagline": "Local Agent Control Plane",
         "welcome": "Control Plane active.",
-        "prompt_symbol": "⚡ ❯ ",
-        "response_label": " ⚡ LACP ",
+        "prompt_symbol": "\u26a1 \u276f ",
+        "response_label": " \u26a1 LACP ",
         "goodbye": "Session complete.",
-        "help_header": "⚡ Commands",
+        "help_header": "\u26a1 Commands",
     },
     "spinner": {
-        "thinking_faces": ["◐", "◓", "◑", "◒"],
+        "thinking_faces": ["\u25d0", "\u25d3", "\u25d1", "\u25d2"],
         "thinking_verbs": ["reasoning", "analyzing", "synthesizing"],
-        "wings": [["⟪⚡", "⚡⟫"]],
+        "wings": [["\u27ea\u26a1", "\u26a1\u27eb"]],
     },
     "provider_badges": {
         "anthropic": "[bold #a67df4]anthropic[/]",
@@ -82,7 +83,7 @@ def _parse_yaml(text: str) -> dict[str, Any]:
         # Handle multiline blocks (|)
         if in_multiline:
             if raw_line and (raw_line[0] == " " or raw_line.strip() == ""):
-                multiline_lines.append(raw_line)
+                multiline_lines.append(raw_line)  # preserve raw line in multiline
                 continue
             else:
                 # End of multiline block
@@ -96,9 +97,11 @@ def _parse_yaml(text: str) -> dict[str, Any]:
                 in_multiline = False
                 multiline_lines = []
 
-        stripped = raw_line.split("#")[0].rstrip() if not raw_line.strip().startswith("#") else ""
+        # Skip full-line comments
         if raw_line.strip().startswith("#"):
             continue
+        # Strip inline comments (space + # + space) but preserve #hex colors and Rich markup
+        stripped = _re_module.sub(r'(?<=["\s])\s+#\s+.*$', '', raw_line).rstrip()
         if not stripped:
             continue
 
@@ -181,6 +184,7 @@ def _parse_yaml(text: str) -> dict[str, Any]:
 
 def _parse_value(v: str) -> Any:
     v = v.strip()
+    # Strip outer quotes but preserve inner content (including Rich markup)
     for q in ('"', "'"):
         if v.startswith(q) and v.endswith(q):
             return v[1:-1]
