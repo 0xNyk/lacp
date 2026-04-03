@@ -26,9 +26,16 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Footer, Input, Markdown, Static
 
-# Add project paths
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "automation" / "scripts"))
+# Add project root to path so both `tui.X` and direct imports work
+_LACP_ROOT = str(Path(__file__).parent.parent)
+if _LACP_ROOT not in sys.path:
+    sys.path.insert(0, _LACP_ROOT)
+_TUI_DIR = str(Path(__file__).parent)
+if _TUI_DIR not in sys.path:
+    sys.path.insert(0, _TUI_DIR)
+_SCRIPTS_DIR = str(Path(__file__).parent.parent / "automation" / "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 from providers import (
     AnthropicProvider,
@@ -42,15 +49,15 @@ from providers import (
     read_codex_oauth,
 )
 from skins import Skin, load_skin, list_skins
-from tui.tools import TOOL_REGISTRY, execute_tool, get_tool_definitions
-from tui.sessions import (
+from tools import TOOL_REGISTRY, execute_tool, get_tool_definitions
+from sessions import (
     auto_save_session,
     generate_session_id,
     get_latest_session,
     list_sessions,
     load_session,
 )
-from tui.mcp import MCPManager
+from mcp import MCPManager
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
