@@ -41,6 +41,7 @@ from providers import (
     read_claude_oauth,
     read_codex_oauth,
 )
+from skins import Skin, load_skin, list_skins
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -98,6 +99,7 @@ HELP_TEXT = """## LACP REPL Commands
 | `/save [path]` | Save conversation to file |
 | `/system` | Show current system prompt |
 | `/tokens` | Show token usage for this session |
+| `/skin [name]` | Switch visual skin (list available) |
 | `/help` | Show this help |
 | `/quit` | Exit REPL |
 """
@@ -109,9 +111,17 @@ HELP_TEXT = """## LACP REPL Commands
 class StatusBar(Static):
     """Top status bar showing provider/model/tokens."""
 
-    def update_status(self, provider: str, model: str, tokens: int = 0, cost: float = 0.0) -> None:
+    def update_status(
+        self, provider: str, model: str, tokens: int = 0,
+        cost: float = 0.0, skin: Skin | None = None, elapsed: float = 0.0,
+    ) -> None:
+        badge = skin.badge(provider) if skin else provider
+        mins = int(elapsed // 60)
+        secs = int(elapsed % 60)
+        time_str = f"{mins}:{secs:02d}"
         self.update(
-            f" ⚡ LACP v{VERSION}  │  {provider}/{model}  │  tokens: {tokens:,}  │  ${cost:.4f}"
+            f" ⚡ LACP v{VERSION}  │  {badge} [bold]{model}[/]  │  "
+            f"tokens: {tokens:,}  │  ${cost:.4f}  │  {time_str}"
         )
 
 
@@ -188,21 +198,24 @@ class LACPRepl(App):
         Binding("ctrl+m", "switch_model", "Model", show=False),
     ]
 
-    def __init__(self, model: str = "sonnet", **kwargs: Any):
+    def __init__(self, model: str = "sonnet", skin_name: str = "", **kwargs: Any):
         super().__init__(**kwargs)
         self.initial_model = model
+        self.skin = load_skin(skin_name)
         self.provider: Provider | None = None
         self.messages: list[dict[str, Any]] = []
         self.system_prompt = ""
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.streaming_content = ""
+        self.session_start = time.time()
 
     def compose(self) -> ComposeResult:
         yield StatusBar(id="status")
         yield MessageDisplay(id="messages")
         with Vertical(id="input-area"):
-            yield Input(placeholder="Message LACP... (type /help for commands)", id="prompt")
+            prompt_symbol = self.skin.brand("prompt_symbol") or "⚡ ❯ "
+            yield Input(placeholder=f"{prompt_symbol}Message LACP... (/help for commands)", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -219,16 +232,41 @@ class LACPRepl(App):
         # Update status bar
         self._update_status()
 
-        # Welcome message
+        # Welcome banner
         msgs = self.query_one("#messages", MessageDisplay)
         available = list_providers()
         available_names = [p["name"] for p in available if p["available"]]
-        msgs.add_message(
-            "system",
-            f"LACP v{VERSION} — connected to {self.provider.name}/{self.provider.model}\n"
-            f"Providers available: {', '.join(available_names)}\n"
-            f"Type /help for commands, /model <name> to switch models"
+
+        # Build welcome with ASCII art
+        welcome_parts = []
+
+        # Side-by-side logo + hero
+        logo = self.skin.banner_logo.strip()
+        hero = self.skin.banner_hero.strip()
+        if logo and hero:
+            logo_lines = logo.split("\n")
+            hero_lines = hero.split("\n")
+            max_logo_width = max((len(l.replace("[", "").replace("]", "").split("/")[0]) for l in logo_lines), default=40)
+            combined = []
+            for i in range(max(len(logo_lines), len(hero_lines))):
+                l = logo_lines[i] if i < len(logo_lines) else ""
+                h = hero_lines[i] if i < len(hero_lines) else ""
+                combined.append(f"{l}  {h}")
+            welcome_parts.append("\n".join(combined))
+        elif logo:
+            welcome_parts.append(logo)
+
+        welcome_parts.append(
+            f"\n  v{VERSION} │ {self.skin.brand('tagline')}"
+            f"\n  {self.skin.badge(self.provider.name)} {self.provider.model}"
+            f"\n  Providers: {', '.join(available_names)}"
+            f"\n\n  {self.skin.brand('welcome')}"
+            f"\n  Type /help for commands, /model <name> to switch"
         )
+
+        # Mount as Rich-formatted Static for color support
+        banner_widget = Static("\n".join(welcome_parts), markup=True)
+        msgs.mount(banner_widget)
 
         # Focus input
         self.query_one("#prompt", Input).focus()
@@ -236,11 +274,14 @@ class LACPRepl(App):
     def _update_status(self) -> None:
         if self.provider:
             cost = self._estimate_cost()
+            elapsed = time.time() - self.session_start
             self.query_one("#status", StatusBar).update_status(
                 self.provider.name,
                 self.provider.model,
                 self.total_input_tokens + self.total_output_tokens,
                 cost,
+                skin=self.skin,
+                elapsed=elapsed,
             )
 
     def _estimate_cost(self) -> float:
@@ -349,6 +390,20 @@ class LACPRepl(App):
             except Exception as e:
                 msgs.add_message("system", f"Error saving: {e}")
 
+        elif cmd == "/skin":
+            if not arg:
+                skins = list_skins()
+                lines = [f"Current skin: {self.skin.name}", ""]
+                for s in skins:
+                    current = " ← active" if s["name"] == self.skin.name else ""
+                    lines.append(f"  {s['name']:20s} {s['description'][:40]}{current}")
+                lines.append("\nUsage: /skin <name>")
+                msgs.add_message("system", "\n".join(lines))
+            else:
+                self.skin = load_skin(arg)
+                msgs.add_message("system", f"Skin switched to: {self.skin.name} — {self.skin.description}")
+                self._update_status()
+
         else:
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")
 
@@ -411,9 +466,10 @@ def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="LACP REPL — multi-provider agent session")
     parser.add_argument("--model", default="sonnet", help="Initial model (default: sonnet)")
+    parser.add_argument("--skin", default="", help="Visual skin (default, cyberpunk, minimal)")
     args = parser.parse_args()
 
-    app = LACPRepl(model=args.model)
+    app = LACPRepl(model=args.model, skin_name=args.skin)
     app.run()
 
 

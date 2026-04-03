@@ -1,0 +1,68 @@
+name: lacp-default
+description: "Electric blue control plane — clean, professional"
+
+colors:
+  banner_border: "#00d4ff"
+  banner_title: "#ffffff"
+  banner_accent: "#00aaff"
+  banner_dim: "#555566"
+  status_bg: "#16213e"
+  status_text: "#00d4ff"
+  status_accent: "#ffffff"
+  user_label: "#00d4ff"
+  assistant_label: "#aa88ff"
+  assistant_border: "#333366"
+  prompt_border: "#00aaff"
+  system_text: "#666688"
+  ok: "#4caf50"
+  error: "#ef5350"
+  warn: "#ffa726"
+
+branding:
+  agent_name: "LACP"
+  tagline: "Local Agent Control Plane"
+  welcome: "Control Plane active. All providers connected."
+  prompt_symbol: "⚡ ❯ "
+  response_label: " ⚡ LACP "
+  goodbye: "Session complete. Stay sharp."
+  help_header: "⚡ LACP Commands"
+
+spinner:
+  thinking_faces:
+    - "◐"
+    - "◓"
+    - "◑"
+    - "◒"
+  thinking_verbs:
+    - reasoning
+    - analyzing
+    - synthesizing
+    - connecting
+    - evaluating
+  wings:
+    - ["⟪⚡", "⚡⟫"]
+
+provider_badges:
+  anthropic: "[bold #a67df4]anthropic[/]"
+  openai: "[bold #4ade80]openai[/]"
+  ollama: "[bold #f97316]ollama[/]"
+  google: "[bold #4285f4]google[/]"
+
+banner_logo: |
+  [bold #00d4ff]██╗      █████╗  ██████╗██████╗
+  ██║     ██╔══██╗██╔════╝██╔══██╗
+  ██║     ███████║██║     ██████╔╝
+  ██║     ██╔══██║██║     ██╔═══╝
+  ███████╗██║  ██║╚██████╗██║
+  ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝[/]
+
+banner_hero: |
+  [#00d4ff]⠀⠀⠀⠀⠀⣠⣴⣶⣶⣶⣦⣄⠀⠀⠀⠀⠀
+  ⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣿⣦⠀⠀⠀
+  ⠀⠀⣼⣿⡟⠀⠀⠀⠀⠀⢻⣿⣧⠀⠀
+  ⠀⢸⣿⡟⠀⠀⣠⣤⡀⠀⠀⢻⣿⡆⠀
+  ⠀⢸⣿⡇⠀⢰⣿⣿⡇⠀⠀⢸⣿⡇⠀
+  ⠀⠘⣿⣧⡀⠈⠻⠟⠁⠀⢀⣼⣿⠃⠀
+  ⠀⠀⠻⣿⣿⣶⣤⣤⣶⣿⣿⠟⠀⠀
+  ⠀⠀⠀⠀⠉⠛⠛⠛⠛⠉⠀⠀⠀⠀
+  ⠀⠀ control.plane.active ⠀⠀[/]
