@@ -368,6 +368,88 @@ TOOL_REGISTRY: dict[str, Tool] = {
 }
 
 
+def _handle_delegate(params: dict[str, Any]) -> str:
+    """Delegate a task to an external agent CLI (claude, codex, hermes, etc.)."""
+    agent = params.get("agent", "claude")
+    task = params.get("task", "")
+    if not task:
+        return json.dumps({"error": "No task provided"})
+
+    # Map agent names to CLI commands
+    agent_cmds = {
+        "claude": ["claude", "-p", task],
+        "codex": ["codex", "exec", task],
+        "hermes": ["hermes", "--print", task],
+        "gemini": ["gemini", "-p", task],
+        "aider": ["aider", "--message", task],
+    }
+
+    cmd = agent_cmds.get(agent)
+    if not cmd:
+        return json.dumps({"error": f"Unknown agent: {agent}. Available: {list(agent_cmds.keys())}"})
+
+    # Check if agent binary exists
+    binary = cmd[0]
+    native = Path.home() / ".local" / "bin" / f"{binary}.native"
+    if native.exists():
+        cmd[0] = str(native)
+    else:
+        import shutil
+        found = shutil.which(binary)
+        if not found:
+            return json.dumps({"error": f"Agent '{agent}' not found in PATH"})
+        cmd[0] = found
+
+    timeout = min(params.get("timeout", 120), 300)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=os.getcwd(),
+            env={**os.environ, "LACP_BYPASS": "1"},  # skip LACP wrapper
+        )
+        output = result.stdout
+        if result.stderr:
+            output += f"\n[stderr]: {result.stderr[:5000]}"
+
+        # Truncate
+        if len(output) > 50000:
+            output = output[:20000] + f"\n\n... (truncated) ...\n\n" + output[-20000:]
+
+        return json.dumps({
+            "agent": agent,
+            "exit_code": result.returncode,
+            "output": output,
+        })
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": f"Agent '{agent}' timed out after {timeout}s"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+TOOL_REGISTRY["delegate"] = Tool(
+    name="delegate",
+    description="Delegate a complex task to an external agent (claude, codex, hermes, gemini, aider). Use for multi-file refactors, autonomous coding, or tasks that need a full agent runtime.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "agent": {
+                "type": "string",
+                "description": "Agent to delegate to (claude, codex, hermes, gemini, aider)",
+                "default": "claude",
+            },
+            "task": {"type": "string", "description": "Task description for the agent"},
+            "timeout": {"type": "integer", "description": "Timeout in seconds (max 300)", "default": 120},
+        },
+        "required": ["task"],
+    },
+    handler=_handle_delegate,
+)
+
+
 def get_tool_definitions() -> list[dict[str, Any]]:
     """Get Anthropic-format tool definitions for all registered tools."""
     return [

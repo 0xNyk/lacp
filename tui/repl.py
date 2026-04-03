@@ -43,6 +43,13 @@ from providers import (
 )
 from skins import Skin, load_skin, list_skins
 from tui.tools import TOOL_REGISTRY, execute_tool, get_tool_definitions
+from tui.sessions import (
+    auto_save_session,
+    generate_session_id,
+    get_latest_session,
+    list_sessions,
+    load_session,
+)
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -101,6 +108,9 @@ HELP_TEXT = """## LACP REPL Commands
 | `/system` | Show current system prompt |
 | `/tokens` | Show token usage for this session |
 | `/skin [name]` | Switch visual skin (list available) |
+| `/sessions` | List recent sessions |
+| `/resume [id]` | Resume a previous session |
+| `/delegate <agent> <task>` | Delegate task to external agent |
 | `/help` | Show this help |
 | `/quit` | Exit REPL |
 """
@@ -207,7 +217,7 @@ class LACPRepl(App):
         Binding("ctrl+m", "switch_model", "Model", show=False),
     ]
 
-    def __init__(self, model: str = "sonnet", skin_name: str = "", **kwargs: Any):
+    def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
         super().__init__(**kwargs)
         self.initial_model = model
         self.skin = load_skin(skin_name)
@@ -218,6 +228,8 @@ class LACPRepl(App):
         self.total_output_tokens = 0
         self.streaming_content = ""
         self.session_start = time.time()
+        self.session_id = generate_session_id()
+        self.resume_id = resume
 
     def compose(self) -> ComposeResult:
         yield StatusBar(id="status")
@@ -281,6 +293,25 @@ class LACPRepl(App):
 
         banner_widget = Static(banner_text, markup=True)
         msgs.mount(banner_widget)
+
+        # Resume previous session if requested
+        if self.resume_id:
+            resume_target = self.resume_id
+            if resume_target == "latest":
+                resume_target = get_latest_session() or ""
+            if resume_target:
+                loaded_msgs, meta = load_session(resume_target)
+                if loaded_msgs:
+                    self.messages = loaded_msgs
+                    self.session_id = resume_target
+                    msgs.add_message("system",
+                        f"Resumed session {resume_target} ({len(loaded_msgs)} messages)")
+                    # Replay last few messages in display
+                    for msg in loaded_msgs[-4:]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if isinstance(content, str) and role in ("user", "assistant"):
+                            msgs.add_message(role, content[:500])
 
         # Focus input
         self.query_one("#prompt", Input).focus()
@@ -404,6 +435,55 @@ class LACPRepl(App):
             except Exception as e:
                 msgs.add_message("system", f"Error saving: {e}")
 
+        elif cmd == "/sessions":
+            sessions = list_sessions(limit=10)
+            if not sessions:
+                msgs.add_message("system", "No saved sessions.")
+            else:
+                lines = ["Recent sessions:", ""]
+                for s in sessions:
+                    sid = s.get("session_id", "?")
+                    size = s.get("size", 0)
+                    count = s.get("message_count", "?")
+                    provider = s.get("provider", "?")
+                    lines.append(f"  {sid}  {count} msgs  {size//1024}KB  {provider}")
+                lines.append(f"\nCurrent: {self.session_id}")
+                lines.append("Resume: /resume <session_id> or /resume latest")
+                msgs.add_message("system", "\n".join(lines))
+
+        elif cmd == "/resume":
+            target = arg or "latest"
+            if target == "latest":
+                target = get_latest_session() or ""
+            if not target:
+                msgs.add_message("system", "No sessions to resume.")
+                return
+            loaded_msgs, meta = load_session(target)
+            if loaded_msgs:
+                self.messages = loaded_msgs
+                self.session_id = target
+                msgs.add_message("system", f"Resumed {target} ({len(loaded_msgs)} msgs)")
+            else:
+                msgs.add_message("system", f"Session not found: {target}")
+
+        elif cmd == "/delegate":
+            if not arg:
+                msgs.add_message("system", "Usage: /delegate <agent> <task>\nAgents: claude, codex, hermes, gemini, aider")
+                return
+            parts_d = arg.split(None, 1)
+            if len(parts_d) == 1:
+                d_agent, d_task = "claude", parts_d[0]
+            else:
+                d_agent, d_task = parts_d[0], parts_d[1]
+            msgs.add_message("system", f"Delegating to {d_agent}: {d_task[:80]}...")
+            result = execute_tool("delegate", {"agent": d_agent, "task": d_task})
+            try:
+                data = json.loads(result)
+                output = data.get("output", data.get("error", "no output"))
+                msgs.add_message("system", f"{d_agent} result:\n{output[:2000]}")
+            except (json.JSONDecodeError, TypeError):
+                msgs.add_message("system", f"{d_agent} result:\n{result[:2000]}")
+
         elif cmd == "/skin":
             if not arg:
                 skins = list_skins()
@@ -506,10 +586,18 @@ class LACPRepl(App):
                         pass
                 self.call_from_thread(remove_ph)
 
-            # If no tool calls, we're done — add assistant message and break
+            # If no tool calls, we're done — add assistant message, auto-save, break
             if not pending_tool_calls:
                 if final_content:
                     self.messages.append({"role": "assistant", "content": final_content})
+                # Auto-save session
+                auto_save_session(
+                    self.session_id,
+                    self.messages,
+                    provider_name=self.provider.name if self.provider else "",
+                    model=self.provider.model if self.provider else "",
+                    total_tokens=self.total_input_tokens + self.total_output_tokens,
+                )
                 def update_ui() -> None:
                     self._update_status()
                 self.call_from_thread(update_ui)
@@ -565,9 +653,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="LACP REPL — multi-provider agent session")
     parser.add_argument("--model", default="sonnet", help="Initial model (default: sonnet)")
     parser.add_argument("--skin", default="", help="Visual skin (default, cyberpunk, minimal)")
+    parser.add_argument("--resume", default="", nargs="?", const="latest",
+                       help="Resume session (ID or 'latest')")
     args = parser.parse_args()
 
-    app = LACPRepl(model=args.model, skin_name=args.skin)
+    app = LACPRepl(model=args.model, skin_name=args.skin, resume=args.resume or "")
     app.run()
 
 
