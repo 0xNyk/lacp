@@ -82,7 +82,7 @@ def _parse_yaml(text: str) -> dict[str, Any]:
         # Handle multiline blocks (|)
         if in_multiline:
             if raw_line and (raw_line[0] == " " or raw_line.strip() == ""):
-                multiline_lines.append(raw_line)
+                multiline_lines.append(raw_line)  # preserve raw line in multiline
                 continue
             else:
                 # End of multiline block
@@ -96,9 +96,12 @@ def _parse_yaml(text: str) -> dict[str, Any]:
                 in_multiline = False
                 multiline_lines = []
 
-        stripped = raw_line.split("#")[0].rstrip() if not raw_line.strip().startswith("#") else ""
+        # Skip full-line comments
         if raw_line.strip().startswith("#"):
             continue
+        # Strip inline comments (space + #) but preserve #hex colors and Rich markup
+        import re as _re
+        stripped = _re.sub(r'(?<=["\s])\s+#\s+.*$', '', raw_line).rstrip()
         if not stripped:
             continue
 
@@ -181,6 +184,7 @@ def _parse_yaml(text: str) -> dict[str, Any]:
 
 def _parse_value(v: str) -> Any:
     v = v.strip()
+    # Strip outer quotes but preserve inner content (including Rich markup)
     for q in ('"', "'"):
         if v.startswith(q) and v.endswith(q):
             return v[1:-1]
