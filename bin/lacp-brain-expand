@@ -359,6 +359,17 @@ else
   log_step "WARN" "detect_knowledge_gaps" "missing ${SCRIPTS_DIR}/detect_knowledge_gaps.py"
 fi
 
+# 7.55) Wiki compiler — rewrite raw signals into clean wiki articles (Karpathy pattern)
+if [[ -f "${SCRIPTS_DIR}/compile_wiki.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "compile_wiki" python3 "${SCRIPTS_DIR}/compile_wiki.py" --apply --max-items 10
+  else
+    run_step_soft "compile_wiki" python3 "${SCRIPTS_DIR}/compile_wiki.py" --dry-run
+  fi
+else
+  log_step "WARN" "compile_wiki" "missing ${SCRIPTS_DIR}/compile_wiki.py"
+fi
+
 # 7.6) Active Recall Probes (test actual retrievability before review queue)
 if [[ -f "${SCRIPTS_DIR}/active_recall_probes.py" ]]; then
   PROBE_ARGS=(--threshold 0.3 --max-items 100)
