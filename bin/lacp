@@ -125,13 +125,18 @@ EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  # No args: launch optimized agent session stream
-  exec "${ROOT}/bin/lacp-stream"
+  # No args: launch LACP native REPL
+  exec python3 "${ROOT}/tui/repl.py"
 fi
 
-# Stream/session flags → forward to lacp-stream
+# REPL with model flag
+if [[ "$1" == "--model" && $# -ge 2 ]]; then
+  exec python3 "${ROOT}/tui/repl.py" --model "$2"
+fi
+
+# Stream/session flags → forward to lacp-stream (legacy agent exec)
 case "$1" in
-  --mode|--resume|--agent|--bypass|--print|--profile|--model|--no-banner)
+  --resume|--agent|--bypass|--print|--profile|--no-banner)
     exec "${ROOT}/bin/lacp-stream" "$@"
     ;;
 esac
