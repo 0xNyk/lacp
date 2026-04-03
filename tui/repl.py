@@ -119,8 +119,16 @@ class StatusBar(Static):
         mins = int(elapsed // 60)
         secs = int(elapsed % 60)
         time_str = f"{mins}:{secs:02d}"
+        # Short model name for display
+        short_model = model
+        for prefix in ("claude-", "gpt-", "gemini-"):
+            if short_model.startswith(prefix):
+                short_model = short_model[len(prefix):]
+        # Remove date suffixes like -20250514
+        if len(short_model) > 15 and short_model[-8:].isdigit():
+            short_model = short_model[:-9]
         self.update(
-            f" ⚡ LACP v{VERSION}  │  {badge} [bold]{model}[/]  │  "
+            f" ⚡ LACP v{VERSION}  │  {badge} [bold]{short_model}[/]  │  "
             f"tokens: {tokens:,}  │  ${cost:.4f}  │  {time_str}"
         )
 
@@ -237,35 +245,40 @@ class LACPRepl(App):
         available = list_providers()
         available_names = [p["name"] for p in available if p["available"]]
 
-        # Build welcome with ASCII art
-        welcome_parts = []
-
-        # Side-by-side logo + hero
+        # Build compact welcome banner
         logo = self.skin.banner_logo.strip()
         hero = self.skin.banner_hero.strip()
-        if logo and hero:
-            logo_lines = logo.split("\n")
-            hero_lines = hero.split("\n")
-            max_logo_width = max((len(l.replace("[", "").replace("]", "").split("/")[0]) for l in logo_lines), default=40)
-            combined = []
-            for i in range(max(len(logo_lines), len(hero_lines))):
-                l = logo_lines[i] if i < len(logo_lines) else ""
-                h = hero_lines[i] if i < len(hero_lines) else ""
-                combined.append(f"{l}  {h}")
-            welcome_parts.append("\n".join(combined))
-        elif logo:
-            welcome_parts.append(logo)
 
-        welcome_parts.append(
-            f"\n  v{VERSION} │ {self.skin.brand('tagline')}"
-            f"\n  {self.skin.badge(self.provider.name)} {self.provider.model}"
-            f"\n  Providers: {', '.join(available_names)}"
-            f"\n\n  {self.skin.brand('welcome')}"
-            f"\n  Type /help for commands, /model <name> to switch"
+        # Provider status line with checkmarks
+        provider_line = "  "
+        for p in available:
+            icon = "[green]✓[/]" if p["available"] else "[dim]✗[/]"
+            name = p["name"]
+            if self.provider and name == self.provider.name:
+                provider_line += f"{icon} [bold]{name}[/]  "
+            else:
+                provider_line += f"{icon} {name}  "
+
+        # Short model name
+        short_model = self.provider.model
+        for prefix in ("claude-", "gpt-", "gemini-"):
+            if short_model.startswith(prefix):
+                short_model = short_model[len(prefix):]
+        if len(short_model) > 15 and short_model[-8:].isdigit():
+            short_model = short_model[:-9]
+
+        banner_text = ""
+        if logo:
+            banner_text += logo + "\n"
+        banner_text += (
+            f"\n  [bold]v{VERSION}[/] │ {self.skin.brand('tagline')}"
+            f"\n{provider_line}"
+            f"\n  Model: [bold]{short_model}[/]"
+            f"\n\n  [dim]{self.skin.brand('welcome')}[/]"
+            f"\n  [dim]Type /help for commands, /model <name> to switch[/]"
         )
 
-        # Mount as Rich-formatted Static for color support
-        banner_widget = Static("\n".join(welcome_parts), markup=True)
+        banner_widget = Static(banner_text, markup=True)
         msgs.mount(banner_widget)
 
         # Focus input
