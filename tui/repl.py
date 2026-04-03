@@ -50,6 +50,7 @@ from tui.sessions import (
     list_sessions,
     load_session,
 )
+from tui.mcp import MCPManager
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -108,6 +109,7 @@ HELP_TEXT = """## LACP REPL Commands
 | `/system` | Show current system prompt |
 | `/tokens` | Show token usage for this session |
 | `/skin [name]` | Switch visual skin (list available) |
+| `/mcp` | Show MCP server status + tools |
 | `/sessions` | List recent sessions |
 | `/resume [id]` | Resume a previous session |
 | `/delegate <agent> <task>` | Delegate task to external agent |
@@ -230,6 +232,7 @@ class LACPRepl(App):
         self.session_start = time.time()
         self.session_id = generate_session_id()
         self.resume_id = resume
+        self.mcp_manager: MCPManager | None = None
 
     def compose(self) -> ComposeResult:
         yield StatusBar(id="status")
@@ -249,6 +252,26 @@ class LACPRepl(App):
                 "system", f"Error initializing provider: {e}"
             )
             return
+
+        # Start MCP servers (non-blocking, best-effort)
+        try:
+            self.mcp_manager = MCPManager()
+            # Start servers in background to avoid blocking UI
+            import threading
+            def _start_mcp():
+                self.mcp_manager.start_servers()
+                mcp_status = self.mcp_manager.status()
+                running = sum(1 for s in mcp_status.values() if s["running"])
+                total_tools = sum(s["tools"] for s in mcp_status.values())
+                if running > 0:
+                    def notify(r=running, t=total_tools):
+                        self.query_one("#messages", MessageDisplay).add_message(
+                            "system", f"MCP: {r} servers connected, {t} tools loaded"
+                        )
+                    self.call_from_thread(notify)
+            threading.Thread(target=_start_mcp, daemon=True).start()
+        except Exception:
+            self.mcp_manager = None
 
         # Update status bar
         self._update_status()
@@ -376,6 +399,16 @@ class LACPRepl(App):
         arg = parts[1] if len(parts) > 1 else ""
 
         if cmd in ("/quit", "/exit", "/q"):
+            # Save session and cleanup
+            if self.messages:
+                auto_save_session(
+                    self.session_id, self.messages,
+                    provider_name=self.provider.name if self.provider else "",
+                    model=self.provider.model if self.provider else "",
+                    total_tokens=self.total_input_tokens + self.total_output_tokens,
+                )
+            if self.mcp_manager:
+                self.mcp_manager.stop_all()
             self.exit()
 
         elif cmd == "/help":
@@ -466,6 +499,20 @@ class LACPRepl(App):
             else:
                 msgs.add_message("system", f"Session not found: {target}")
 
+        elif cmd == "/mcp":
+            if not self.mcp_manager:
+                msgs.add_message("system", "MCP not initialized")
+                return
+            status = self.mcp_manager.status()
+            lines = ["MCP Servers:", ""]
+            for name, info in status.items():
+                icon = "✅" if info["running"] else "❌"
+                tools_count = info["tools"]
+                lines.append(f"  {icon} {name:20s} {tools_count:>3d} tools  {info['command'][:40]}")
+            total = sum(info["tools"] for info in status.values() if info["running"])
+            lines.append(f"\nTotal: {total} MCP tools available")
+            msgs.add_message("system", "\n".join(lines))
+
         elif cmd == "/delegate":
             if not arg:
                 msgs.add_message("system", "Usage: /delegate <agent> <task>\nAgents: claude, codex, hermes, gemini, aider")
@@ -509,6 +556,10 @@ class LACPRepl(App):
 
         msgs = self.query_one("#messages", MessageDisplay)
         tools = get_tool_definitions()
+        # Add MCP tools if available
+        if self.mcp_manager:
+            mcp_tools = self.mcp_manager.get_tools()
+            tools.extend(mcp_tools)
         max_turns = 20  # safety limit
 
         for turn in range(max_turns):
@@ -628,8 +679,11 @@ class LACPRepl(App):
                     msgs.add_message("system", f"🔧 {name}({short_input})")
                 self.call_from_thread(show_tool)
 
-                # Execute
-                result = execute_tool(tool_name, tool_input)
+                # Execute — route MCP tools to MCP manager
+                if tool_name.startswith("mcp_") and self.mcp_manager:
+                    result = self.mcp_manager.call_tool(tool_name, tool_input)
+                else:
+                    result = execute_tool(tool_name, tool_input)
 
                 tool_results.append({
                     "type": "tool_result",
