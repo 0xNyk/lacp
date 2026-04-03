@@ -96,11 +96,14 @@ class AnthropicProvider(Provider):
                     "or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
                 )
 
-            # OAuth tokens (sk-ant-oat*) use Bearer auth
+            # OAuth tokens (sk-ant-oat*) use Bearer auth + beta header
             if token.startswith("sk-ant-oat"):
                 self._client = anthropic.Anthropic(
                     api_key="placeholder",
-                    default_headers={"Authorization": f"Bearer {token}"},
+                    default_headers={
+                        "Authorization": f"Bearer {token}",
+                        "anthropic-beta": "oauth-2025-04-20",
+                    },
                 )
             else:
                 self._client = anthropic.Anthropic(api_key=token)
