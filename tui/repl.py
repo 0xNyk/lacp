@@ -71,6 +71,7 @@ from sessions import (
     load_session,
 )
 from mcp import MCPManager
+from display import format_tool_call, format_tool_result_preview, format_thinking_status
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -161,11 +162,12 @@ class StatusBar(Static):
             short_model = short_model[:-9]
         mode_colors = {"Normal": "#666677", "Plan": "#4ade80", "Think": "#a78bfa", "YOLO": "#ef4444"}
         mode_color = mode_colors.get(mode, "#666677")
-        mcp_str = f"  │  [dim]MCP:{mcp_tools}[/]" if mcp_tools > 0 else ""
+        mcp_str = f"  [dim]MCP:{mcp_tools}[/]  │" if mcp_tools > 0 else ""
+        cost_str = f"${cost:.4f}" if cost > 0 else "$0"
         self.update(
             f" {badge} [bold]{short_model}[/]  │  "
             f"[{mode_color}]{mode}[/]  │  "
-            f"tok:{tokens:,}  │  ${cost:.4f}  │  {time_str}{mcp_str}"
+            f"{mcp_str}  tok:{tokens:,}  │  {cost_str}  │  {time_str}"
         )
 
     def update_mode(self, mode_label: str) -> None:
@@ -174,27 +176,33 @@ class StatusBar(Static):
 
 
 class ThinkingIndicator(Static):
-    """Animated thinking indicator with spinning faces and verbs."""
+    """Animated thinking indicator with spinning faces, verbs, and elapsed time."""
 
     _frame = 0
     _faces = ["◐", "◓", "◑", "◒"]
     _verb = "thinking"
     _dots = 0
     _timer = None
+    _start_time = 0.0
 
     def start(self, faces: list[str] | None = None, verb: str = "thinking") -> None:
         self._faces = faces or ["◐", "◓", "◑", "◒"]
         self._verb = verb
         self._frame = 0
         self._dots = 0
+        self._start_time = time.time()
         self._render_frame()
-        self._timer = self.set_interval(0.3, self._tick)
+        self._timer = self.set_interval(0.25, self._tick)
 
     def stop(self) -> None:
         if self._timer:
             self._timer.stop()
             self._timer = None
         self.remove()
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self._start_time if self._start_time else 0.0
 
     def _tick(self) -> None:
         self._frame = (self._frame + 1) % len(self._faces)
@@ -204,7 +212,13 @@ class ThinkingIndicator(Static):
     def _render_frame(self) -> None:
         face = self._faces[self._frame % len(self._faces)]
         dots = "." * self._dots
-        self.update(f"   [dim]{face} {self._verb}{dots}[/dim]")
+        elapsed = self.elapsed
+        # Show duration after 2s (like Claude Code)
+        if elapsed >= 2:
+            time_str = f" [dim]({elapsed:.0f}s)[/dim]"
+        else:
+            time_str = ""
+        self.update(f"   [dim]{face} {self._verb}{dots}[/dim]{time_str}")
 
 
 class MessageDisplay(VerticalScroll):
@@ -849,7 +863,7 @@ class LACPRepl(App):
                                 self.provider = test_provider
                                 self.provider._client = None  # force re-init
                                 def show_switch(p=fb_provider, m=fb_model) -> None:
-                                    msgs.add_message("system", f"⚡ Auto-switched to {p}/{m} (rate limited on previous)")
+                                    msgs.add_message("system", f"Auto-switched to [bold]{p}/{m}[/] (rate limited)")
                                     self._update_status()
                                 self.call_from_thread(show_switch)
                                 switched = True
@@ -919,17 +933,12 @@ class LACPRepl(App):
                 })
             self.messages.append({"role": "assistant", "content": content_blocks})
 
-            # Execute tools and collect results
+            # Execute tools and collect results (with hermes-style display)
             tool_results = []
             for tc in pending_tool_calls:
                 tool_name = tc["name"]
                 tool_input = tc["input"]
-
-                # Show tool execution in UI
-                def show_tool(name: str = tool_name, inp: dict = tool_input) -> None:
-                    short_input = json.dumps(inp)[:100]
-                    msgs.add_message("tool", f"🔧 {name}({short_input})")
-                self.call_from_thread(show_tool)
+                tool_start = time.time()
 
                 # Execute — route MCP tools to MCP manager
                 if tool_name.startswith("mcp_") and self.mcp_manager:
@@ -937,10 +946,32 @@ class LACPRepl(App):
                 else:
                     result = execute_tool(tool_name, tool_input)
 
+                tool_duration = time.time() - tool_start
+
+                # Detect success/failure
+                success = True
+                try:
+                    rdata = json.loads(result)
+                    if isinstance(rdata, dict) and ("error" in rdata or rdata.get("exit_code", 0) != 0):
+                        success = False
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                # Show hermes-style tool call line with timing
+                def show_tool(
+                    name: str = tool_name,
+                    inp: dict = tool_input,
+                    dur: float = tool_duration,
+                    ok: bool = success,
+                ) -> None:
+                    formatted = format_tool_call(name, inp, duration=dur, success=ok)
+                    msgs.add_message("tool", formatted)
+                self.call_from_thread(show_tool)
+
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
-                    "content": result[:50000],  # truncate large results
+                    "content": result[:50000],
                 })
 
             # Add tool results to conversation
