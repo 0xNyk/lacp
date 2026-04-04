@@ -4,8 +4,6 @@
 .DS_Store
 
 # Local environment overrides
-.env
-.env.local
 .env.sentinel.backup*
 
 # Python artifacts
@@ -21,3 +19,5 @@ dist/
 # Claude Code / GitNexus local state
 .claude/
 .gitnexus/
+config.bat
+node_modules
