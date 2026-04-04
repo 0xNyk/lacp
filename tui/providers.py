@@ -81,7 +81,7 @@ class AnthropicProvider(Provider):
 
     name = "anthropic"
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, model: str = "claude-sonnet-4-6"):
         self.model = model
         self._client = None
 
@@ -105,8 +105,8 @@ class AnthropicProvider(Provider):
                 self._client = anthropic.Anthropic(
                     api_key=None,
                     auth_token=token,
-                    max_retries=5,
-                    timeout=600.0,
+                    max_retries=1,
+                    timeout=30.0,
                     default_headers={
                         "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
                         "x-app": "cli",
@@ -468,10 +468,10 @@ PROVIDERS = {
 # Model → provider mapping (from provider_router)
 MODEL_PROVIDERS = {
     # Anthropic
-    "opus": ("anthropic", "claude-opus-4-20250514"),
-    "sonnet": ("anthropic", "claude-sonnet-4-20250514"),
+    "opus": ("anthropic", "claude-opus-4-6"),
+    "sonnet": ("anthropic", "claude-sonnet-4-6"),
     "haiku": ("anthropic", "claude-haiku-4-5-20251001"),
-    "claude": ("anthropic", "claude-sonnet-4-20250514"),
+    "claude": ("anthropic", "claude-sonnet-4-6"),
     # OpenAI
     "o3": ("openai", "o3"),
     "o4-mini": ("openai", "o4-mini"),
