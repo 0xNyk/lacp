@@ -237,24 +237,20 @@ class MessageDisplay(VerticalScroll):
 
     def add_streaming_placeholder(self) -> Static:
         self.remove_thinking()
-        # Remove any existing streaming placeholder first
-        try:
-            existing = self.query_one("#streaming", Static)
-            existing.remove()
-        except Exception:
-            pass
-        widget = Static("", id="streaming")
+        # Use unique ID to avoid DuplicateIds crash
+        self._streaming_id = f"stream-{time.time_ns()}"
+        widget = Static("", id=self._streaming_id)
         self.mount(widget)
         self.scroll_end(animate=False)
         return widget
 
     def finalize_streaming(self, content: str) -> None:
-        try:
-            placeholder = self.query_one("#streaming", Static)
-            placeholder.remove()
-        except Exception:
-            pass
-        # Add as markdown for proper rendering
+        sid = getattr(self, "_streaming_id", "")
+        if sid:
+            try:
+                self.query_one(f"#{sid}", Static).remove()
+            except Exception:
+                pass
         widget = Markdown(content, id=f"msg-{time.time_ns()}")
         self.mount(widget)
         self.scroll_end(animate=False)
@@ -763,7 +759,7 @@ class LACPRepl(App):
                                 content = self.streaming_content
                                 def update_ph(text: str = content) -> None:
                                     try:
-                                        widget = msgs.query_one("#streaming", Static)
+                                        widget = msgs.query_one(f"#{msgs._streaming_id}", Static)
                                         widget.update(text)
                                         msgs.scroll_end(animate=False)
                                     except Exception:
@@ -813,7 +809,7 @@ class LACPRepl(App):
 
                     def clear_ph() -> None:
                         try:
-                            msgs.query_one("#streaming", Static).remove()
+                            msgs.query_one(f"#{getattr(msgs, "_streaming_id", "none")}", Static).remove()
                         except Exception:
                             pass
                     self.call_from_thread(clear_ph)
@@ -865,7 +861,7 @@ class LACPRepl(App):
                 # Remove empty placeholder
                 def remove_ph() -> None:
                     try:
-                        msgs.query_one("#streaming", Static).remove()
+                        msgs.query_one(f"#{getattr(msgs, "_streaming_id", "none")}", Static).remove()
                     except Exception:
                         pass
                 self.call_from_thread(remove_ph)
