@@ -176,6 +176,16 @@ class StatusBar(Static):
         }
         mode_color = mode_colors.get(mode, "#666677")
 
+        # Shorten cwd
+        cwd = str(Path.cwd())
+        home = str(Path.home())
+        if cwd.startswith(home):
+            cwd_short = "~" + cwd[len(home):]
+        else:
+            cwd_short = cwd
+        if len(cwd_short) > 30:
+            cwd_short = "…" + cwd_short[-28:]
+
         # Build segments
         parts = [
             f" {badge} [bold]{short_model}[/]",
@@ -189,12 +199,18 @@ class StatusBar(Static):
         if cost > 0:
             parts.append(f"${cost:.4f}")
         parts.append(time_str)
+        parts.append(f"[dim]{cwd_short}[/]")
 
         self.update("  │  ".join(parts))
 
 
 class ThinkingIndicator(Static):
-    """Animated thinking indicator with spinning faces, verbs, and elapsed time."""
+    """Claude Code-style animated spinner with elapsed time and token count.
+
+    Shows: ● Reasoning… (12s · ↓ 1.4k tokens)
+    Animates with face rotation and shimmer-style verb cycling.
+    Sticks at the bottom of the message stream during streaming.
+    """
 
     _frame = 0
     _faces = ["◐", "◓", "◑", "◒"]
@@ -202,6 +218,9 @@ class ThinkingIndicator(Static):
     _dots = 0
     _timer = None
     _start_time = 0.0
+    _token_count = 0
+    _streaming = False  # True when receiving tokens (switch verb to streaming)
+    _stalled_since = 0.0  # track stalls
 
     def start(self, faces: list[str] | None = None, verb: str = "thinking") -> None:
         self._faces = faces or ["◐", "◓", "◑", "◒"]
@@ -209,14 +228,25 @@ class ThinkingIndicator(Static):
         self._frame = 0
         self._dots = 0
         self._start_time = time.time()
+        self._token_count = 0
+        self._streaming = False
+        self._stalled_since = 0.0
         self._render_frame()
-        self._timer = self.set_interval(0.25, self._tick)
+        self._timer = self.set_interval(0.2, self._tick)
 
     def stop(self) -> None:
         if self._timer:
             self._timer.stop()
             self._timer = None
         self.remove()
+
+    def update_tokens(self, count: int) -> None:
+        """Update token count (called during streaming)."""
+        if count > self._token_count:
+            self._stalled_since = 0.0  # reset stall
+        self._token_count = count
+        if not self._streaming:
+            self._streaming = True
 
     @property
     def elapsed(self) -> float:
@@ -231,12 +261,32 @@ class ThinkingIndicator(Static):
         face = self._faces[self._frame % len(self._faces)]
         dots = "." * self._dots
         elapsed = self.elapsed
-        # Show duration after 2s (like Claude Code)
-        if elapsed >= 2:
-            time_str = f" [dim]({elapsed:.0f}s)[/dim]"
+
+        # Choose verb based on state
+        if self._streaming:
+            verb = "Streaming"
         else:
-            time_str = ""
-        self.update(f"   [dim]{face} {self._verb}{dots}[/dim]{time_str}")
+            verb = self._verb.capitalize()
+
+        # Build status parts
+        parts = [f"{face} {verb}{dots}"]
+
+        if elapsed >= 1:
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            if mins > 0:
+                parts.append(f"{mins}m {secs:02d}s")
+            else:
+                parts.append(f"{secs}s")
+
+        if self._token_count > 0:
+            if self._token_count >= 1000:
+                parts.append(f"↓ {self._token_count / 1000:.1f}k tokens")
+            else:
+                parts.append(f"↓ {self._token_count} tokens")
+
+        status = " · ".join(parts)
+        self.update(f"   [bold #00d4ff]+ {status}[/]")
 
 
 class MessageDisplay(VerticalScroll):
@@ -272,7 +322,8 @@ class MessageDisplay(VerticalScroll):
             pass
 
     def add_streaming_placeholder(self) -> Static:
-        self.remove_thinking()
+        # Keep thinking indicator alive — it becomes the progress spinner
+        # Don't call remove_thinking() here
         self._streaming_id = f"stream-{time.time_ns()}"
         self._streaming_label_id = f"label-{time.time_ns()}"
         label = Static("[bold #aa88ff]⚡ LACP[/]", markup=True, id=self._streaming_label_id, classes="assistant-label")
@@ -282,8 +333,16 @@ class MessageDisplay(VerticalScroll):
         self.scroll_end(animate=False)
         return widget
 
+    def get_thinking_indicator(self) -> ThinkingIndicator | None:
+        """Get the active thinking indicator if present."""
+        try:
+            return self.query_one("#thinking", ThinkingIndicator)
+        except Exception:
+            return None
+
     def remove_streaming(self) -> None:
-        """Remove both label and placeholder (used on retry/fallback)."""
+        """Remove label, placeholder, and thinking indicator (used on retry/fallback)."""
+        self.remove_thinking()
         for attr in ("_streaming_id", "_streaming_label_id"):
             sid = getattr(self, attr, "")
             if sid:
@@ -293,6 +352,9 @@ class MessageDisplay(VerticalScroll):
                     pass
 
     def finalize_streaming(self, content: str) -> None:
+        # Remove thinking indicator (spinner)
+        self.remove_thinking()
+        # Remove streaming placeholder
         sid = getattr(self, "_streaming_id", "")
         if sid:
             try:
@@ -371,6 +433,10 @@ class LACPRepl(App):
         margin: 0;
         padding: 0 3 0 5;
         color: #555577;
+    }
+    ThinkingIndicator {
+        padding: 0 3;
+        height: auto;
     }
     Static {
         background: transparent;
@@ -460,18 +526,62 @@ class LACPRepl(App):
         # Update status bar
         self._update_status()
 
-        # Welcome banner — pure branding (logo + tagline)
+        # Welcome banner — hermes-style: logo + tools/skills/providers
         msgs = self.query_one("#messages", MessageDisplay)
+        available = list_providers()
+        tool_defs = get_tool_definitions()
 
         logo = self.skin.banner_logo.strip()
 
+        # Categorize tools
+        tool_categories = {
+            "file": [t["name"] for t in tool_defs if t["name"] in ("read_file", "write_file", "edit_file", "ls")],
+            "search": [t["name"] for t in tool_defs if t["name"] in ("grep", "glob")],
+            "shell": [t["name"] for t in tool_defs if t["name"] == "bash"],
+            "memory": [t["name"] for t in tool_defs if t["name"].startswith("memory_")],
+            "tasks": [t["name"] for t in tool_defs if t["name"].startswith("task_")],
+            "skills": [t["name"] for t in tool_defs if t["name"].startswith("skill_")],
+            "agents": [t["name"] for t in tool_defs if t["name"] == "delegate"],
+        }
+
+        # Provider line
+        prov_parts = []
+        for p in available:
+            icon = "[green]✓[/]" if p["available"] else "[dim]✗[/]"
+            name = p["name"]
+            if self.provider and name == self.provider.name:
+                prov_parts.append(f"{icon} [bold]{name}[/]")
+            else:
+                prov_parts.append(f"{icon} {name}")
+        providers_line = "  ".join(prov_parts)
+
+        # Short model
+        short_model = self.provider.model
+        for prefix in ("claude-", "gpt-", "gemini-"):
+            if short_model.startswith(prefix):
+                short_model = short_model[len(prefix):]
+        if len(short_model) > 15 and short_model[-8:].isdigit():
+            short_model = short_model[:-9]
+
+        # Build banner
         banner_text = ""
         if logo:
             banner_text += f"{logo}\n"
-        banner_text += (
-            f"  [bold]v{VERSION}[/]  │  {self.skin.brand('tagline')}\n"
-            f"  [dim]{self.skin.brand('welcome')} Type /help for commands, Ctrl+T to switch mode.[/]"
-        )
+        banner_text += f"  [dim #333355]{'─' * 62}[/]\n"
+
+        # Tools summary
+        tool_lines = []
+        for cat, names in tool_categories.items():
+            if names:
+                tool_lines.append(f"[dim #666688]{cat}:[/] [bold]{', '.join(names)}[/]")
+        banner_text += "  [bold #00d4ff]Tools[/]  " + "  │  ".join(tool_lines[:4]) + "\n"
+        if len(tool_lines) > 4:
+            banner_text += "         " + "  │  ".join(tool_lines[4:]) + "\n"
+
+        # Providers + model + session
+        banner_text += f"\n  {providers_line}  │  [bold]{short_model}[/]  │  {len(tool_defs)} tools\n"
+        banner_text += f"  [dim]Session: {self.session_id[:20]}  ·  {Path.cwd()}[/]\n"
+        banner_text += f"  [dim]{self.skin.brand('welcome')} /help for commands · Ctrl+T mode · Ctrl+E model[/]"
 
         banner_widget = Static(banner_text, markup=True, classes="banner-box")
         msgs.mount(banner_widget)
@@ -825,13 +935,18 @@ class LACPRepl(App):
                             if event.type == "text":
                                 self.streaming_content += event.text
                                 content = self.streaming_content
-                                def update_ph(text: str = content) -> None:
+                                char_count = len(self.streaming_content)
+                                def update_ph(text: str = content, chars: int = char_count) -> None:
                                     try:
                                         widget = msgs.query_one(f"#{msgs._streaming_id}", Static)
                                         widget.update(text)
                                         msgs.scroll_end(animate=False)
                                     except Exception:
                                         pass
+                                    # Update thinking indicator with approximate token count
+                                    indicator = msgs.get_thinking_indicator()
+                                    if indicator:
+                                        indicator.update_tokens(chars // 4)  # ~4 chars per token
                                 self.call_from_thread(update_ph)
 
                             elif event.type == "tool_use":
