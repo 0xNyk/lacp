@@ -81,7 +81,10 @@ class AnthropicProvider(Provider):
 
     name = "anthropic"
 
-    def __init__(self, model: str = "claude-sonnet-4-6"):
+    # Default to Haiku — Sonnet/Opus rate limits are shared with Claude Code CLI.
+    # When Claude Code is active, Sonnet/Opus OAuth quota is consumed.
+    # Users can switch to Opus with /model opus when Claude Code isn't running.
+    def __init__(self, model: str = "claude-haiku-4-5-20251001"):
         self.model = model
         self._client = None
 
