@@ -459,10 +459,64 @@ def read_hermes_key() -> str:
 # ─── Factory ──────────────────────────────────────────────────────
 
 
+class HermesProvider(Provider):
+    """Hermes agent provider — delegates to hermes CLI."""
+
+    name = "hermes"
+
+    def __init__(self, model: str = "gpt-5.4"):
+        self.model = model
+
+    def is_available(self) -> bool:
+        import shutil
+        return bool(shutil.which("hermes"))
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Run hermes in quiet mode and yield the response."""
+        # Get the last user message
+        last_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    last_msg = content
+                break
+
+        if not last_msg:
+            yield StreamEvent(type="text", text="No message to send.")
+            yield StreamEvent(type="done")
+            return
+
+        import subprocess as _sp
+        try:
+            result = _sp.run(
+                ["hermes", "chat", "-Q", "-q", last_msg, "-m", self.model],
+                capture_output=True, text=True, timeout=120,
+                env={**os.environ, "LACP_BYPASS": "1"},
+            )
+            output = result.stdout.strip()
+            if output:
+                yield StreamEvent(type="text", text=output)
+            if result.stderr and not output:
+                yield StreamEvent(type="text", text=f"Hermes error: {result.stderr[:500]}")
+            yield StreamEvent(type="done")
+        except _sp.TimeoutExpired:
+            yield StreamEvent(type="text", text="Hermes timed out after 120s")
+            yield StreamEvent(type="done")
+        except Exception as e:
+            yield StreamEvent(type="error", text=str(e))
+
+
 PROVIDERS = {
     "anthropic": AnthropicProvider,
     "openai": OpenAIProvider,
     "ollama": OllamaProvider,
+    "hermes": HermesProvider,
 }
 
 # Model → provider mapping (from provider_router)
@@ -478,6 +532,8 @@ MODEL_PROVIDERS = {
     "gpt-4.1": ("openai", "gpt-4.1"),
     "gpt-5": ("openai", "gpt-5"),
     "codex": ("openai", "gpt-5.3-codex"),
+    # Hermes (uses its own routing)
+    "hermes": ("hermes", "gpt-5.4"),
     # Ollama
     "llama": ("ollama", "llama3.1:8b"),
     "qwen": ("ollama", "qwen2.5:72b"),
