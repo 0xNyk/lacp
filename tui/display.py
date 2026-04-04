@@ -31,10 +31,18 @@ TOOL_EMOJIS: dict[str, str] = {
     # MCP tools
     "mcp_memory_search": "🧠",
     "mcp_memory_store": "🧠",
+    "mcp_memory_create": "🧠",
+    "mcp_memory_update": "🧠",
+    "mcp_memory_delete": "🧠",
     "mcp_obsidian_search": "📚",
     "mcp_obsidian_read": "📚",
+    "mcp_obsidian_write": "📚",
+    "mcp_qmd_search": "🔍",
+    "mcp_qmd_vsearch": "🔍",
+    "mcp_qmd_get": "📄",
     "mcp_web_search": "🌐",
     "mcp_web_extract": "📄",
+    "mcp_smart-connections_search": "🧠",
     # Browser
     "browser_navigate": "🌐",
     "browser_click": "👆",
@@ -81,7 +89,6 @@ def _get_tool_detail(tool_name: str, tool_input: dict) -> str:
     """Extract a meaningful detail string from tool input."""
     if tool_name == "bash":
         cmd = tool_input.get("command", "")
-        # Truncate long commands
         if len(cmd) > 42:
             cmd = cmd[:39] + "..."
         return cmd
@@ -109,16 +116,55 @@ def _get_tool_detail(tool_name: str, tool_input: dict) -> str:
             task = task[:27] + "..."
         return f"{agent}: {task}"
 
-    # MCP / generic tools
-    # Show first meaningful parameter value
-    for key in ("query", "search", "path", "name", "url", "content"):
+    # MCP tools — show first meaningful param
+    for key in ("query", "search", "path", "name", "url", "note", "content", "arguments"):
         val = tool_input.get(key, "")
         if val:
-            if len(str(val)) > 35:
-                val = str(val)[:32] + "..."
-            return str(val)
+            val_str = str(val)
+            if len(val_str) > 35:
+                val_str = val_str[:32] + "..."
+            return val_str
 
     return ""
+
+
+def get_tool_emoji(tool_name: str) -> str:
+    """Get emoji for a tool name, with MCP prefix matching."""
+    if tool_name in TOOL_EMOJIS:
+        return TOOL_EMOJIS[tool_name]
+    # Try partial match for MCP tools (mcp_server_toolname)
+    for key, emoji in TOOL_EMOJIS.items():
+        if tool_name.startswith(key):
+            return emoji
+    return TOOL_EMOJIS["_default"]
+
+
+def get_tool_verb(tool_name: str) -> str:
+    """Get verb for a tool name, extracting from MCP prefix if needed."""
+    if tool_name in TOOL_VERBS:
+        return TOOL_VERBS[tool_name]
+    # MCP tools: use a short, readable verb
+    if tool_name.startswith("mcp_"):
+        parts = tool_name.split("_", 2)
+        if len(parts) >= 3:
+            suffix = parts[2]
+            # Map common MCP actions to short verbs
+            verb_map = {
+                "search": "search",
+                "read": "read",
+                "write": "write",
+                "create": "create",
+                "update": "update",
+                "delete": "delete",
+                "get": "get",
+                "list": "list",
+            }
+            for prefix, short in verb_map.items():
+                if suffix.startswith(prefix):
+                    return short
+            return suffix[:9]
+        return parts[-1][:9]
+    return tool_name[:9]
 
 
 def format_tool_call(
@@ -132,8 +178,8 @@ def format_tool_call(
     Returns a Rich-markup string like:
         [dim]┊[/] 💻 [bold]$[/]         git status  [dim]1.2s[/]
     """
-    emoji = TOOL_EMOJIS.get(tool_name, TOOL_EMOJIS["_default"])
-    verb = TOOL_VERBS.get(tool_name, tool_name.replace("mcp_", ""))
+    emoji = get_tool_emoji(tool_name)
+    verb = get_tool_verb(tool_name)
     detail = _get_tool_detail(tool_name, tool_input)
 
     # Fixed-width verb (9 chars) like hermes-agent
