@@ -105,8 +105,8 @@ class AnthropicProvider(Provider):
                 self._client = anthropic.Anthropic(
                     api_key=None,
                     auth_token=token,
-                    max_retries=5,
-                    timeout=600.0,
+                    max_retries=1,
+                    timeout=30.0,
                     default_headers={
                         "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
                         "x-app": "cli",
@@ -467,7 +467,7 @@ PROVIDERS = {
 
 # Model → provider mapping (from provider_router)
 MODEL_PROVIDERS = {
-    # Anthropic — always latest versions
+    # Anthropic
     "opus": ("anthropic", "claude-opus-4-6"),
     "sonnet": ("anthropic", "claude-sonnet-4-6"),
     "haiku": ("anthropic", "claude-haiku-4-5-20251001"),
