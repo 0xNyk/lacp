@@ -254,7 +254,10 @@ class MessageDisplay(VerticalScroll):
                 self.query_one(f"#{sid}", Static).remove()
             except Exception:
                 pass
-        widget = Markdown(content, id=f"msg-{time.time_ns()}")
+        # Add response label
+        label = Static("\n[bold #aa88ff]⚡ LACP[/]", markup=True)
+        self.mount(label)
+        widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         self.mount(widget)
         self.scroll_end(animate=False)
 
