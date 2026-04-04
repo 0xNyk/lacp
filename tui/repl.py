@@ -240,24 +240,34 @@ class MessageDisplay(VerticalScroll):
 
     def add_streaming_placeholder(self) -> Static:
         self.remove_thinking()
-        # Show LACP label immediately when streaming starts
-        label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True)
-        self.mount(label)
-        # Use unique ID to avoid DuplicateIds crash
         self._streaming_id = f"stream-{time.time_ns()}"
-        widget = Static("", id=self._streaming_id, classes="assistant-msg")
+        self._streaming_label_id = f"label-{time.time_ns()}"
+        # Show label + placeholder together
+        label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True, id=self._streaming_label_id)
+        self.mount(label)
+        widget = Static("", id=self._streaming_id)
         self.mount(widget)
         self.scroll_end(animate=False)
         return widget
 
+    def remove_streaming(self) -> None:
+        """Remove both label and placeholder (used on retry/fallback)."""
+        for attr in ("_streaming_id", "_streaming_label_id"):
+            sid = getattr(self, attr, "")
+            if sid:
+                try:
+                    self.query_one(f"#{sid}").remove()
+                except Exception:
+                    pass
+
     def finalize_streaming(self, content: str) -> None:
+        # Remove placeholder (keep label)
         sid = getattr(self, "_streaming_id", "")
         if sid:
             try:
                 self.query_one(f"#{sid}", Static).remove()
             except Exception:
                 pass
-        # Label was already added in add_streaming_placeholder
         widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         self.mount(widget)
         self.scroll_end(animate=False)
@@ -316,7 +326,6 @@ class LACPRepl(App):
     .assistant-msg {
         margin: 0 0 1 0;
         padding: 0 4;
-        background: #08081a;
     }
     .system-msg {
         margin: 1 0;
@@ -825,10 +834,7 @@ class LACPRepl(App):
                     fallback_models = [(p, m) for p, m in fallback_models if p != current]
 
                     def clear_ph() -> None:
-                        try:
-                            _sid = getattr(msgs, "_streaming_id", "none"); msgs.query_one(f"#{_sid}", Static).remove()
-                        except Exception:
-                            pass
+                        msgs.remove_streaming()
                     self.call_from_thread(clear_ph)
 
                     # Try each fallback
@@ -875,12 +881,9 @@ class LACPRepl(App):
                     msgs.finalize_streaming(content)
                 self.call_from_thread(finalize_text)
             else:
-                # Remove empty placeholder
+                # Remove empty placeholder + label
                 def remove_ph() -> None:
-                    try:
-                        _sid = getattr(msgs, "_streaming_id", "none"); msgs.query_one(f"#{_sid}", Static).remove()
-                    except Exception:
-                        pass
+                    msgs.remove_streaming()
                 self.call_from_thread(remove_ph)
 
             # If no tool calls, we're done — add assistant message, auto-save, break
