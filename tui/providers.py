@@ -346,18 +346,38 @@ def read_claude_oauth() -> str:
     API keys that may have zero credits.
 
     Sources (in order):
-    1. CLAUDE_CODE_OAUTH_TOKEN env var (explicit OAuth)
-    2. ~/.lacp/credentials.json (exported OAuth — always works)
-    3. macOS Keychain "Claude Code-credentials" (may fail in TUI)
-    4. ANTHROPIC_API_KEY env var (last — may be no-credit key)
+    1. CLAUDE_CODE_OAUTH_TOKEN env var
+    2. macOS Keychain (freshest — Claude Code auto-refreshes here)
+    3. ~/.lacp/credentials.json (fallback when keychain fails)
+    4. ANTHROPIC_API_KEY env var (lowest priority)
     """
     # 1. Explicit OAuth env var
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if token:
         return token
 
-    # 2. Credentials file (exported OAuth — works everywhere)
+    # 2. Keychain FIRST — Claude Code refreshes tokens here automatically
     creds_file = Path.home() / ".lacp" / "credentials.json"
+    raw = _read_keychain_service("Claude Code-credentials")
+    if raw:
+        try:
+            data = json.loads(raw)
+            token = data.get("claudeAiOauth", {}).get("accessToken", "")
+            if token:
+                # Auto-update credentials.json with fresh token
+                try:
+                    creds_file.parent.mkdir(parents=True, exist_ok=True)
+                    creds_file.write_text(json.dumps({
+                        "anthropic_token": token,
+                        "source": "keychain-auto-refresh",
+                    }, indent=2))
+                except OSError:
+                    pass
+                return token
+        except json.JSONDecodeError:
+            pass
+
+    # 3. Credentials file fallback (when keychain is inaccessible)
     if creds_file.exists():
         try:
             data = json.loads(creds_file.read_text(encoding="utf-8"))
@@ -365,17 +385,6 @@ def read_claude_oauth() -> str:
             if token:
                 return token
         except (json.JSONDecodeError, OSError):
-            pass
-
-    # 3. Keychain (may not work in Textual TUI context)
-    raw = _read_keychain_service("Claude Code-credentials")
-    if raw:
-        try:
-            data = json.loads(raw)
-            token = data.get("claudeAiOauth", {}).get("accessToken", "")
-            if token:
-                return token
-        except json.JSONDecodeError:
             pass
 
     # 4. ANTHROPIC_API_KEY env var (lowest priority)
