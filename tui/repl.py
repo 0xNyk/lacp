@@ -33,9 +33,10 @@ SLASH_COMMANDS = [
     "/sessions", "/resume", "/delegate", "/tokens",
     "/save", "/clear", "/system", "/quit",
     "/model opus", "/model sonnet", "/model haiku",
-    "/model o3", "/model codex", "/model llama",
+    "/model o3", "/model codex", "/model hermes", "/model llama",
     "/skin default", "/skin cyberpunk",
     "/delegate claude", "/delegate codex", "/delegate hermes",
+    "/memory", "/tasks", "/skills",
     "/resume latest",
 ]
 
@@ -123,7 +124,7 @@ HELP_TEXT = """## LACP REPL Commands
 
 | Command | Description |
 |---------|-------------|
-| `/model <name>` | Switch model (opus, sonnet, haiku, o3, gpt-4.1, llama) |
+| `/model <name>` | Switch model (opus, sonnet, haiku, o3, codex, hermes, llama) |
 | `/provider` | Show current provider + available providers |
 | `/clear` | Clear conversation history |
 | `/save [path]` | Save conversation to file |
@@ -329,8 +330,12 @@ class LACPRepl(App):
     .banner-box {
         border: round #333355;
         padding: 1 3;
-        margin: 0 1 1 1;
+        margin: 0 1 0 1;
         background: #050510;
+    }
+    .info-line {
+        padding: 0 3;
+        margin: 0 1 1 1;
     }
     .user-msg {
         margin: 1 0 0 0;
@@ -439,26 +444,32 @@ class LACPRepl(App):
         # Update status bar
         self._update_status()
 
-        # Welcome banner
+        # Welcome banner — decoration only (logo + art)
         msgs = self.query_one("#messages", MessageDisplay)
         available = list_providers()
-        available_names = [p["name"] for p in available if p["available"]]
 
-        # Build compact welcome banner
         logo = self.skin.banner_logo.strip()
-        hero = self.skin.banner_hero.strip()
+        if logo:
+            banner_widget = Static(logo, markup=True, classes="banner-box")
+            msgs.mount(banner_widget)
 
-        # Provider status line with checkmarks
-        provider_line = "  "
+        # Info line — compact, below decoration
+        provider_parts = []
         for p in available:
             icon = "[green]✓[/]" if p["available"] else "[dim]✗[/]"
             name = p["name"]
             if self.provider and name == self.provider.name:
-                provider_line += f"{icon} [bold]{name}[/]  "
+                provider_parts.append(f"{icon} [bold]{name}[/]")
             else:
-                provider_line += f"{icon} {name}  "
+                provider_parts.append(f"{icon} {name}")
 
-        # Short model name
+        # Check hermes availability
+        import shutil
+        if shutil.which("hermes"):
+            provider_parts.append("[green]✓[/] hermes")
+
+        providers_str = "  ".join(provider_parts)
+
         short_model = self.provider.model
         for prefix in ("claude-", "gpt-", "gemini-"):
             if short_model.startswith(prefix):
@@ -466,19 +477,17 @@ class LACPRepl(App):
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
 
-        banner_text = ""
-        if logo:
-            banner_text += logo + "\n"
-        banner_text += (
-            f"\n  [bold]v{VERSION}[/] │ {self.skin.brand('tagline')}"
-            f"\n{provider_line}"
-            f"\n  Model: [bold]{short_model}[/]"
-            f"\n\n  [dim]{self.skin.brand('welcome')}[/]"
-            f"\n  [dim]Type /help for commands, /model <name> to switch[/]"
-        )
+        # Count tools
+        tool_count = len(get_tool_definitions())
 
-        banner_widget = Static(banner_text, markup=True, classes="banner-box")
-        msgs.mount(banner_widget)
+        info_text = (
+            f"  [bold]v{VERSION}[/] │ {providers_str}"
+            f"  │  [bold]{short_model}[/]"
+            f"  │  {tool_count} tools"
+            f"\n  [dim]{self.skin.brand('welcome')} Type /help for commands.[/]"
+        )
+        info_widget = Static(info_text, markup=True, classes="info-line")
+        msgs.mount(info_widget)
 
         # Resume previous session if requested
         if self.resume_id:
@@ -632,7 +641,7 @@ class LACPRepl(App):
 
         elif cmd == "/model":
             if not arg:
-                msgs.add_message("system", "Usage: /model <name>\nAvailable: opus, sonnet, haiku, o3, gpt-4.1, llama, qwen")
+                msgs.add_message("system", "Usage: /model <name>\nAvailable: opus, sonnet, haiku, o3, codex, hermes, gpt-4.1, llama, qwen")
                 return
             try:
                 self.provider = create_provider(model=arg)
