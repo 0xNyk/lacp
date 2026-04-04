@@ -36,7 +36,10 @@ SLASH_COMMANDS = [
     "/model o3", "/model codex", "/model hermes", "/model llama",
     "/skin default", "/skin cyberpunk",
     "/delegate claude", "/delegate codex", "/delegate hermes",
-    "/memory", "/tasks", "/skills", "/dev", "/dev reset", "/dev export",
+    "/memory", "/tasks", "/skills",
+    "/dev", "/dev reset", "/dev export", "/dev export yaml",
+    "/dev preset dark", "/dev preset midnight", "/dev preset hacker",
+    "/dev preset warm", "/dev preset ocean",
     "/resume latest",
 ]
 
@@ -908,12 +911,28 @@ class LACPRepl(App):
             dev = self.query_one("#dev-panel", DevPanel)
             if arg == "reset":
                 dev.reset_all()
-                msgs.add_message("system", "Dev panel reset")
+                msgs.add_message("system", "Dev panel reset to defaults")
             elif arg == "export":
                 css = dev.export_css()
                 msgs.add_message("system", f"Current CSS:\n```\n{css}\n```")
-            else:
+            elif arg == "export yaml":
+                path = dev.save_skin_yaml()
+                msgs.add_message("system", f"Skin saved to {path}\nLoad with: /skin custom")
+            elif arg.startswith("preset"):
+                preset_name = arg.split(None, 1)[1] if " " in arg else ""
+                if not preset_name:
+                    from dev_panel import DEV_PRESETS
+                    names = ", ".join(DEV_PRESETS.keys())
+                    msgs.add_message("system", f"Available presets: {names}")
+                elif dev.apply_preset(preset_name):
+                    msgs.add_message("system", f"Applied preset: {preset_name}")
+                else:
+                    from dev_panel import DEV_PRESETS
+                    msgs.add_message("system", f"Unknown preset: {preset_name}. Available: {', '.join(DEV_PRESETS.keys())}")
+            elif arg in ("close", ""):
                 dev.toggle()
+            else:
+                msgs.add_message("system", "Usage: /dev [close|reset|export|export yaml|preset <name>]")
 
         else:
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")
