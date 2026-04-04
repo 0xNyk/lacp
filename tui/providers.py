@@ -196,29 +196,55 @@ class AnthropicProvider(Provider):
 
 
 class OpenAIProvider(Provider):
-    """OpenAI GPT/o-series provider."""
+    """OpenAI GPT/o-series provider.
+
+    Supports two auth modes:
+    1. OPENAI_API_KEY (sk-...) → direct SDK calls
+    2. ChatGPT OAuth (~/.codex/auth.json) → delegates to codex CLI
+    """
 
     name = "openai"
 
     def __init__(self, model: str = "gpt-4.1"):
         self.model = model
         self._client = None
+        self._use_codex_cli = False
 
     def _get_client(self):
         if self._client is None:
             import openai
 
+            # Prefer direct API key
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if api_key and api_key.startswith("sk-"):
+                self._client = openai.OpenAI(api_key=api_key)
+                return self._client
+
+            # ChatGPT OAuth tokens can't be used with the standard SDK
+            # (they require model.request scope which is ChatGPT-internal).
+            # Delegate to codex CLI instead.
             token = read_codex_oauth()
-            if not token:
-                raise RuntimeError(
-                    "No OpenAI credentials. Codex OAuth auto-detected from ~/.codex/auth.json, "
-                    "or set OPENAI_API_KEY"
-                )
-            self._client = openai.OpenAI(api_key=token)
+            if token and not token.startswith("sk-"):
+                self._use_codex_cli = True
+                return None
+
+            if token:
+                self._client = openai.OpenAI(api_key=token)
+                return self._client
+
+            raise RuntimeError(
+                "No OpenAI credentials. Set OPENAI_API_KEY or login with: codex login"
+            )
         return self._client
 
     def is_available(self) -> bool:
-        return bool(read_codex_oauth())
+        import shutil
+        # Available if we have an API key or codex CLI is installed
+        if os.environ.get("OPENAI_API_KEY", ""):
+            return True
+        if read_codex_oauth():
+            return bool(shutil.which("codex"))
+        return False
 
     async def stream(
         self,
@@ -226,8 +252,46 @@ class OpenAIProvider(Provider):
         system: str = "",
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        client = self._get_client()
+        self._get_client()
 
+        # ChatGPT OAuth → delegate to codex CLI
+        if self._use_codex_cli:
+            # Get the last user message
+            last_msg = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    content = m.get("content", "")
+                    if isinstance(content, str):
+                        last_msg = content
+                    break
+
+            if not last_msg:
+                yield StreamEvent(type="text", text="No message to send.")
+                yield StreamEvent(type="done")
+                return
+
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    ["codex", "exec", "-m", self.model, last_msg],
+                    capture_output=True, text=True, timeout=120,
+                    env={**os.environ, "LACP_BYPASS": "1"},
+                )
+                output = result.stdout.strip()
+                if output:
+                    yield StreamEvent(type="text", text=output)
+                if result.stderr and not output:
+                    yield StreamEvent(type="text", text=f"Codex error: {result.stderr[:500]}")
+                yield StreamEvent(type="done")
+            except _sp.TimeoutExpired:
+                yield StreamEvent(type="text", text="Codex timed out after 120s")
+                yield StreamEvent(type="done")
+            except Exception as e:
+                yield StreamEvent(type="error", text=str(e))
+            return
+
+        # Direct SDK mode (sk- API key)
+        client = self._client
         oai_messages = []
         if system:
             oai_messages.append({"role": "system", "content": system})
