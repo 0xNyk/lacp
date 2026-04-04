@@ -46,6 +46,7 @@ provider_badges:
   anthropic: "[bold #a67df4]anthropic[/]"
   openai: "[bold #4ade80]openai[/]"
   ollama: "[bold #f97316]ollama[/]"
+  hermes: "[bold #e879f9]hermes[/]"
   google: "[bold #4285f4]google[/]"
 
 banner_logo: |

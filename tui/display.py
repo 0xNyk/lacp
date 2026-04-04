@@ -28,6 +28,18 @@ TOOL_EMOJIS: dict[str, str] = {
     "bash": "💻",
     # Delegation
     "delegate": "🔀",
+    # Memory
+    "memory_read": "🧠",
+    "memory_write": "🧠",
+    "memory_search": "🧠",
+    "memory_list": "🧠",
+    # Tasks
+    "task_create": "📋",
+    "task_update": "📋",
+    "task_list": "📋",
+    # Skills
+    "skill_list": "📚",
+    "skill_read": "📚",
     # MCP tools
     "mcp_memory_search": "🧠",
     "mcp_memory_store": "🧠",
@@ -63,6 +75,15 @@ TOOL_VERBS: dict[str, str] = {
     "glob": "glob",
     "ls": "ls",
     "delegate": "delegate",
+    "memory_read": "recall",
+    "memory_write": "remember",
+    "memory_search": "search",
+    "memory_list": "memories",
+    "task_create": "task +",
+    "task_update": "task ~",
+    "task_list": "tasks",
+    "skill_list": "skills",
+    "skill_read": "skill",
 }
 
 
@@ -116,8 +137,8 @@ def _get_tool_detail(tool_name: str, tool_input: dict) -> str:
             task = task[:27] + "..."
         return f"{agent}: {task}"
 
-    # MCP tools — show first meaningful param
-    for key in ("query", "search", "path", "name", "url", "note", "content", "arguments"):
+    # Task/memory/skill tools — show the primary param
+    for key in ("title", "key", "query", "search", "path", "name", "url", "note", "content", "arguments"):
         val = tool_input.get(key, "")
         if val:
             val_str = str(val)
