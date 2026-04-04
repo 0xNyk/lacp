@@ -266,7 +266,7 @@ class LACPRepl(App):
         layout: vertical;
     }
     StatusBar {
-        height: 1;
+        height: 3;
         background: #0a0a1a;
         color: #00d4ff;
         padding: 0 2;
