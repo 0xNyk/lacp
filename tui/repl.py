@@ -415,17 +415,17 @@ class LACPRepl(App):
         background: #050510;
     }
     .user-msg {
-        margin: 1 1 0 1;
+        margin: 1 1 1 1;
         padding: 1 3;
         background: #0a0a1a;
     }
     .assistant-msg {
-        margin: 0 1 0 1;
-        padding: 0 3 1 5;
+        margin: 0 1 1 1;
+        padding: 0 3 1 3;
     }
     .assistant-label {
-        margin: 0 1 0 1;
-        padding: 1 0 0 3;
+        margin: 1 1 0 1;
+        padding: 0 3;
     }
     .system-msg {
         margin: 0 1;
@@ -434,12 +434,11 @@ class LACPRepl(App):
     }
     .tool-msg {
         margin: 0 1;
-        padding: 0 3 0 5;
+        padding: 0 3;
         color: #555577;
     }
     ThinkingIndicator, .thinking-spinner {
-        margin: 0 1;
-        padding: 0 3;
+        padding: 1 3;
         height: auto;
         dock: bottom;
     }
