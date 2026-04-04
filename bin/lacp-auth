@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+CREDS_FILE="${HOME}/.lacp/credentials.json"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp auth [command]
+
+Manage LACP authentication for LLM providers.
+
+Commands:
+  status       Show current auth status for all providers
+  setup        Interactive setup — export OAuth tokens for LACP
+  refresh      Refresh OAuth token from Claude Code keychain
+  clear        Remove stored credentials
+
+Examples:
+  lacp auth status    # check what's configured
+  lacp auth setup     # interactive credential setup
+  lacp auth refresh   # re-export OAuth token from keychain
+EOF
+}
+
+cmd_status() {
+  echo "LACP Auth Status"
+  echo "════════════════════════════════"
+  echo ""
+
+  # Claude/Anthropic
+  printf "  Anthropic:  "
+  if [[ -f "${CREDS_FILE}" ]]; then
+    local token
+    token="$(python3 -c "import json; d=json.load(open('${CREDS_FILE}')); print(d.get('anthropic_token','')[:20])" 2>/dev/null || echo "")"
+    if [[ -n "${token}" ]]; then
+      echo "✅ credentials.json (${token}...)"
+    else
+      echo "❌ credentials.json exists but no token"
+    fi
+  else
+    echo "❌ no credentials.json"
+  fi
+
+  printf "  Keychain:   "
+  local kc_token
+  kc_token="$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('claudeAiOauth',{}).get('accessToken','')[:20])" 2>/dev/null || echo "")"
+  if [[ -n "${kc_token}" ]]; then
+    echo "✅ keychain (${kc_token}...)"
+  else
+    echo "❌ no keychain entry"
+  fi
+
+  printf "  Env var:    "
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo "⚠️  ANTHROPIC_API_KEY set (${ANTHROPIC_API_KEY:0:15}...)"
+    echo "              Note: env var is lowest priority — OAuth takes precedence"
+  else
+    echo "not set"
+  fi
+
+  echo ""
+
+  # OpenAI/Codex
+  printf "  OpenAI:     "
+  if [[ -f "${HOME}/.codex/auth.json" ]]; then
+    echo "✅ ~/.codex/auth.json"
+  elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    echo "✅ OPENAI_API_KEY env var"
+  else
+    echo "❌ not configured"
+  fi
+
+  # Ollama
+  printf "  Ollama:     "
+  if curl -s http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
+    echo "✅ running locally"
+  else
+    echo "❌ not running"
+  fi
+
+  echo ""
+}
+
+cmd_setup() {
+  echo "LACP Auth Setup"
+  echo "════════════════════════════════"
+  echo ""
+  echo "This exports your Claude Code OAuth token to ~/.lacp/credentials.json"
+  echo "so LACP can use your Claude Pro subscription."
+  echo ""
+
+  # Try keychain first
+  local kc_raw
+  kc_raw="$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null || echo "")"
+  if [[ -n "${kc_raw}" ]]; then
+    local token
+    token="$(echo "${kc_raw}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('claudeAiOauth',{}).get('accessToken',''))" 2>/dev/null || echo "")"
+    if [[ -n "${token}" ]]; then
+      mkdir -p "$(dirname "${CREDS_FILE}")"
+      python3 -c "
+import json
+from pathlib import Path
+Path('${CREDS_FILE}').write_text(json.dumps({
+    'anthropic_token': '${token}',
+    'source': 'keychain-export',
+}, indent=2))
+import os
+os.chmod('${CREDS_FILE}', 0o600)
+"
+      echo "✅ OAuth token exported from keychain to ${CREDS_FILE}"
+      echo "   Token: ${token:0:20}..."
+      echo ""
+      echo "You can now use 'lacp' with your Claude Pro subscription."
+      return 0
+    fi
+  fi
+
+  echo "❌ No OAuth token found in keychain."
+  echo "   Make sure Claude Code is installed and you're logged in."
+  echo ""
+  echo "Alternative: set ANTHROPIC_API_KEY in your shell profile:"
+  echo "   export ANTHROPIC_API_KEY=sk-ant-..."
+  return 1
+}
+
+cmd_refresh() {
+  cmd_setup
+}
+
+cmd_clear() {
+  if [[ -f "${CREDS_FILE}" ]]; then
+    rm -f "${CREDS_FILE}"
+    echo "✅ Removed ${CREDS_FILE}"
+  else
+    echo "No credentials to clear."
+  fi
+}
+
+case "${1:-status}" in
+  status)  cmd_status ;;
+  setup)   cmd_setup ;;
+  refresh) cmd_refresh ;;
+  clear)   cmd_clear ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

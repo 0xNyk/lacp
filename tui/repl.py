@@ -459,6 +459,14 @@ class LACPRepl(App):
         msgs.add_message("user", text)
         self.messages.append({"role": "user", "content": text})
 
+        # Show thinking indicator immediately
+        import random
+        verbs = self.skin.spinner.get("thinking_verbs", ["thinking"]) if self.skin else ["thinking"]
+        faces = self.skin.spinner.get("thinking_faces", ["◐"]) if self.skin else ["◐"]
+        face = random.choice(faces)
+        verb = random.choice(verbs)
+        msgs.add_message("system", f"{face} {verb}...")
+
         # Stream response (runs in background worker thread)
         self._stream_response()
 
@@ -692,24 +700,51 @@ class LACPRepl(App):
             except Exception as e:
                 err_str = str(e)
 
-                # Auto-retry on rate limit (429) — wait and retry once
-                if "429" in err_str or "rate_limit" in err_str:
+                # Auto-fallback on rate limit (429) or credit error (400)
+                if "429" in err_str or "rate_limit" in err_str or "credit balance" in err_str:
                     import time as _time
-                    def show_retry() -> None:
-                        msgs.add_message("system", "⏳ Rate limited — retrying in 3s...")
-                    self.call_from_thread(show_retry)
-                    _time.sleep(3)
-                    try:
-                        # Remove placeholder and retry
-                        def clear_ph() -> None:
-                            try:
-                                msgs.query_one("#streaming", Static).remove()
-                            except Exception:
-                                pass
-                        self.call_from_thread(clear_ph)
-                        continue  # retry the turn
-                    except Exception:
-                        pass
+                    # Try fallback to another provider
+                    fallback_models = [
+                        ("openai", "gpt-4.1"),
+                        ("ollama", "llama3.1:8b"),
+                    ]
+                    # Remove current provider from fallbacks
+                    current = self.provider.name if self.provider else ""
+                    fallback_models = [(p, m) for p, m in fallback_models if p != current]
+
+                    def clear_ph() -> None:
+                        try:
+                            msgs.query_one("#streaming", Static).remove()
+                        except Exception:
+                            pass
+                    self.call_from_thread(clear_ph)
+
+                    # Try each fallback
+                    switched = False
+                    for fb_provider, fb_model in fallback_models:
+                        try:
+                            test_provider = create_provider(provider_name=fb_provider, model=fb_model)
+                            if test_provider.is_available():
+                                self.provider = test_provider
+                                self.provider._client = None  # force re-init
+                                def show_switch(p=fb_provider, m=fb_model) -> None:
+                                    msgs.add_message("system", f"⚡ Auto-switched to {p}/{m} (rate limited on previous)")
+                                    self._update_status()
+                                self.call_from_thread(show_switch)
+                                switched = True
+                                break
+                        except Exception:
+                            continue
+
+                    if switched:
+                        continue  # retry with new provider
+                    else:
+                        # No fallback available — wait and retry same provider
+                        def show_retry() -> None:
+                            msgs.add_message("system", "⏳ Rate limited — retrying in 5s...")
+                        self.call_from_thread(show_retry)
+                        _time.sleep(5)
+                        continue
 
                 # Add debug info for auth errors
                 if "credit balance" in err_str or "400" in err_str:
