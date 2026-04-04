@@ -982,8 +982,8 @@ class LACPRepl(App):
             except Exception as e:
                 err_str = str(e)
 
-                # Auto-fallback on rate limit (429) or credit error (400)
-                if "429" in err_str or "rate_limit" in err_str or "credit balance" in err_str:
+                # Auto-fallback on rate limit (429), credit error (400), or auth error (401)
+                if any(x in err_str for x in ("429", "rate_limit", "credit balance", "401", "missing_scope")):
                     import time as _time
                     # Try fallback chain
                     fallback_models = [
