@@ -1184,26 +1184,49 @@ class LACPRepl(App):
                     is_auth_error = any(x in err_str for x in ("401", "missing_scope", "credit balance"))
 
                     if is_auth_error and hasattr(self.provider, 'refresh_token'):
-                        # Auth error — try refreshing OAuth token from keychain
                         def show_refresh() -> None:
-                            msgs.add_message("system", "🔑 Auth error — refreshing OAuth token from keychain...")
+                            msgs.add_message("system", "🔑 Auth error — refreshing OAuth token...")
                         self.call_from_thread(show_refresh)
                         if self.provider.refresh_token():
-                            continue  # retry with fresh token immediately
+                            continue
 
-                    # Rate limit — wait and retry same provider
+                    # Rate limit — check concurrent sessions and retry with backoff
                     current_model = self.provider.model if self.provider else ""
-                    wait_secs = 15 if "429" in err_str else 5
-                    def show_wait(model=current_model, secs=wait_secs) -> None:
-                        msgs.add_message("system", f"⏳ Rate limited on {model} — waiting {secs}s...")
-                    self.call_from_thread(show_wait)
-                    _time.sleep(wait_secs)
+                    import subprocess as _sp
+                    try:
+                        cc_count = len(_sp.run(["pgrep", "-la", "claude"], capture_output=True, text=True, timeout=3).stdout.strip().splitlines())
+                    except Exception:
+                        cc_count = 0
 
-                    # Force fresh client on retry
-                    if hasattr(self.provider, '_client'):
-                        self.provider._client = None
-
-                    continue  # retry same provider after wait
+                    # Exponential backoff: 5s, 10s, 20s (max 3 retries then fall to haiku)
+                    retry_key = "_rate_limit_retries"
+                    retries = getattr(self, retry_key, 0)
+                    if retries < 3:
+                        wait_secs = 5 * (2 ** retries)
+                        setattr(self, retry_key, retries + 1)
+                        sessions_note = f" ({cc_count} Claude Code sessions active)" if cc_count > 1 else ""
+                        def show_wait(model=current_model, secs=wait_secs, note=sessions_note) -> None:
+                            msgs.add_message("system", f"⏳ Rate limited on {model}{note} — retry in {secs}s...")
+                        self.call_from_thread(show_wait)
+                        _time.sleep(wait_secs)
+                        if hasattr(self.provider, '_client'):
+                            self.provider._client = None
+                        continue
+                    else:
+                        # After 3 retries, fall back to Haiku
+                        setattr(self, retry_key, 0)
+                        try:
+                            self.provider = create_provider(provider_name="anthropic", model="claude-haiku-4-5-20251001")
+                            self.provider._client = None
+                            def show_fallback() -> None:
+                                msgs.add_message("system",
+                                    f"⚡ Switched to Haiku (Sonnet/Opus quota exhausted by {cc_count} concurrent sessions). "
+                                    f"Use /model sonnet when sessions free up.")
+                                self._update_status()
+                            self.call_from_thread(show_fallback)
+                            continue
+                        except Exception:
+                            pass
 
                 # Add debug info for auth errors
                 if "credit balance" in err_str or "400" in err_str:
