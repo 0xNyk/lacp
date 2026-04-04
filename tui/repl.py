@@ -988,11 +988,11 @@ class LACPRepl(App):
                 self.idle_agent.start_now()
                 msgs.add_message("system", "🔬 Autoresearch started immediately")
             elif arg == "score":
-                # Run metrics inline
+                # Run full two-tier metrics
                 import subprocess as _sp
                 result = _sp.run(
-                    ["python3", str(Path(__file__).parent / "autoresearch_metrics.py")],
-                    capture_output=True, text=True, timeout=30,
+                    ["python3", str(Path(__file__).parent / "autoresearch_metrics.py"), "--full"],
+                    capture_output=True, text=True, timeout=60,
                     cwd=str(Path(__file__).parent.parent),
                 )
                 msgs.add_message("research", result.stdout.strip() if result.stdout else "Failed to compute score")
