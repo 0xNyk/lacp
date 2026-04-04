@@ -147,26 +147,25 @@ class StatusBar(Static):
     def update_status(
         self, provider: str, model: str, tokens: int = 0,
         cost: float = 0.0, skin: Skin | None = None, elapsed: float = 0.0,
-        mode: str = "Normal",
+        mode: str = "Normal", mcp_servers: int = 0, mcp_tools: int = 0,
     ) -> None:
         badge = skin.badge(provider) if skin else provider
         mins = int(elapsed // 60)
         secs = int(elapsed % 60)
         time_str = f"{mins}:{secs:02d}"
-        # Short model name for display
         short_model = model
         for prefix in ("claude-", "gpt-", "gemini-"):
             if short_model.startswith(prefix):
                 short_model = short_model[len(prefix):]
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
-        # Mode colors
-        mode_colors = {"Normal": "#888888", "Plan": "#4ade80", "Think": "#a78bfa", "YOLO": "#ef4444"}
-        mode_color = mode_colors.get(mode, "#888888")
+        mode_colors = {"Normal": "#666677", "Plan": "#4ade80", "Think": "#a78bfa", "YOLO": "#ef4444"}
+        mode_color = mode_colors.get(mode, "#666677")
+        mcp_str = f"  │  [dim]MCP:{mcp_tools}[/]" if mcp_tools > 0 else ""
         self.update(
             f" {badge} [bold]{short_model}[/]  │  "
             f"[{mode_color}]{mode}[/]  │  "
-            f"tokens: {tokens:,}  │  ${cost:.4f}  │  {time_str}"
+            f"tok:{tokens:,}  │  ${cost:.4f}  │  {time_str}{mcp_str}"
         )
 
     def update_mode(self, mode_label: str) -> None:
@@ -319,6 +318,7 @@ class LACPRepl(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "clear_screen", "Clear"),
         Binding("ctrl+t", "cycle_mode", "Mode", priority=True),
+        Binding("shift+tab", "cycle_mode", show=False, priority=True),
     ]
 
     def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
@@ -336,6 +336,8 @@ class LACPRepl(App):
         self.session_id = generate_session_id()
         self.resume_id = resume
         self.mcp_manager: MCPManager | None = None
+        self.mcp_servers_count = 0
+        self.mcp_tools_count = 0
 
     def compose(self) -> ComposeResult:
         yield MessageDisplay(id="messages")
@@ -375,15 +377,14 @@ class LACPRepl(App):
             import threading
             def _start_mcp():
                 self.mcp_manager.start_servers()
-                mcp_status = self.mcp_manager.status()
-                running = sum(1 for s in mcp_status.values() if s["running"])
-                total_tools = sum(s["tools"] for s in mcp_status.values())
-                if running > 0:
-                    def notify(r=running, t=total_tools):
-                        self.query_one("#messages", MessageDisplay).add_message(
-                            "system", f"MCP: {r} servers connected, {t} tools loaded"
-                        )
-                    self.call_from_thread(notify)
+                self.mcp_tools_count = sum(
+                    s["tools"] for s in self.mcp_manager.status().values() if s["running"]
+                )
+                self.mcp_servers_count = sum(
+                    1 for s in self.mcp_manager.status().values() if s["running"]
+                )
+                # Update status bar to show MCP info — no session message
+                self.call_from_thread(self._update_status)
             threading.Thread(target=_start_mcp, daemon=True).start()
         except Exception:
             self.mcp_manager = None
@@ -459,13 +460,10 @@ class LACPRepl(App):
         return self.AGENT_MODES[self.current_mode_index]
 
     def action_cycle_mode(self) -> None:
-        """Cycle through agent modes with Shift+Tab."""
+        """Cycle through agent modes — status bar only, no session message."""
         self.current_mode_index = (self.current_mode_index + 1) % len(self.AGENT_MODES)
         mode = self.current_mode
-        # Apply mode to system prompt
         self._apply_mode(mode["name"])
-        msgs = self.query_one("#messages", MessageDisplay)
-        msgs.add_message("system", f"Mode: {mode['label']} — {mode['description']}")
         self._update_status()
 
     def _apply_mode(self, mode_name: str) -> None:
@@ -512,6 +510,8 @@ class LACPRepl(App):
                 skin=self.skin,
                 elapsed=elapsed,
                 mode=mode_label,
+                mcp_servers=self.mcp_servers_count,
+                mcp_tools=self.mcp_tools_count,
             )
 
     def _estimate_cost(self) -> float:
