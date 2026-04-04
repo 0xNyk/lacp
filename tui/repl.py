@@ -157,6 +157,40 @@ class StatusBar(Static):
         pass  # Mode shown via messages, not status bar (keeps it clean)
 
 
+class ThinkingIndicator(Static):
+    """Animated thinking indicator with spinning faces and verbs."""
+
+    _frame = 0
+    _faces = ["◐", "◓", "◑", "◒"]
+    _verb = "thinking"
+    _dots = 0
+    _timer = None
+
+    def start(self, faces: list[str] | None = None, verb: str = "thinking") -> None:
+        self._faces = faces or ["◐", "◓", "◑", "◒"]
+        self._verb = verb
+        self._frame = 0
+        self._dots = 0
+        self._render_frame()
+        self._timer = self.set_interval(0.3, self._tick)
+
+    def stop(self) -> None:
+        if self._timer:
+            self._timer.stop()
+            self._timer = None
+        self.remove()
+
+    def _tick(self) -> None:
+        self._frame = (self._frame + 1) % len(self._faces)
+        self._dots = (self._dots + 1) % 4
+        self._render_frame()
+
+    def _render_frame(self) -> None:
+        face = self._faces[self._frame % len(self._faces)]
+        dots = "." * self._dots
+        self.update(f"  [dim]{face} {self._verb}{dots}[/dim]")
+
+
 class MessageDisplay(VerticalScroll):
     """Scrollable message display area."""
 
@@ -172,7 +206,21 @@ class MessageDisplay(VerticalScroll):
         self.mount(widget)
         self.scroll_end(animate=False)
 
+    def add_thinking(self, faces: list[str] | None = None, verb: str = "thinking") -> ThinkingIndicator:
+        indicator = ThinkingIndicator(id="thinking")
+        self.mount(indicator)
+        indicator.start(faces=faces, verb=verb)
+        self.scroll_end(animate=False)
+        return indicator
+
+    def remove_thinking(self) -> None:
+        try:
+            self.query_one("#thinking", ThinkingIndicator).stop()
+        except Exception:
+            pass
+
     def add_streaming_placeholder(self) -> Static:
+        self.remove_thinking()  # remove thinking when streaming starts
         widget = Static("", id="streaming")
         self.mount(widget)
         self.scroll_end(animate=False)
@@ -221,6 +269,11 @@ class LACPRepl(App):
     }
     Footer {
         height: 1;
+    }
+    .banner-box {
+        border: round $accent;
+        padding: 1 2;
+        margin: 0 1 1 1;
     }
     """
 
@@ -339,7 +392,7 @@ class LACPRepl(App):
             f"\n  [dim]Type /help for commands, /model <name> to switch[/]"
         )
 
-        banner_widget = Static(banner_text, markup=True)
+        banner_widget = Static(banner_text, markup=True, classes="banner-box")
         msgs.mount(banner_widget)
 
         # Resume previous session if requested
@@ -459,13 +512,12 @@ class LACPRepl(App):
         msgs.add_message("user", text)
         self.messages.append({"role": "user", "content": text})
 
-        # Show thinking indicator immediately
+        # Show animated thinking indicator
         import random
         verbs = self.skin.spinner.get("thinking_verbs", ["thinking"]) if self.skin else ["thinking"]
-        faces = self.skin.spinner.get("thinking_faces", ["◐"]) if self.skin else ["◐"]
-        face = random.choice(faces)
+        faces = self.skin.spinner.get("thinking_faces", ["◐", "◓", "◑", "◒"]) if self.skin else ["◐", "◓", "◑", "◒"]
         verb = random.choice(verbs)
-        msgs.add_message("system", f"{face} {verb}...")
+        msgs.add_thinking(faces=faces, verb=verb)
 
         # Stream response (runs in background worker thread)
         self._stream_response()

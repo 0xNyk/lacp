@@ -308,7 +308,13 @@ class OllamaProvider(Provider):
                     if content:
                         yield StreamEvent(type="text", text=content)
                     if data.get("done"):
-                        yield StreamEvent(type="done")
+                        # Ollama returns token counts in the final message
+                        usage = {}
+                        if "prompt_eval_count" in data:
+                            usage["input_tokens"] = data.get("prompt_eval_count", 0)
+                        if "eval_count" in data:
+                            usage["output_tokens"] = data.get("eval_count", 0)
+                        yield StreamEvent(type="done", usage=usage if usage else {})
                 except json.JSONDecodeError:
                     continue
 
