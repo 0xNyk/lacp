@@ -131,11 +131,19 @@ class DevPropertyRow(Vertical):
         self.prop = prop
         self.initial_value = value
 
+    @staticmethod
+    def _clean_id(s: str) -> str:
+        """Make a string safe for Textual widget IDs."""
+        import re
+        return re.sub(r'[^a-zA-Z0-9_-]', '', s.replace('.', '').replace('#', '').replace(':', '-').replace(' ', '-'))
+
     def compose(self) -> ComposeResult:
         yield Label(f"  [dim]{self.prop}:[/]", markup=True)
+        clean_sel = self._clean_id(self.selector)
+        clean_prop = self._clean_id(self.prop)
         yield Input(
             value=self.initial_value,
-            id=f"dev-{self.selector.replace('.', '').replace(' ', '-')}-{self.prop}",
+            id=f"dev-{clean_sel}-{clean_prop}",
             classes="dev-input",
         )
 
@@ -218,11 +226,11 @@ class DevPanel(VerticalScroll):
 
         # Find matching selector
         for selector, config in TWEAKABLE_SELECTORS.items():
-            clean_sel = selector.replace(".", "").replace(" ", "-")
+            clean_sel = DevPropertyRow._clean_id(selector)
             for prop in config["props"]:
-                if parts == f"{clean_sel}-{prop}":
+                clean_prop = DevPropertyRow._clean_id(prop)
+                if parts == f"{clean_sel}-{clean_prop}":
                     self._apply_css(selector, prop, new_value)
-                    # Update stored value
                     config["props"][prop] = new_value
                     return
 
