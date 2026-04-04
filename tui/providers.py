@@ -101,11 +101,14 @@ class AnthropicProvider(Provider):
             # but the OAuth token works, the API rejects with 400.
             _saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
             try:
+                import uuid
                 self._client = anthropic.Anthropic(
                     api_key=None,
                     auth_token=token,
                     default_headers={
                         "anthropic-beta": "oauth-2025-04-20",
+                        "x-app": "cli",
+                        "X-Claude-Code-Session-Id": str(uuid.uuid4()),
                     },
                 )
             finally:
