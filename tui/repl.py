@@ -543,7 +543,7 @@ class LACPRepl(App):
         Binding("ctrl+p", "command_palette", "palette", show=True, priority=True),
     ]
 
-    def __init__(self, model: str = "haiku", skin_name: str = "", resume: str = "", **kwargs: Any):
+    def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
         super().__init__(**kwargs)
         self.initial_model = model
         self.skin = load_skin(skin_name)
@@ -1335,7 +1335,7 @@ class LACPRepl(App):
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="LACP REPL — multi-provider agent session")
-    parser.add_argument("--model", default="haiku", help="Initial model (default: haiku, switch with /model)")
+    parser.add_argument("--model", default="sonnet", help="Initial model (default: sonnet)")
     parser.add_argument("--skin", default="", help="Visual skin (default, cyberpunk, minimal)")
     parser.add_argument("--resume", default="", nargs="?", const="latest",
                        help="Resume session (ID or 'latest')")

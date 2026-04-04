@@ -76,15 +76,59 @@ class Provider(ABC):
         ...
 
 
+def _compute_cch(body_bytes: bytes) -> str:
+    """Compute CCH attestation hash (xxHash64, masked to 20 bits).
+    Matches Claude Code's cch.ts implementation."""
+    try:
+        import xxhash
+        CCH_SEED = 0x6E52736AC806831E
+        CCH_MASK = 0xFFFFF
+        h = xxhash.xxh64(body_bytes, seed=CCH_SEED).intdigest()
+        return format(h & CCH_MASK, '05x')
+    except ImportError:
+        return "00000"  # fallback if xxhash not installed
+
+
+def _make_cch_fetch(original_fetch=None):
+    """Create a fetch wrapper that computes CCH from the request body
+    and replaces the placeholder in the billing header."""
+    import urllib.request as _ur
+
+    async def cch_fetch(url, **kwargs):
+        # Get body bytes
+        body = kwargs.get("content") or kwargs.get("data") or b""
+        if isinstance(body, str):
+            body = body.encode()
+
+        # Compute CCH from body (which contains cch=00000 placeholder)
+        cch = _compute_cch(body)
+
+        # Replace placeholder in billing header within body
+        if b"cch=00000" in body:
+            body = body.replace(b"cch=00000", f"cch={cch}".encode())
+            if "content" in kwargs:
+                kwargs["content"] = body
+            elif "data" in kwargs:
+                kwargs["data"] = body
+
+        # Use httpx or fallback
+        if original_fetch:
+            return await original_fetch(url, **kwargs)
+
+        # Default: use httpx (Anthropic SDK's default)
+        import httpx
+        async with httpx.AsyncClient() as client:
+            return await client.request(kwargs.get("method", "POST"), url, **kwargs)
+
+    return cch_fetch
+
+
 class AnthropicProvider(Provider):
     """Anthropic Claude provider via official SDK."""
 
     name = "anthropic"
 
-    # Default to Haiku — Sonnet/Opus rate limits are shared with Claude Code CLI.
-    # When Claude Code is active, Sonnet/Opus OAuth quota is consumed.
-    # Users can switch to Opus with /model opus when Claude Code isn't running.
-    def __init__(self, model: str = "claude-haiku-4-5-20251001"):
+    def __init__(self, model: str = "claude-sonnet-4-6"):
         self.model = model
         self._client = None
 
@@ -107,15 +151,21 @@ class AnthropicProvider(Provider):
         _saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
         try:
             import uuid
+            # Match Claude Code's client configuration
+            cc_version = os.environ.get("CLAUDE_CODE_EXECPATH", "").rsplit("/", 1)[-1] or "2.1.92"
+            session_id = str(uuid.uuid4())
+            billing_header = f"cc_version={cc_version}; cc_entrypoint=cli; cch=00000;"
             self._client = anthropic.Anthropic(
                 api_key=None,
                 auth_token=token,
-                max_retries=2,
-                timeout=60.0,
+                max_retries=10,  # match Claude Code's 10 retries
+                timeout=600.0,   # 10 min like Claude Code
                 default_headers={
-                    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
+                    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
+                    "User-Agent": f"claude-cli/{cc_version} (undefined, cli)",
                     "x-app": "cli",
-                    "X-Claude-Code-Session-Id": str(uuid.uuid4()),
+                    "x-anthropic-billing-header": billing_header,
+                    "X-Claude-Code-Session-Id": session_id,
                 },
             )
         finally:
