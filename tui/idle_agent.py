@@ -39,45 +39,20 @@ DEFAULT_CONFIG = {
     "experiment_timeout_secs": 120,  # max 2 min per experiment
     "max_experiments": 50,  # safety limit per session
     "auto_start": False,  # require explicit /autoresearch on
-    "agent": "claude",  # which agent to delegate to
+    "agent": "codex",  # which agent to delegate to (codex = OpenAI gpt-5.3)
     "branch_prefix": "autoresearch",
 }
 
-# The autoresearch program for LACP — equivalent to program.md
-LACP_PROGRAM = """
-You are an autonomous researcher improving LACP (Local Agent Control Plane).
-You are working in the LACP repo at {repo_root}.
-
-## Goal
-Make small, focused improvements to the LACP TUI (tui/ directory).
-Each experiment should be a single, testable change.
-
-## Rules
-1. Only modify files in tui/ directory
-2. Every change MUST pass: python3 -c "from tui.repl import LACPRepl"
-3. Do NOT modify tui/providers.py auth code
-4. Do NOT add new dependencies
-5. Keep changes small (< 20 lines diff)
-6. Commit each experiment separately
-
-## Experiment Ideas (pick one per run)
-- Improve CSS spacing/padding for better readability
-- Add missing emoji mappings in display.py
-- Improve error messages in tools.py
-- Add new slash command suggestions
-- Optimize status bar layout
-- Improve banner text formatting
-- Add color variations to skins
-
-## Process
-1. Pick ONE small improvement
-2. Make the change
-3. Run: python3 -c "from tui.repl import LACPRepl; print('OK')"
-4. If OK: commit with descriptive message
-5. If fail: revert immediately
-
-Report what you changed and whether it passed.
-""".strip()
+def _load_program() -> str:
+    """Load the autoresearch program from config file, or use inline default."""
+    program_file = LACP_ROOT / "config" / "autoresearch-program.md"
+    if program_file.exists():
+        return program_file.read_text(encoding="utf-8").replace("{repo_root}", str(LACP_ROOT))
+    # Inline fallback
+    return f"""You are an autonomous researcher improving LACP at {LACP_ROOT}.
+Only modify tui/ files. Run python3 {LACP_ROOT}/tui/autoresearch_metrics.py to measure health score.
+Goal: maximize health score. Keep changes small (<30 lines). Commit improvements, revert failures.
+NEVER STOP until manually interrupted."""
 
 
 @dataclass
@@ -164,6 +139,14 @@ class IdleAgent:
         self._log("Idle agent enabled — will start research after "
                   f"{self.state.config['idle_threshold_secs']}s idle")
 
+    def start_now(self) -> None:
+        """Start a research experiment immediately (no idle wait)."""
+        self.state.enabled = True
+        self.state._stop_event.clear()
+        self._log("Starting autoresearch immediately...")
+        thread = threading.Thread(target=self._run_experiment, daemon=True)
+        thread.start()
+
     def stop(self) -> None:
         """Stop idle monitoring."""
         self.state.enabled = False
@@ -187,6 +170,18 @@ class IdleAgent:
             # Check every 30s
             self.state._stop_event.wait(30)
 
+    def _get_baseline_score(self) -> float:
+        """Run metrics to get current health score."""
+        try:
+            result = subprocess.run(
+                ["python3", str(LACP_ROOT / "tui" / "autoresearch_metrics.py"), "--score"],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(LACP_ROOT),
+            )
+            return float(result.stdout.strip()) if result.returncode == 0 else 0.0
+        except Exception:
+            return 0.0
+
     def _run_experiment(self) -> None:
         """Run a single autoresearch experiment via agent delegation."""
         if self.state.total_experiments >= self.state.config["max_experiments"]:
@@ -197,11 +192,17 @@ class IdleAgent:
         agent = self.state.config["agent"]
         timeout = self.state.config["experiment_timeout_secs"]
 
+        # Get baseline score before experiment
+        baseline_score = self._get_baseline_score()
+        self._log(f"Baseline health score: {baseline_score}")
+
         # Build the prompt
-        program = LACP_PROGRAM.format(repo_root=LACP_ROOT)
+        program = _load_program()
         prompt = (
+            f"Current LACP health score: {baseline_score}/100\n\n"
             f"Read this program and run ONE experiment:\n\n{program}\n\n"
-            f"Pick a small improvement, make the change, test it, and report."
+            f"Pick a small improvement, make the change, validate with "
+            f"python3 {LACP_ROOT}/tui/autoresearch_metrics.py --score, and report."
         )
 
         # Create branch if needed
@@ -243,14 +244,11 @@ class IdleAgent:
             output = result.stdout.strip()
             exp.duration_secs = time.time() - start_time
 
-            # Validate — does LACP still import?
-            validate = subprocess.run(
-                ["python3", "-c", "from tui.repl import LACPRepl; print('OK')"],
-                capture_output=True, text=True, timeout=10,
-                cwd=str(LACP_ROOT),
-            )
+            # Validate — check health score improved or maintained
+            new_score = self._get_baseline_score()
+            exp.duration_secs = time.time() - start_time
 
-            if validate.returncode == 0 and "OK" in validate.stdout:
+            if new_score >= baseline_score:
                 # Get latest commit
                 commit_result = subprocess.run(
                     ["git", "log", "--oneline", "-1"],
@@ -259,18 +257,21 @@ class IdleAgent:
                 )
                 exp.commit = commit_result.stdout.strip()[:7]
                 exp.status = "keep"
-                exp.description = output[:200] if output else "experiment completed"
-                self._log(f"Experiment KEEP: {exp.description[:80]}")
+                delta = new_score - baseline_score
+                desc = output[:150] if output else "experiment completed"
+                exp.description = f"[{baseline_score}→{new_score} Δ{delta:+.1f}] {desc}"
+                self._log(f"KEEP ({baseline_score}→{new_score}): {desc[:60]}")
             else:
-                # Revert
+                # Revert — score decreased
                 subprocess.run(
-                    ["git", "reset", "--hard", "HEAD~1"],
+                    ["git", "checkout", "--", "tui/"],
                     capture_output=True, timeout=10,
                     cwd=str(LACP_ROOT),
                 )
+                delta = new_score - baseline_score
                 exp.status = "discard"
-                exp.description = f"validation failed: {validate.stderr[:100]}"
-                self._log(f"Experiment DISCARD: {exp.description[:80]}")
+                exp.description = f"[{baseline_score}→{new_score} Δ{delta:+.1f}] score decreased"
+                self._log(f"DISCARD ({baseline_score}→{new_score}): score decreased")
 
         except subprocess.TimeoutExpired:
             exp.status = "crash"
