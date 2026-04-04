@@ -685,7 +685,16 @@ class LACPRepl(App):
                     loop.close()
 
             except Exception as e:
-                self.streaming_content = f"**Error**: {e}"
+                err_str = str(e)
+                # Add debug info for auth errors
+                if "credit balance" in err_str or "400" in err_str:
+                    auth_info = f"\n\nDebug: provider={self.provider.name}, model={self.provider.model}"
+                    if hasattr(self.provider, '_client') and self.provider._client:
+                        c = self.provider._client
+                        auth_info += f", api_key={'set' if c.api_key else 'None'}"
+                        auth_info += f", auth_token={'set' if getattr(c, 'auth_token', None) else 'None'}"
+                    err_str += auth_info
+                self.streaming_content = f"**Error**: {err_str}"
 
             # Finalize streaming text for this turn
             final_content = self.streaming_content
