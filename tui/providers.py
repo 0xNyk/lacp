@@ -457,7 +457,7 @@ MODEL_PROVIDERS = {
     "o4-mini": ("openai", "o4-mini"),
     "gpt-4.1": ("openai", "gpt-4.1"),
     "gpt-5": ("openai", "gpt-5"),
-    "codex": ("openai", "o3"),
+    "codex": ("openai", "gpt-5.3-codex"),
     # Ollama
     "llama": ("ollama", "llama3.1:8b"),
     "qwen": ("ollama", "qwen2.5:72b"),

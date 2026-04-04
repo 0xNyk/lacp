@@ -703,10 +703,10 @@ class LACPRepl(App):
                 # Auto-fallback on rate limit (429) or credit error (400)
                 if "429" in err_str or "rate_limit" in err_str or "credit balance" in err_str:
                     import time as _time
-                    # Try fallback to another provider
+                    # Try fallback chain
                     fallback_models = [
-                        ("openai", "gpt-4.1"),
-                        ("ollama", "llama3.1:8b"),
+                        ("anthropic", "claude-haiku-4-5-20251001"),  # cheaper, less rate limited
+                        ("ollama", "llama3.1:8b"),  # local, no rate limits
                     ]
                     # Remove current provider from fallbacks
                     current = self.provider.name if self.provider else ""
