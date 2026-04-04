@@ -9,7 +9,7 @@ LACP is a harness-first execution framework with policy-gated operations, verifi
 [![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/network/members)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Stable](https://img.shields.io/badge/Status-stable%20v0.3.x-brightgreen)](https://github.com/0xNyk/lacp/releases)
+[![Alpha](https://img.shields.io/badge/Status-alpha%20v0.9.0-orange)](https://github.com/0xNyk/lacp/releases)
 [![Last commit](https://img.shields.io/github/last-commit/0xNyk/lacp)](https://github.com/0xNyk/lacp/commits/main)
 [![Open issues](https://img.shields.io/github/issues/0xNyk/lacp)](https://github.com/0xNyk/lacp/issues)
 [![Shell](https://img.shields.io/badge/Shell-bash%20%2B%20python3-blue)](https://github.com/0xNyk/lacp)
@@ -20,7 +20,7 @@ LACP is a harness-first execution framework with policy-gated operations, verifi
 
 ---
 
-> **Stable Release** — LACP is stable for daily local-first operations. Defaults, command contracts, and core workflows are backward-compatible. If something regresses, [open an issue](https://github.com/0xNyk/lacp/issues).
+> **Alpha Release** — LACP v0.9.0 is under active development. The native REPL, multi-provider routing, hermes-style tool display, and memory system are functional but evolving fast. APIs and CLI interfaces may change between releases. [Report issues](https://github.com/0xNyk/lacp/issues).
 
 ## Contents
 
