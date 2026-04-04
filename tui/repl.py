@@ -144,36 +144,53 @@ HELP_TEXT = """## LACP REPL Commands
 
 
 class StatusBar(Static):
-    """Top status bar showing provider/model/tokens."""
+    """Interactive status bar — model, mode, MCP, tokens, memory, cost, time.
+
+    Each segment is visually distinct and actionable via keyboard shortcuts
+    shown in the footer. The bar acts as the single source of runtime info.
+    """
 
     def update_status(
         self, provider: str, model: str, tokens: int = 0,
         cost: float = 0.0, skin: Skin | None = None, elapsed: float = 0.0,
         mode: str = "Normal", mcp_servers: int = 0, mcp_tools: int = 0,
+        memory_count: int = 0,
     ) -> None:
         badge = skin.badge(provider) if skin else provider
         mins = int(elapsed // 60)
         secs = int(elapsed % 60)
         time_str = f"{mins}:{secs:02d}"
+
+        # Shorten model name
         short_model = model
         for prefix in ("claude-", "gpt-", "gemini-"):
             if short_model.startswith(prefix):
                 short_model = short_model[len(prefix):]
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
-        mode_colors = {"Normal": "#666677", "Plan": "#4ade80", "Think": "#a78bfa", "YOLO": "#ef4444"}
-        mode_color = mode_colors.get(mode, "#666677")
-        mcp_str = f"  [dim]MCP:{mcp_tools}[/]  │" if mcp_tools > 0 else ""
-        cost_str = f"${cost:.4f}" if cost > 0 else "$0"
-        self.update(
-            f" {badge} [bold]{short_model}[/]  │  "
-            f"[{mode_color}]{mode}[/]  │  "
-            f"{mcp_str}  tok:{tokens:,}  │  {cost_str}  │  {time_str}"
-        )
 
-    def update_mode(self, mode_label: str) -> None:
-        """Update mode display in status bar (appended)."""
-        pass  # Mode shown via messages, not status bar (keeps it clean)
+        # Mode colors
+        mode_colors = {
+            "Normal": "#666677", "Plan": "#4ade80",
+            "Think": "#a78bfa", "YOLO": "#ef4444",
+        }
+        mode_color = mode_colors.get(mode, "#666677")
+
+        # Build segments
+        parts = [
+            f" {badge} [bold]{short_model}[/]",
+            f"[{mode_color}]{mode}[/]",
+        ]
+        if mcp_tools > 0:
+            parts.append(f"[dim]MCP:{mcp_tools}[/]")
+        if memory_count > 0:
+            parts.append(f"[dim]🧠{memory_count}[/]")
+        parts.append(f"tok:{tokens:,}")
+        if cost > 0:
+            parts.append(f"${cost:.4f}")
+        parts.append(time_str)
+
+        self.update("  │  ".join(parts))
 
 
 class ThinkingIndicator(Static):
@@ -373,6 +390,8 @@ class LACPRepl(App):
         Binding("ctrl+l", "clear_screen", "Clear"),
         Binding("ctrl+t", "cycle_mode", "Mode", priority=True),
         Binding("shift+tab", "cycle_mode", show=False, priority=True),
+        Binding("ctrl+e", "cycle_model", "Model", priority=True),
+        Binding("ctrl+p", "command_palette", "palette", show=True, priority=True),
     ]
 
     def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
@@ -441,42 +460,17 @@ class LACPRepl(App):
         # Update status bar
         self._update_status()
 
-        # Welcome banner — logo + info in one bordered box
+        # Welcome banner — pure branding (logo + tagline)
         msgs = self.query_one("#messages", MessageDisplay)
-        available = list_providers()
 
         logo = self.skin.banner_logo.strip()
 
-        # Provider status (deduplicate — hermes is already in PROVIDERS)
-        provider_parts = []
-        for p in available:
-            icon = "[green]✓[/]" if p["available"] else "[dim]✗[/]"
-            name = p["name"]
-            if self.provider and name == self.provider.name:
-                provider_parts.append(f"{icon} [bold]{name}[/]")
-            else:
-                provider_parts.append(f"{icon} {name}")
-        providers_str = "  ".join(provider_parts)
-
-        short_model = self.provider.model
-        for prefix in ("claude-", "gpt-", "gemini-"):
-            if short_model.startswith(prefix):
-                short_model = short_model[len(prefix):]
-        if len(short_model) > 15 and short_model[-8:].isdigit():
-            short_model = short_model[:-9]
-
-        tool_count = len(get_tool_definitions())
-        mcp_str = f"  +MCP" if self.mcp_manager and self.mcp_manager.servers else ""
-
-        # Build unified banner: logo + separator + info
         banner_text = ""
         if logo:
             banner_text += f"{logo}\n"
-        banner_text += f"  [dim #333355]{'─' * 60}[/]\n"
         banner_text += (
-            f"  [bold]v{VERSION}[/]  │  {providers_str}"
-            f"  │  [bold]{short_model}[/]  │  {tool_count} tools{mcp_str}\n"
-            f"  [dim]{self.skin.brand('welcome')} Type /help for commands.[/]"
+            f"  [bold]v{VERSION}[/]  │  {self.skin.brand('tagline')}\n"
+            f"  [dim]{self.skin.brand('welcome')} Type /help for commands, Ctrl+T to switch mode.[/]"
         )
 
         banner_widget = Static(banner_text, markup=True, classes="banner-box")
@@ -508,11 +502,36 @@ class LACPRepl(App):
     def current_mode(self) -> dict:
         return self.AGENT_MODES[self.current_mode_index]
 
+    # Model cycle order
+    MODEL_CYCLE = ["sonnet", "opus", "haiku", "codex", "hermes", "llama"]
+    _model_cycle_index = 0
+
     def action_cycle_mode(self) -> None:
-        """Cycle through agent modes — status bar only, no session message."""
+        """Cycle through agent modes — status bar only."""
         self.current_mode_index = (self.current_mode_index + 1) % len(self.AGENT_MODES)
         mode = self.current_mode
         self._apply_mode(mode["name"])
+        self._update_status()
+
+    def action_cycle_model(self) -> None:
+        """Cycle through models with Ctrl+E."""
+        self._model_cycle_index = (self._model_cycle_index + 1) % len(self.MODEL_CYCLE)
+        model_name = self.MODEL_CYCLE[self._model_cycle_index]
+        try:
+            self.provider = create_provider(model=model_name)
+            self._update_status()
+        except Exception:
+            # Skip unavailable, try next
+            self.action_cycle_model()
+
+    def action_clear_screen(self) -> None:
+        """Clear conversation."""
+        self.messages.clear()
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        display = self.query_one("#messages", MessageDisplay)
+        for child in list(display.children):
+            child.remove()
         self._update_status()
 
     def _apply_mode(self, mode_name: str) -> None:
@@ -551,6 +570,9 @@ class LACPRepl(App):
             cost = self._estimate_cost()
             elapsed = time.time() - self.session_start
             mode_label = self.current_mode["label"]
+            # Count memory entries
+            mem_dir = Path.home() / ".lacp" / "memory"
+            mem_count = len(list(mem_dir.glob("*.json"))) if mem_dir.exists() else 0
             self.query_one("#status", StatusBar).update_status(
                 self.provider.name,
                 self.provider.model,
@@ -561,6 +583,7 @@ class LACPRepl(App):
                 mode=mode_label,
                 mcp_servers=self.mcp_servers_count,
                 mcp_tools=self.mcp_tools_count,
+                memory_count=mem_count,
             )
 
     def _estimate_cost(self) -> float:
