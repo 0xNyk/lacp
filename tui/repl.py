@@ -809,7 +809,7 @@ class LACPRepl(App):
 
                     def clear_ph() -> None:
                         try:
-                            msgs.query_one(f"#{getattr(msgs, "_streaming_id", "none")}", Static).remove()
+                            _sid = getattr(msgs, "_streaming_id", "none"); msgs.query_one(f"#{_sid}", Static).remove()
                         except Exception:
                             pass
                     self.call_from_thread(clear_ph)
@@ -861,7 +861,7 @@ class LACPRepl(App):
                 # Remove empty placeholder
                 def remove_ph() -> None:
                     try:
-                        msgs.query_one(f"#{getattr(msgs, "_streaming_id", "none")}", Static).remove()
+                        _sid = getattr(msgs, "_streaming_id", "none"); msgs.query_one(f"#{_sid}", Static).remove()
                     except Exception:
                         pass
                 self.call_from_thread(remove_ph)
