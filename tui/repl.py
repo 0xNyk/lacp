@@ -955,20 +955,27 @@ class LACPRepl(App):
 
                             elif event.type == "tool_use":
                                 if event.tool_call:
-                                    # content_block_stop emits complete tool call with parsed input
                                     if event.tool_call.input:
+                                        # content_block_stop — complete tool call
                                         pending_tool_calls.append({
                                             "id": event.tool_call.id,
                                             "name": event.tool_call.name,
                                             "input": event.tool_call.input,
                                         })
                                     else:
-                                        # content_block_start — just track for display
+                                        # content_block_start — show tool name immediately
                                         current_tool_call = {
                                             "id": event.tool_call.id,
                                             "name": event.tool_call.name,
                                             "input": {},
                                         }
+                                        tc_name = event.tool_call.name
+                                        def show_tool_pending(name: str = tc_name) -> None:
+                                            from display import get_tool_emoji, get_tool_verb
+                                            emoji = get_tool_emoji(name)
+                                            verb = get_tool_verb(name)
+                                            msgs.add_message("tool", f"[dim #444466]┊[/] {emoji} [dim]{verb}...[/]")
+                                        self.call_from_thread(show_tool_pending)
 
                             elif event.type == "done":
                                 if event.usage:
