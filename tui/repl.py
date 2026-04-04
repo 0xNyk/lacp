@@ -204,7 +204,7 @@ class ThinkingIndicator(Static):
     def _render_frame(self) -> None:
         face = self._faces[self._frame % len(self._faces)]
         dots = "." * self._dots
-        self.update(f"  [dim]{face} {self._verb}{dots}[/dim]")
+        self.update(f"   [dim]{face} {self._verb}{dots}[/dim]")
 
 
 class MessageDisplay(VerticalScroll):
@@ -212,14 +212,15 @@ class MessageDisplay(VerticalScroll):
 
     def add_message(self, role: str, content: str) -> None:
         if role == "user":
-            widget = Static(f"\n  [bold #00d4ff]❯ You[/]\n  [#cccccc]{content}[/]\n", markup=True, classes="user-msg")
+            widget = Static(f"[bold #00d4ff]❯ You[/]\n[#cccccc]{content}[/]", markup=True, classes="user-msg")
         elif role == "assistant":
-            label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True)
+            label = Static("[bold #aa88ff]⚡ LACP[/]", markup=True, classes="assistant-label")
             self.mount(label)
             widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         elif role == "system":
-            # System messages with horizontal rules
-            widget = Static(f"  [#333355]─────[/] [#555577]{content}[/] [#333355]─────[/]", markup=True, classes="system-msg")
+            widget = Static(f"[dim #444466]│[/] [#555577]{content}[/]", markup=True, classes="system-msg")
+        elif role == "tool":
+            widget = Static(f"[dim #444466]│[/] [dim #666688]{content}[/]", markup=True, classes="tool-msg")
         else:
             widget = Static(content)
         self.mount(widget)
@@ -242,10 +243,9 @@ class MessageDisplay(VerticalScroll):
         self.remove_thinking()
         self._streaming_id = f"stream-{time.time_ns()}"
         self._streaming_label_id = f"label-{time.time_ns()}"
-        # Show label + placeholder together
-        label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True, id=self._streaming_label_id)
+        label = Static("[bold #aa88ff]⚡ LACP[/]", markup=True, id=self._streaming_label_id, classes="assistant-label")
         self.mount(label)
-        widget = Static("", id=self._streaming_id)
+        widget = Static("", id=self._streaming_id, classes="assistant-msg")
         self.mount(widget)
         self.scroll_end(animate=False)
         return widget
@@ -261,7 +261,6 @@ class MessageDisplay(VerticalScroll):
                     pass
 
     def finalize_streaming(self, content: str) -> None:
-        # Remove placeholder (keep label)
         sid = getattr(self, "_streaming_id", "")
         if sid:
             try:
@@ -294,7 +293,7 @@ class LACPRepl(App):
     }
     MessageDisplay {
         height: 1fr;
-        padding: 0 2;
+        padding: 0 1;
         background: #000000;
     }
     #input-area {
@@ -315,21 +314,30 @@ class LACPRepl(App):
     }
     .banner-box {
         border: round #333355;
-        padding: 1 2;
-        margin: 0 0 1 0;
+        padding: 1 3;
+        margin: 0 1 1 1;
         background: #050510;
     }
     .user-msg {
-        margin: 0 0 0 0;
-        padding: 0 2;
+        margin: 1 0 0 0;
+        padding: 0 3;
     }
     .assistant-msg {
         margin: 0 0 1 0;
-        padding: 0 4;
+        padding: 0 3 0 5;
+    }
+    .assistant-label {
+        padding: 1 0 0 3;
     }
     .system-msg {
         margin: 1 0;
-        padding: 0 0;
+        padding: 0 3;
+        color: #555577;
+    }
+    .tool-msg {
+        margin: 0;
+        padding: 0 3 0 5;
+        color: #555577;
     }
     Static {
         background: transparent;
@@ -389,11 +397,6 @@ class LACPRepl(App):
         try:
             self.provider = create_provider(model=self.initial_model)
             self.system_prompt = build_system_prompt()
-            # Debug: show auth state
-            if self.provider and hasattr(self.provider, '_client') and self.provider._client:
-                c = self.provider._client
-                auth_info = f"Auth debug: api_key={'set' if c.api_key else 'None'}, auth_token={'set' if getattr(c, 'auth_token', None) else 'None'}"
-                self.query_one("#messages", MessageDisplay).add_message("system", auth_info)
         except Exception as e:
             self.query_one("#messages", MessageDisplay).add_message(
                 "system", f"Error initializing provider: {e}"
@@ -925,7 +928,7 @@ class LACPRepl(App):
                 # Show tool execution in UI
                 def show_tool(name: str = tool_name, inp: dict = tool_input) -> None:
                     short_input = json.dumps(inp)[:100]
-                    msgs.add_message("system", f"🔧 {name}({short_input})")
+                    msgs.add_message("tool", f"🔧 {name}({short_input})")
                 self.call_from_thread(show_tool)
 
                 # Execute — route MCP tools to MCP manager
