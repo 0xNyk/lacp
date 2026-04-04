@@ -90,21 +90,56 @@ class AnthropicProvider(Provider):
             import anthropic
 
             token = read_claude_oauth()
+
+            # Debug: trace ALL auth sources
+            _debug_path = Path.home() / ".lacp" / "auth-debug.log"
+            try:
+                import time as _time
+                _env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+                _env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                with _debug_path.open("w") as _f:
+                    _f.write(f"timestamp: {_time.strftime('%H:%M:%S')}\n")
+                    _f.write(f"CLAUDE_CODE_OAUTH_TOKEN: {'SET:' + _env_token[:15] if _env_token else 'not set'}\n")
+                    _f.write(f"ANTHROPIC_API_KEY: {'SET:' + _env_key[:15] if _env_key else 'not set'}\n")
+                    _f.write(f"read_claude_oauth(): {token[:20] if token else 'EMPTY'}\n")
+                    _f.write(f"token_len: {len(token)}\n")
+                    _f.write(f"PID: {os.getpid()}\n")
+                    _f.write(f"PPID: {os.getppid()}\n")
+                    # Check parent process env
+                    try:
+                        import subprocess as _sp
+                        _parent_env = _sp.run(
+                            ["ps", "eww", str(os.getppid())],
+                            capture_output=True, text=True, timeout=2,
+                        ).stdout
+                        if "ANTHROPIC_API_KEY" in _parent_env:
+                            _f.write("PARENT HAS ANTHROPIC_API_KEY!\n")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             if not token:
                 raise RuntimeError(
-                    "No Anthropic credentials. Claude Code OAuth auto-detected from Keychain, "
-                    "or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
+                    "No Anthropic credentials. Set ANTHROPIC_API_KEY or export OAuth token to ~/.lacp/credentials.json"
                 )
 
-            # Always use auth_token for OAuth — the token check was unreliable
-            # in some contexts (Textual TUI, keychain fallback, etc.)
-            # The Anthropic SDK handles both API keys and OAuth tokens via auth_token
-            self._client = anthropic.Anthropic(
-                auth_token=token,
-                default_headers={
-                    "anthropic-beta": "oauth-2025-04-20",
-                },
-            )
+            # Always use auth_token — works for both API keys and OAuth tokens
+            # IMPORTANT: Unset ANTHROPIC_API_KEY from env to prevent the SDK
+            # from auto-reading it and sending x-api-key alongside Bearer auth
+            _saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+            try:
+                self._client = anthropic.Anthropic(
+                    api_key=None,
+                    auth_token=token,
+                    default_headers={
+                        "anthropic-beta": "oauth-2025-04-20",
+                    },
+                )
+            finally:
+                # Restore env var for other tools that might need it
+                if _saved_key is not None:
+                    os.environ["ANTHROPIC_API_KEY"] = _saved_key
         return self._client
 
     def is_available(self) -> bool:
@@ -329,15 +364,23 @@ def read_claude_oauth() -> str:
     2. ANTHROPIC_API_KEY env var
     3. macOS Keychain "Claude Code-credentials" (plain JSON, not encrypted)
     """
-    # Env vars first
+    # 1. Explicit OAuth token env var (highest priority)
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if token:
         return token
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        return api_key
 
-    # Keychain: "Claude Code-credentials" stores plain JSON with OAuth tokens
+    # 2. Credentials file (exported OAuth token — works in all contexts)
+    creds_file = Path.home() / ".lacp" / "credentials.json"
+    if creds_file.exists():
+        try:
+            data = json.loads(creds_file.read_text(encoding="utf-8"))
+            token = data.get("anthropic_token", "")
+            if token:
+                return token
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 3. Keychain (may not work in all contexts like Textual TUI)
     raw = _read_keychain_service("Claude Code-credentials")
     if raw:
         try:
@@ -348,16 +391,10 @@ def read_claude_oauth() -> str:
         except json.JSONDecodeError:
             pass
 
-    # Fallback: ~/.lacp/credentials.json (for when keychain is inaccessible)
-    creds_file = Path.home() / ".lacp" / "credentials.json"
-    if creds_file.exists():
-        try:
-            data = json.loads(creds_file.read_text(encoding="utf-8"))
-            token = data.get("anthropic_token", "")
-            if token:
-                return token
-        except (json.JSONDecodeError, OSError):
-            pass
+    # 4. ANTHROPIC_API_KEY env var (lowest priority — may be a no-credit API key)
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return api_key
 
     return ""
 
