@@ -96,16 +96,15 @@ class AnthropicProvider(Provider):
                     "or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN"
                 )
 
-            # OAuth tokens (sk-ant-oat*) use auth_token param + beta header
-            if token.startswith("sk-ant-oat"):
-                self._client = anthropic.Anthropic(
-                    auth_token=token,
-                    default_headers={
-                        "anthropic-beta": "oauth-2025-04-20",
-                    },
-                )
-            else:
-                self._client = anthropic.Anthropic(api_key=token)
+            # Always use auth_token for OAuth — the token check was unreliable
+            # in some contexts (Textual TUI, keychain fallback, etc.)
+            # The Anthropic SDK handles both API keys and OAuth tokens via auth_token
+            self._client = anthropic.Anthropic(
+                auth_token=token,
+                default_headers={
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+            )
         return self._client
 
     def is_available(self) -> bool:
