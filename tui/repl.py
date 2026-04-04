@@ -147,6 +147,7 @@ class StatusBar(Static):
     def update_status(
         self, provider: str, model: str, tokens: int = 0,
         cost: float = 0.0, skin: Skin | None = None, elapsed: float = 0.0,
+        mode: str = "Normal",
     ) -> None:
         badge = skin.badge(provider) if skin else provider
         mins = int(elapsed // 60)
@@ -157,11 +158,14 @@ class StatusBar(Static):
         for prefix in ("claude-", "gpt-", "gemini-"):
             if short_model.startswith(prefix):
                 short_model = short_model[len(prefix):]
-        # Remove date suffixes like -20250514
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
+        # Mode colors
+        mode_colors = {"Normal": "#888888", "Plan": "#4ade80", "Think": "#a78bfa", "YOLO": "#ef4444"}
+        mode_color = mode_colors.get(mode, "#888888")
         self.update(
-            f" ⚡ LACP v{VERSION}  │  {badge} [bold]{short_model}[/]  │  "
+            f" {badge} [bold]{short_model}[/]  │  "
+            f"[{mode_color}]{mode}[/]  │  "
             f"tokens: {tokens:,}  │  ${cost:.4f}  │  {time_str}"
         )
 
@@ -270,13 +274,13 @@ class LACPRepl(App):
     }
     MessageDisplay {
         height: 1fr;
-        padding: 0 1;
+        padding: 0 2;
         background: #000000;
     }
     #input-area {
         height: auto;
         max-height: 5;
-        padding: 0 1 1 1;
+        padding: 0 2 0 2;
     }
     Input {
         border: tall #00aaff;
@@ -289,7 +293,7 @@ class LACPRepl(App):
     .banner-box {
         border: round #333355;
         padding: 1 2;
-        margin: 0 1 1 1;
+        margin: 0 0 1 0;
         background: #050510;
     }
     Markdown {
@@ -311,7 +315,7 @@ class LACPRepl(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "clear_screen", "Clear"),
-        Binding("shift+tab", "cycle_mode", "Mode"),
+        Binding("ctrl+t", "cycle_mode", "Mode"),
     ]
 
     def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
@@ -331,7 +335,6 @@ class LACPRepl(App):
         self.mcp_manager: MCPManager | None = None
 
     def compose(self) -> ComposeResult:
-        yield StatusBar(id="status")
         yield MessageDisplay(id="messages")
         with Vertical(id="input-area"):
             prompt_symbol = self.skin.brand("prompt_symbol") or "⚡ ❯ "
@@ -340,6 +343,7 @@ class LACPRepl(App):
                 id="prompt",
                 suggester=SuggestFromList(SLASH_COMMANDS, case_sensitive=False),
             )
+        yield StatusBar(id="status")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -496,6 +500,7 @@ class LACPRepl(App):
         if self.provider:
             cost = self._estimate_cost()
             elapsed = time.time() - self.session_start
+            mode_label = self.current_mode["label"]
             self.query_one("#status", StatusBar).update_status(
                 self.provider.name,
                 self.provider.model,
@@ -503,6 +508,7 @@ class LACPRepl(App):
                 cost,
                 skin=self.skin,
                 elapsed=elapsed,
+                mode=mode_label,
             )
 
     def _estimate_cost(self) -> float:
