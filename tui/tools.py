@@ -379,7 +379,7 @@ def _handle_delegate(params: dict[str, Any]) -> str:
     agent_cmds = {
         "claude": ["claude", "-p", task],
         "codex": ["codex", "exec", task],
-        "hermes": ["hermes", "--print", task],
+        "hermes": ["hermes", "chat", "-Q", "-q", task],
         "gemini": ["gemini", "-p", task],
         "aider": ["aider", "--message", task],
     }
@@ -448,6 +448,290 @@ TOOL_REGISTRY["delegate"] = Tool(
     },
     handler=_handle_delegate,
 )
+
+
+# ─── Memory Tools ────────────────────────────────────────────────
+
+
+_MEMORY_DIR = Path.home() / ".lacp" / "memory"
+
+
+def _handle_memory_read(params: dict[str, Any]) -> str:
+    """Read a memory entry by key."""
+    key = params.get("key", "")
+    if not key:
+        return json.dumps({"error": "No key provided"})
+
+    file_path = _MEMORY_DIR / f"{key}.json"
+    if not file_path.exists():
+        return json.dumps({"error": f"Memory key not found: {key}", "available": _list_memory_keys()})
+
+    try:
+        return file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_memory_write(params: dict[str, Any]) -> str:
+    """Write or update a memory entry."""
+    key = params.get("key", "")
+    content = params.get("content", "")
+    if not key:
+        return json.dumps({"error": "No key provided"})
+    if not content:
+        return json.dumps({"error": "No content provided"})
+
+    _MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = _MEMORY_DIR / f"{key}.json"
+
+    try:
+        import time as _t
+        data = {
+            "key": key,
+            "content": content,
+            "updated_at": _t.strftime("%Y-%m-%dT%H:%M:%S"),
+            "tags": params.get("tags", []),
+        }
+        file_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return json.dumps({"ok": True, "key": key, "action": "updated" if file_path.exists() else "created"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _handle_memory_search(params: dict[str, Any]) -> str:
+    """Search memory entries by keyword."""
+    query = params.get("query", "").lower()
+    if not query:
+        return json.dumps({"error": "No query provided"})
+
+    if not _MEMORY_DIR.exists():
+        return json.dumps({"results": [], "count": 0})
+
+    results = []
+    for f in sorted(_MEMORY_DIR.glob("*.json")):
+        try:
+            text = f.read_text(encoding="utf-8")
+            if query in text.lower():
+                data = json.loads(text)
+                results.append({
+                    "key": f.stem,
+                    "preview": str(data.get("content", ""))[:200],
+                    "updated": data.get("updated_at", ""),
+                })
+        except Exception:
+            continue
+
+    return json.dumps({"results": results[:20], "count": len(results)})
+
+
+def _list_memory_keys() -> list[str]:
+    if not _MEMORY_DIR.exists():
+        return []
+    return sorted(f.stem for f in _MEMORY_DIR.glob("*.json"))
+
+
+def _handle_memory_list(params: dict[str, Any]) -> str:
+    """List all memory keys."""
+    keys = _list_memory_keys()
+    return json.dumps({"keys": keys, "count": len(keys)})
+
+
+TOOL_REGISTRY["memory_read"] = Tool(
+    name="memory_read",
+    description="Read a persisted memory entry by key. Memory stores facts, context, and learned patterns across sessions.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "description": "Memory key to read"},
+        },
+        "required": ["key"],
+    },
+    handler=_handle_memory_read,
+)
+
+TOOL_REGISTRY["memory_write"] = Tool(
+    name="memory_write",
+    description="Write or update a persisted memory entry. Use to store facts, context, decisions, or patterns for future sessions.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "key": {"type": "string", "description": "Memory key (e.g., 'project-goals', 'user-preferences')"},
+            "content": {"type": "string", "description": "Content to store"},
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags for categorization"},
+        },
+        "required": ["key", "content"],
+    },
+    handler=_handle_memory_write,
+)
+
+TOOL_REGISTRY["memory_search"] = Tool(
+    name="memory_search",
+    description="Search memory entries by keyword. Returns matching entries with previews.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+        },
+        "required": ["query"],
+    },
+    handler=_handle_memory_search,
+)
+
+TOOL_REGISTRY["memory_list"] = Tool(
+    name="memory_list",
+    description="List all stored memory keys.",
+    input_schema={"type": "object", "properties": {}},
+    handler=_handle_memory_list,
+)
+
+
+# ─── Task Tools ──────────────────────────────────────────────────
+
+
+_TASKS: list[dict[str, Any]] = []
+
+
+def _handle_task_create(params: dict[str, Any]) -> str:
+    """Create a new task."""
+    title = params.get("title", "")
+    if not title:
+        return json.dumps({"error": "No title provided"})
+
+    task = {
+        "id": len(_TASKS) + 1,
+        "title": title,
+        "status": "pending",
+        "description": params.get("description", ""),
+    }
+    _TASKS.append(task)
+    return json.dumps({"ok": True, "task": task})
+
+
+def _handle_task_update(params: dict[str, Any]) -> str:
+    """Update task status."""
+    task_id = params.get("id", 0)
+    status = params.get("status", "")
+    if not task_id or not status:
+        return json.dumps({"error": "Need id and status"})
+
+    for task in _TASKS:
+        if task["id"] == task_id:
+            task["status"] = status
+            return json.dumps({"ok": True, "task": task})
+    return json.dumps({"error": f"Task {task_id} not found"})
+
+
+def _handle_task_list(params: dict[str, Any]) -> str:
+    """List all tasks."""
+    return json.dumps({"tasks": _TASKS, "count": len(_TASKS)})
+
+
+TOOL_REGISTRY["task_create"] = Tool(
+    name="task_create",
+    description="Create a task to track work progress. Use for multi-step operations.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Task title"},
+            "description": {"type": "string", "description": "Task details"},
+        },
+        "required": ["title"],
+    },
+    handler=_handle_task_create,
+)
+
+TOOL_REGISTRY["task_update"] = Tool(
+    name="task_update",
+    description="Update a task status (pending, in_progress, completed).",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer", "description": "Task ID"},
+            "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+        },
+        "required": ["id", "status"],
+    },
+    handler=_handle_task_update,
+)
+
+TOOL_REGISTRY["task_list"] = Tool(
+    name="task_list",
+    description="List all tasks with their status.",
+    input_schema={"type": "object", "properties": {}},
+    handler=_handle_task_list,
+)
+
+
+# ─── Skill Tools ─────────────────────────────────────────────────
+
+
+_SKILLS_DIR = Path.home() / ".claude" / "skills"
+
+
+def _handle_skill_list(params: dict[str, Any]) -> str:
+    """List available skills."""
+    skills = []
+    if _SKILLS_DIR.exists():
+        for d in sorted(_SKILLS_DIR.iterdir()):
+            if d.is_dir():
+                skill_file = d / "SKILL.md"
+                desc = ""
+                if skill_file.exists():
+                    # Read first non-empty, non-heading line as description
+                    for line in skill_file.read_text().splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and not line.startswith("---"):
+                            desc = line[:100]
+                            break
+                skills.append({"name": d.name, "description": desc})
+    return json.dumps({"skills": skills, "count": len(skills)})
+
+
+def _handle_skill_read(params: dict[str, Any]) -> str:
+    """Read a skill definition."""
+    name = params.get("name", "")
+    if not name:
+        return json.dumps({"error": "No skill name provided"})
+
+    skill_dir = _SKILLS_DIR / name
+    if not skill_dir.exists():
+        return json.dumps({"error": f"Skill not found: {name}"})
+
+    skill_file = skill_dir / "SKILL.md"
+    if skill_file.exists():
+        return skill_file.read_text(encoding="utf-8")[:10000]
+
+    # Try alternative files
+    for alt in ("README.md", "skill.md", "index.md"):
+        alt_file = skill_dir / alt
+        if alt_file.exists():
+            return alt_file.read_text(encoding="utf-8")[:10000]
+
+    return json.dumps({"error": f"No skill definition found in {skill_dir}"})
+
+
+TOOL_REGISTRY["skill_list"] = Tool(
+    name="skill_list",
+    description="List available skills (from ~/.claude/skills/). Skills provide specialized capabilities.",
+    input_schema={"type": "object", "properties": {}},
+    handler=_handle_skill_list,
+)
+
+TOOL_REGISTRY["skill_read"] = Tool(
+    name="skill_read",
+    description="Read a skill's definition and instructions.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name to read"},
+        },
+        "required": ["name"],
+    },
+    handler=_handle_skill_read,
+)
+
+
+# ─── Public API ──────────────────────────────────────────────────
 
 
 def get_tool_definitions() -> list[dict[str, Any]]:
