@@ -85,38 +85,49 @@ class AnthropicProvider(Provider):
         self.model = model
         self._client = None
 
-    def _get_client(self):
-        if self._client is None:
-            import anthropic
+    def _get_client(self, force_refresh: bool = False):
+        if self._client is not None and not force_refresh:
+            return self._client
 
-            token = read_claude_oauth()
-            if not token:
-                raise RuntimeError(
-                    "No Anthropic credentials. Set up with: lacp auth"
-                )
+        import anthropic
 
-            # CRITICAL: Unset ANTHROPIC_API_KEY during client creation.
-            # The Anthropic SDK auto-reads this env var and sends x-api-key
-            # header even when auth_token is set. If the API key has no credits
-            # but the OAuth token works, the API rejects with 400.
-            _saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
-            try:
-                import uuid
-                self._client = anthropic.Anthropic(
-                    api_key=None,
-                    auth_token=token,
-                    max_retries=0,
-                    timeout=15.0,
-                    default_headers={
-                        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
-                        "x-app": "cli",
-                        "X-Claude-Code-Session-Id": str(uuid.uuid4()),
-                    },
-                )
-            finally:
-                if _saved_key is not None:
-                    os.environ["ANTHROPIC_API_KEY"] = _saved_key
+        token = read_claude_oauth()
+        if not token:
+            raise RuntimeError(
+                "No Anthropic credentials. Set up with: lacp auth"
+            )
+
+        # CRITICAL: Unset ANTHROPIC_API_KEY during client creation.
+        # The Anthropic SDK auto-reads this env var and sends x-api-key
+        # header even when auth_token is set. If the API key has no credits
+        # but the OAuth token works, the API rejects with 400.
+        _saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            import uuid
+            self._client = anthropic.Anthropic(
+                api_key=None,
+                auth_token=token,
+                max_retries=2,
+                timeout=60.0,
+                default_headers={
+                    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,token-efficient-tools-2026-03-28",
+                    "x-app": "cli",
+                    "X-Claude-Code-Session-Id": str(uuid.uuid4()),
+                },
+            )
+        finally:
+            if _saved_key is not None:
+                os.environ["ANTHROPIC_API_KEY"] = _saved_key
         return self._client
+
+    def refresh_token(self) -> bool:
+        """Force re-read of OAuth token from keychain (may have been refreshed by Claude Code)."""
+        self._client = None
+        try:
+            self._get_client(force_refresh=True)
+            return True
+        except Exception:
+            return False
 
     def is_available(self) -> bool:
         return bool(read_claude_oauth())

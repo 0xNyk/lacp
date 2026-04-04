@@ -1176,45 +1176,34 @@ class LACPRepl(App):
                 # Auto-fallback on rate limit (429), credit error (400), or auth error (401)
                 if any(x in err_str for x in ("429", "rate_limit", "credit balance", "401", "missing_scope")):
                     import time as _time
-                    # Try fallback chain
-                    fallback_models = [
-                        ("anthropic", "claude-haiku-4-5-20251001"),  # cheaper, less rate limited
-                        ("ollama", "llama3.1:8b"),  # local, no rate limits
-                    ]
-                    # Remove current provider from fallbacks
-                    current = self.provider.name if self.provider else ""
-                    fallback_models = [(p, m) for p, m in fallback_models if p != current]
 
                     def clear_ph() -> None:
                         msgs.remove_streaming()
                     self.call_from_thread(clear_ph)
 
-                    # Try each fallback
-                    switched = False
-                    for fb_provider, fb_model in fallback_models:
-                        try:
-                            test_provider = create_provider(provider_name=fb_provider, model=fb_model)
-                            if test_provider.is_available():
-                                self.provider = test_provider
-                                self.provider._client = None  # force re-init
-                                def show_switch(p=fb_provider, m=fb_model) -> None:
-                                    msgs.add_message("system", f"Auto-switched to [bold]{p}/{m}[/] (rate limited)")
-                                    self._update_status()
-                                self.call_from_thread(show_switch)
-                                switched = True
-                                break
-                        except Exception:
-                            continue
+                    is_auth_error = any(x in err_str for x in ("401", "missing_scope", "credit balance"))
 
-                    if switched:
-                        continue  # retry with new provider
-                    else:
-                        # No fallback available — wait and retry same provider
-                        def show_retry() -> None:
-                            msgs.add_message("system", "⏳ Rate limited — retrying in 5s...")
-                        self.call_from_thread(show_retry)
-                        _time.sleep(5)
-                        continue
+                    if is_auth_error and hasattr(self.provider, 'refresh_token'):
+                        # Auth error — try refreshing OAuth token from keychain
+                        def show_refresh() -> None:
+                            msgs.add_message("system", "🔑 Auth error — refreshing OAuth token from keychain...")
+                        self.call_from_thread(show_refresh)
+                        if self.provider.refresh_token():
+                            continue  # retry with fresh token immediately
+
+                    # Rate limit — wait and retry same provider
+                    current_model = self.provider.model if self.provider else ""
+                    wait_secs = 15 if "429" in err_str else 5
+                    def show_wait(model=current_model, secs=wait_secs) -> None:
+                        msgs.add_message("system", f"⏳ Rate limited on {model} — waiting {secs}s...")
+                    self.call_from_thread(show_wait)
+                    _time.sleep(wait_secs)
+
+                    # Force fresh client on retry
+                    if hasattr(self.provider, '_client'):
+                        self.provider._client = None
+
+                    continue  # retry same provider after wait
 
                 # Add debug info for auth errors
                 if "credit balance" in err_str or "400" in err_str:
