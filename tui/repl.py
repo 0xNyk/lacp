@@ -267,6 +267,11 @@ class LACPRepl(App):
         try:
             self.provider = create_provider(model=self.initial_model)
             self.system_prompt = build_system_prompt()
+            # Debug: show auth state
+            if self.provider and hasattr(self.provider, '_client') and self.provider._client:
+                c = self.provider._client
+                auth_info = f"Auth debug: api_key={'set' if c.api_key else 'None'}, auth_token={'set' if getattr(c, 'auth_token', None) else 'None'}"
+                self.query_one("#messages", MessageDisplay).add_message("system", auth_info)
         except Exception as e:
             self.query_one("#messages", MessageDisplay).add_message(
                 "system", f"Error initializing provider: {e}"
@@ -686,6 +691,26 @@ class LACPRepl(App):
 
             except Exception as e:
                 err_str = str(e)
+
+                # Auto-retry on rate limit (429) — wait and retry once
+                if "429" in err_str or "rate_limit" in err_str:
+                    import time as _time
+                    def show_retry() -> None:
+                        msgs.add_message("system", "⏳ Rate limited — retrying in 3s...")
+                    self.call_from_thread(show_retry)
+                    _time.sleep(3)
+                    try:
+                        # Remove placeholder and retry
+                        def clear_ph() -> None:
+                            try:
+                                msgs.query_one("#streaming", Static).remove()
+                            except Exception:
+                                pass
+                        self.call_from_thread(clear_ph)
+                        continue  # retry the turn
+                    except Exception:
+                        pass
+
                 # Add debug info for auth errors
                 if "credit balance" in err_str or "400" in err_str:
                     auth_info = f"\n\nDebug: provider={self.provider.name}, model={self.provider.model}"
