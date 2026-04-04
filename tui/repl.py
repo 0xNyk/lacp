@@ -267,9 +267,11 @@ class LACPRepl(App):
     }
     StatusBar {
         height: 1;
-        background: #111122;
+        background: #0a0a1a;
         color: #00d4ff;
-        padding: 0 1;
+        padding: 0 2;
+        border-top: solid #222244;
+        border-bottom: solid #222244;
     }
     MessageDisplay {
         height: 1fr;
