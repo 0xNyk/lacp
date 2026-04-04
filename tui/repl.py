@@ -152,6 +152,10 @@ class StatusBar(Static):
             f"tokens: {tokens:,}  │  ${cost:.4f}  │  {time_str}"
         )
 
+    def update_mode(self, mode_label: str) -> None:
+        """Update mode display in status bar (appended)."""
+        pass  # Mode shown via messages, not status bar (keeps it clean)
+
 
 class MessageDisplay(VerticalScroll):
     """Scrollable message display area."""
@@ -220,10 +224,18 @@ class LACPRepl(App):
     }
     """
 
+    # Agent modes: cycle with Shift+Tab
+    AGENT_MODES = [
+        {"name": "normal", "label": "Normal", "description": "Standard agent mode"},
+        {"name": "plan", "label": "Plan", "description": "Planning mode — think before acting"},
+        {"name": "thinking", "label": "Think", "description": "Extended thinking — show reasoning"},
+        {"name": "yolo", "label": "YOLO", "description": "Skip all permission checks"},
+    ]
+
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "clear_screen", "Clear"),
-        Binding("ctrl+m", "switch_model", "Model", show=False),
+        Binding("shift+tab", "cycle_mode", "Mode"),
     ]
 
     def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
@@ -234,6 +246,7 @@ class LACPRepl(App):
         self.messages: list[dict[str, Any]] = []
         self.system_prompt = ""
         self.total_input_tokens = 0
+        self.current_mode_index = 0
         self.total_output_tokens = 0
         self.streaming_content = ""
         self.session_start = time.time()
@@ -345,6 +358,51 @@ class LACPRepl(App):
 
         # Focus input
         self.query_one("#prompt", Input).focus()
+
+    @property
+    def current_mode(self) -> dict:
+        return self.AGENT_MODES[self.current_mode_index]
+
+    def action_cycle_mode(self) -> None:
+        """Cycle through agent modes with Shift+Tab."""
+        self.current_mode_index = (self.current_mode_index + 1) % len(self.AGENT_MODES)
+        mode = self.current_mode
+        # Apply mode to system prompt
+        self._apply_mode(mode["name"])
+        msgs = self.query_one("#messages", MessageDisplay)
+        msgs.add_message("system", f"Mode: {mode['label']} — {mode['description']}")
+        self._update_status()
+
+    def _apply_mode(self, mode_name: str) -> None:
+        """Apply mode-specific system prompt modifications."""
+        base_prompt = build_system_prompt()
+        if mode_name == "plan":
+            self.system_prompt = base_prompt + (
+                "\n\nYou are in PLAN mode. Before taking any action:"
+                "\n1. Analyze the request thoroughly"
+                "\n2. List the steps you'll take"
+                "\n3. Identify risks and edge cases"
+                "\n4. Only then proceed with implementation"
+                "\nAlways present your plan before executing tools."
+            )
+        elif mode_name == "thinking":
+            self.system_prompt = base_prompt + (
+                "\n\nYou are in THINKING mode. For every response:"
+                "\n- Show your reasoning process step by step"
+                "\n- Consider multiple approaches before choosing"
+                "\n- Explain trade-offs explicitly"
+                "\n- Think out loud before acting"
+            )
+        elif mode_name == "yolo":
+            self.system_prompt = base_prompt + (
+                "\n\nYou are in YOLO mode (dangerously skip permissions)."
+                "\n- Execute commands without asking for confirmation"
+                "\n- Make changes directly, don't ask permission"
+                "\n- Move fast, fix things later if needed"
+                "\n- No safety checks, no guards, just do it"
+            )
+        else:
+            self.system_prompt = base_prompt
 
     def _update_status(self) -> None:
         if self.provider:
