@@ -314,11 +314,12 @@ class LACPRepl(App):
     #input-area {
         height: auto;
         max-height: 5;
-        padding: 0 2 1 2;
+        padding: 0 1 1 1;
     }
     Input {
         border: tall #333355;
         background: #0a0a14;
+        margin: 0 1;
     }
     Input:focus {
         border: tall #00aaff;
@@ -329,13 +330,9 @@ class LACPRepl(App):
     }
     .banner-box {
         border: round #333355;
-        padding: 1 3;
-        margin: 0 1 0 1;
-        background: #050510;
-    }
-    .info-line {
-        padding: 0 3;
+        padding: 1 3 1 3;
         margin: 0 1 1 1;
+        background: #050510;
     }
     .user-msg {
         margin: 1 0 0 0;
@@ -444,16 +441,13 @@ class LACPRepl(App):
         # Update status bar
         self._update_status()
 
-        # Welcome banner — decoration only (logo + art)
+        # Welcome banner — logo + info in one bordered box
         msgs = self.query_one("#messages", MessageDisplay)
         available = list_providers()
 
         logo = self.skin.banner_logo.strip()
-        if logo:
-            banner_widget = Static(logo, markup=True, classes="banner-box")
-            msgs.mount(banner_widget)
 
-        # Info line — compact, below decoration
+        # Provider status (deduplicate — hermes is already in PROVIDERS)
         provider_parts = []
         for p in available:
             icon = "[green]✓[/]" if p["available"] else "[dim]✗[/]"
@@ -462,12 +456,6 @@ class LACPRepl(App):
                 provider_parts.append(f"{icon} [bold]{name}[/]")
             else:
                 provider_parts.append(f"{icon} {name}")
-
-        # Check hermes availability
-        import shutil
-        if shutil.which("hermes"):
-            provider_parts.append("[green]✓[/] hermes")
-
         providers_str = "  ".join(provider_parts)
 
         short_model = self.provider.model
@@ -477,17 +465,22 @@ class LACPRepl(App):
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
 
-        # Count tools
         tool_count = len(get_tool_definitions())
+        mcp_str = f"  +MCP" if self.mcp_manager and self.mcp_manager.servers else ""
 
-        info_text = (
-            f"  [bold]v{VERSION}[/] │ {providers_str}"
-            f"  │  [bold]{short_model}[/]"
-            f"  │  {tool_count} tools"
-            f"\n  [dim]{self.skin.brand('welcome')} Type /help for commands.[/]"
+        # Build unified banner: logo + separator + info
+        banner_text = ""
+        if logo:
+            banner_text += f"{logo}\n"
+        banner_text += f"  [dim #333355]{'─' * 60}[/]\n"
+        banner_text += (
+            f"  [bold]v{VERSION}[/]  │  {providers_str}"
+            f"  │  [bold]{short_model}[/]  │  {tool_count} tools{mcp_str}\n"
+            f"  [dim]{self.skin.brand('welcome')} Type /help for commands.[/]"
         )
-        info_widget = Static(info_text, markup=True, classes="info-line")
-        msgs.mount(info_widget)
+
+        banner_widget = Static(banner_text, markup=True, classes="banner-box")
+        msgs.mount(banner_widget)
 
         # Resume previous session if requested
         if self.resume_id:
