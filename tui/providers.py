@@ -348,6 +348,18 @@ def read_claude_oauth() -> str:
                 return token
         except json.JSONDecodeError:
             pass
+
+    # Fallback: ~/.lacp/credentials.json (for when keychain is inaccessible)
+    creds_file = Path.home() / ".lacp" / "credentials.json"
+    if creds_file.exists():
+        try:
+            data = json.loads(creds_file.read_text(encoding="utf-8"))
+            token = data.get("anthropic_token", "")
+            if token:
+                return token
+        except (json.JSONDecodeError, OSError):
+            pass
+
     return ""
 
 
