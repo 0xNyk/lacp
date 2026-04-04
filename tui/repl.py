@@ -24,7 +24,20 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Markdown, Static
+
+# Slash commands for autocomplete
+SLASH_COMMANDS = [
+    "/help", "/model", "/provider", "/mcp", "/skin",
+    "/sessions", "/resume", "/delegate", "/tokens",
+    "/save", "/clear", "/system", "/quit",
+    "/model opus", "/model sonnet", "/model haiku",
+    "/model o3", "/model codex", "/model llama",
+    "/skin default", "/skin cyberpunk",
+    "/delegate claude", "/delegate codex", "/delegate hermes",
+    "/resume latest",
+]
 
 # Add project root to path so both `tui.X` and direct imports work
 _LACP_ROOT = str(Path(__file__).parent.parent)
@@ -246,18 +259,19 @@ class LACPRepl(App):
 
     CSS = """
     Screen {
-        background: $surface;
+        background: #000000;
         layout: vertical;
     }
     StatusBar {
         height: 1;
-        background: $primary-darken-2;
-        color: $text;
+        background: #111122;
+        color: #00d4ff;
         padding: 0 1;
     }
     MessageDisplay {
         height: 1fr;
         padding: 0 1;
+        background: #000000;
     }
     #input-area {
         height: auto;
@@ -265,15 +279,24 @@ class LACPRepl(App):
         padding: 0 1 1 1;
     }
     Input {
-        border: tall $accent;
+        border: tall #00aaff;
+        background: #0a0a14;
     }
     Footer {
         height: 1;
+        background: #111122;
     }
     .banner-box {
-        border: round $accent;
+        border: round #333355;
         padding: 1 2;
         margin: 0 1 1 1;
+        background: #050510;
+    }
+    Markdown {
+        margin: 0 0 1 0;
+    }
+    Static {
+        background: transparent;
     }
     """
 
@@ -312,10 +335,17 @@ class LACPRepl(App):
         yield MessageDisplay(id="messages")
         with Vertical(id="input-area"):
             prompt_symbol = self.skin.brand("prompt_symbol") or "⚡ ❯ "
-            yield Input(placeholder=f"{prompt_symbol}Message LACP... (/help for commands)", id="prompt")
+            yield Input(
+                placeholder=f"{prompt_symbol}Message LACP... (/help for commands)",
+                id="prompt",
+                suggester=SuggestFromList(SLASH_COMMANDS, case_sensitive=False),
+            )
         yield Footer()
 
     def on_mount(self) -> None:
+        # Set true dark theme
+        self.theme = "textual-dark"
+
         # Initialize provider
         try:
             self.provider = create_provider(model=self.initial_model)
