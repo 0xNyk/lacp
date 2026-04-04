@@ -5,8 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
-Usage: lacp [prompt...]              Launch hardened agent session
+Usage: lacp                          Launch LACP interactive session
        lacp <command> [args...]      Run LACP subcommand
+       lacp stream [--mode <mode>]   Launch agent via claude/codex/hermes
        lacp watch [--follow]         Monitor active sessions
        lacp help                     Show this help
 
@@ -115,8 +116,16 @@ EOF
 }
 
 if [[ $# -lt 1 ]]; then
-  # No args: launch hardened agent session
-  exec "${ROOT}/bin/lacp-stream"
+  # No args: launch LACP TUI REPL
+  cd "${ROOT}" || true
+  if command -v uv >/dev/null 2>&1; then
+    exec uv run --with textual --with anthropic --with openai python3 -m tui.repl
+  elif python3 -c "import textual" 2>/dev/null; then
+    exec python3 -m tui.repl
+  else
+    # Fallback: launch agent stream if TUI deps not available
+    exec "${ROOT}/bin/lacp-stream"
+  fi
 fi
 
 # Stream flags → forward everything to lacp-stream
@@ -146,6 +155,9 @@ fi
 shift || true
 
 case "${cmd}" in
+  stream)
+    exec "${ROOT}/bin/lacp-stream" "$@"
+    ;;
   watch)
     exec "${ROOT}/bin/lacp-watch" "$@"
     ;;
