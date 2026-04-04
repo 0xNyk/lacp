@@ -81,7 +81,7 @@ class AnthropicProvider(Provider):
 
     name = "anthropic"
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, model: str = "claude-sonnet-4-6"):
         self.model = model
         self._client = None
 
@@ -467,11 +467,11 @@ PROVIDERS = {
 
 # Model → provider mapping (from provider_router)
 MODEL_PROVIDERS = {
-    # Anthropic
-    "opus": ("anthropic", "claude-opus-4-20250514"),
-    "sonnet": ("anthropic", "claude-sonnet-4-20250514"),
+    # Anthropic — always latest versions
+    "opus": ("anthropic", "claude-opus-4-6"),
+    "sonnet": ("anthropic", "claude-sonnet-4-6"),
     "haiku": ("anthropic", "claude-haiku-4-5-20251001"),
-    "claude": ("anthropic", "claude-sonnet-4-20250514"),
+    "claude": ("anthropic", "claude-sonnet-4-6"),
     # OpenAI
     "o3": ("openai", "o3"),
     "o4-mini": ("openai", "o4-mini"),
