@@ -36,7 +36,7 @@ SLASH_COMMANDS = [
     "/model o3", "/model codex", "/model hermes", "/model llama",
     "/skin default", "/skin cyberpunk",
     "/delegate claude", "/delegate codex", "/delegate hermes",
-    "/memory", "/tasks", "/skills",
+    "/memory", "/tasks", "/skills", "/dev", "/dev reset", "/dev export",
     "/resume latest",
 ]
 
@@ -73,6 +73,7 @@ from sessions import (
 )
 from mcp import MCPManager
 from display import format_tool_call, format_tool_result_preview, format_thinking_status
+from dev_panel import DevPanel
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -136,6 +137,8 @@ HELP_TEXT = """## LACP REPL Commands
 | `/resume [id]` | Resume a previous session |
 | `/delegate <agent> <task>` | Delegate task to external agent |
 | `/help` | Show this help |
+| `/dev` | Toggle live CSS tweaker panel |
+| `/dev export` | Export current CSS |
 | `/quit` | Exit REPL |
 """
 
@@ -483,6 +486,7 @@ class LACPRepl(App):
         self.mcp_tools_count = 0
 
     def compose(self) -> ComposeResult:
+        yield DevPanel(id="dev-panel")
         yield MessageDisplay(id="messages")
         with Vertical(id="input-area"):
             prompt_symbol = self.skin.brand("prompt_symbol") or "⚡ ❯ "
@@ -899,6 +903,17 @@ class LACPRepl(App):
                 self.skin = load_skin(arg)
                 msgs.add_message("system", f"Skin switched to: {self.skin.name} — {self.skin.description}")
                 self._update_status()
+
+        elif cmd == "/dev":
+            dev = self.query_one("#dev-panel", DevPanel)
+            if arg == "reset":
+                dev.reset_all()
+                msgs.add_message("system", "Dev panel reset")
+            elif arg == "export":
+                css = dev.export_css()
+                msgs.add_message("system", f"Current CSS:\n```\n{css}\n```")
+            else:
+                dev.toggle()
 
         else:
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")
