@@ -40,6 +40,8 @@ SLASH_COMMANDS = [
     "/dev", "/dev reset", "/dev export", "/dev export yaml",
     "/dev preset dark", "/dev preset midnight", "/dev preset hacker",
     "/dev preset warm", "/dev preset ocean",
+    "/autoresearch", "/autoresearch on", "/autoresearch off",
+    "/autoresearch status", "/autoresearch config",
     "/resume latest",
 ]
 
@@ -77,6 +79,7 @@ from sessions import (
 from mcp import MCPManager
 from display import format_tool_call, format_tool_result_preview, format_thinking_status
 from dev_panel import DevPanel
+from idle_agent import IdleAgent
 
 LACP_ROOT = Path(__file__).parent.parent
 VERSION = (LACP_ROOT / "version").read_text().strip() if (LACP_ROOT / "version").exists() else "dev"
@@ -140,8 +143,11 @@ HELP_TEXT = """## LACP REPL Commands
 | `/resume [id]` | Resume a previous session |
 | `/delegate <agent> <task>` | Delegate task to external agent |
 | `/help` | Show this help |
-| `/dev` | Toggle live CSS tweaker panel |
-| `/dev export` | Export current CSS |
+| `/dev` | Toggle customization panel |
+| `/dev preset <name>` | Apply theme (dark, midnight, hacker, warm, ocean) |
+| `/dev export yaml` | Export config as skin YAML |
+| `/autoresearch on/off` | Toggle idle self-improvement agent |
+| `/autoresearch status` | Show experiment history |
 | `/quit` | Exit REPL |
 """
 
@@ -160,7 +166,7 @@ class StatusBar(Static):
         self, provider: str, model: str, tokens: int = 0,
         cost: float = 0.0, skin: Skin | None = None, elapsed: float = 0.0,
         mode: str = "Normal", mcp_servers: int = 0, mcp_tools: int = 0,
-        memory_count: int = 0,
+        memory_count: int = 0, research_count: int = 0, researching: bool = False,
     ) -> None:
         badge = skin.badge(provider) if skin else provider
         mins = int(elapsed // 60)
@@ -205,6 +211,10 @@ class StatusBar(Static):
         if cost > 0:
             parts.append(f"${cost:.4f}")
         parts.append(time_str)
+        if researching:
+            parts.append("[bold #e8a838]🔬 researching[/]")
+        elif research_count > 0:
+            parts.append(f"[dim]🔬{research_count}[/]")
         parts.append(f"[dim]{cwd_short}[/]")
 
         self.update("  │  ".join(parts))
@@ -309,6 +319,11 @@ class MessageDisplay(VerticalScroll):
             widget = Static(f"[dim #444466]│[/] [#555577]{content}[/]", markup=True, classes="system-msg")
         elif role == "tool":
             widget = Static(f"[dim #444466]│[/] [dim #666688]{content}[/]", markup=True, classes="tool-msg")
+        elif role == "research":
+            widget = Static(
+                f"[bold #666688]🔬 Autoresearch[/]\n{content}",
+                markup=True, classes="research-box",
+            )
         else:
             widget = Static(content)
         self.mount(widget)
@@ -448,6 +463,13 @@ class LACPRepl(App):
         height: auto;
         dock: bottom;
     }
+    .research-box {
+        margin: 1 1;
+        padding: 1 3;
+        background: #080812;
+        border: round #333355;
+        color: #888899;
+    }
     Static {
         background: transparent;
     }
@@ -487,6 +509,7 @@ class LACPRepl(App):
         self.mcp_manager: MCPManager | None = None
         self.mcp_servers_count = 0
         self.mcp_tools_count = 0
+        self.idle_agent: IdleAgent | None = None
 
     def compose(self) -> ComposeResult:
         yield DevPanel(id="dev-panel")
@@ -616,6 +639,17 @@ class LACPRepl(App):
                         if isinstance(content, str) and role in ("user", "assistant"):
                             msgs.add_message(role, content[:500])
 
+        # Initialize idle agent (for autoresearch)
+        def _on_research_status(msg: str) -> None:
+            try:
+                self.call_from_thread(
+                    lambda m=msg: self.query_one("#messages", MessageDisplay).add_message("research", m)
+                )
+            except Exception:
+                pass
+        self.idle_agent = IdleAgent(on_status=_on_research_status)
+        self.idle_agent.touch_input()
+
         # Focus input
         self.query_one("#prompt", Input).focus()
 
@@ -705,6 +739,8 @@ class LACPRepl(App):
                 mcp_servers=self.mcp_servers_count,
                 mcp_tools=self.mcp_tools_count,
                 memory_count=mem_count,
+                research_count=self.idle_agent.experiment_count if self.idle_agent else 0,
+                researching=self.idle_agent.is_researching if self.idle_agent else False,
             )
 
     def _estimate_cost(self) -> float:
@@ -730,6 +766,10 @@ class LACPRepl(App):
         text = event.value.strip()
         if not text:
             return
+
+        # Track user activity for idle agent
+        if self.idle_agent:
+            self.idle_agent.touch_input()
 
         # Clear input
         event.input.value = ""
@@ -933,6 +973,26 @@ class LACPRepl(App):
                 dev.toggle()
             else:
                 msgs.add_message("system", "Usage: /dev [close|reset|export|export yaml|preset <name>]")
+
+        elif cmd == "/autoresearch":
+            if not self.idle_agent:
+                msgs.add_message("system", "Idle agent not initialized")
+                return
+            if arg == "on":
+                self.idle_agent.start()
+                msgs.add_message("system", "🔬 Autoresearch enabled — will start after idle timeout")
+            elif arg == "off":
+                self.idle_agent.stop()
+                msgs.add_message("system", "🔬 Autoresearch stopped")
+            elif arg == "status":
+                msgs.add_message("research", self.idle_agent.status())
+            elif arg == "config":
+                config = json.dumps(self.idle_agent.state.config, indent=2)
+                msgs.add_message("system", f"Autoresearch config:\n```\n{config}\n```")
+            else:
+                msgs.add_message("system",
+                    "Usage: /autoresearch [on|off|status|config]\n"
+                    "Autonomous self-improvement when idle (Karpathy autoresearch pattern)")
 
         else:
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")
