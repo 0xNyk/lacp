@@ -212,11 +212,11 @@ class MessageDisplay(VerticalScroll):
 
     def add_message(self, role: str, content: str) -> None:
         if role == "user":
-            widget = Static(f"\n[bold cyan]You:[/bold cyan]\n{content}\n", markup=True)
+            widget = Static(f"\n[bold cyan]❯ You[/bold cyan]\n{content}\n", markup=True, classes="user-msg")
         elif role == "assistant":
-            widget = Markdown(content, id=f"msg-{time.time_ns()}")
+            widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         elif role == "system":
-            widget = Static(f"\n[dim]{content}[/dim]\n", markup=True)
+            widget = Static(f"[dim]{content}[/dim]", markup=True, classes="system-msg")
         else:
             widget = Static(content)
         self.mount(widget)
@@ -302,8 +302,18 @@ class LACPRepl(App):
         margin: 0 0 1 0;
         background: #050510;
     }
-    Markdown {
-        margin: 0 0 1 0;
+    .user-msg {
+        margin: 1 0 0 0;
+        padding: 0 1;
+    }
+    .assistant-msg {
+        border-left: thick #333366;
+        margin: 0 0 1 1;
+        padding: 0 1;
+    }
+    .system-msg {
+        margin: 0 0 0 0;
+        padding: 0 1;
     }
     Static {
         background: transparent;
