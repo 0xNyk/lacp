@@ -280,11 +280,14 @@ class LACPRepl(App):
     #input-area {
         height: auto;
         max-height: 5;
-        padding: 0 2 0 2;
+        padding: 0 2 1 2;
     }
     Input {
-        border: tall #00aaff;
+        border: tall #333355;
         background: #0a0a14;
+    }
+    Input:focus {
+        border: tall #00aaff;
     }
     Footer {
         height: 1;
@@ -315,7 +318,7 @@ class LACPRepl(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "clear_screen", "Clear"),
-        Binding("ctrl+t", "cycle_mode", "Mode"),
+        Binding("ctrl+t", "cycle_mode", "Mode", priority=True),
     ]
 
     def __init__(self, model: str = "sonnet", skin_name: str = "", resume: str = "", **kwargs: Any):
