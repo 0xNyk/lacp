@@ -309,10 +309,11 @@ class MessageDisplay(VerticalScroll):
         self.scroll_end(animate=False)
 
     def add_thinking(self, faces: list[str] | None = None, verb: str = "thinking") -> ThinkingIndicator:
-        indicator = ThinkingIndicator(id="thinking")
+        indicator = ThinkingIndicator(id="thinking", classes="thinking-spinner")
         self.mount(indicator)
         indicator.start(faces=faces, verb=verb)
-        self.scroll_end(animate=False)
+        # Ensure spinner is visible at bottom
+        self.call_after_refresh(lambda: self.scroll_end(animate=False))
         return indicator
 
     def remove_thinking(self) -> None:
@@ -414,29 +415,33 @@ class LACPRepl(App):
         background: #050510;
     }
     .user-msg {
-        margin: 1 0 0 0;
-        padding: 0 3;
+        margin: 1 1 0 1;
+        padding: 1 3;
+        background: #0a0a1a;
     }
     .assistant-msg {
-        margin: 0 0 1 0;
-        padding: 0 3 0 5;
+        margin: 0 1 0 1;
+        padding: 0 3 1 5;
     }
     .assistant-label {
+        margin: 0 1 0 1;
         padding: 1 0 0 3;
     }
     .system-msg {
-        margin: 1 0;
+        margin: 0 1;
         padding: 0 3;
         color: #555577;
     }
     .tool-msg {
-        margin: 0;
+        margin: 0 1;
         padding: 0 3 0 5;
         color: #555577;
     }
-    ThinkingIndicator {
+    ThinkingIndicator, .thinking-spinner {
+        margin: 0 1;
         padding: 0 3;
         height: auto;
+        dock: bottom;
     }
     Static {
         background: transparent;
