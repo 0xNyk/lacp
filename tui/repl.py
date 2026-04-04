@@ -41,6 +41,7 @@ SLASH_COMMANDS = [
     "/dev preset dark", "/dev preset midnight", "/dev preset hacker",
     "/dev preset warm", "/dev preset ocean",
     "/autoresearch", "/autoresearch on", "/autoresearch off",
+    "/autoresearch start", "/autoresearch score",
     "/autoresearch status", "/autoresearch config",
     "/resume latest",
 ]
@@ -147,6 +148,8 @@ HELP_TEXT = """## LACP REPL Commands
 | `/dev preset <name>` | Apply theme (dark, midnight, hacker, warm, ocean) |
 | `/dev export yaml` | Export config as skin YAML |
 | `/autoresearch on/off` | Toggle idle self-improvement agent |
+| `/autoresearch start` | Run experiment immediately |
+| `/autoresearch score` | Show current health score |
 | `/autoresearch status` | Show experiment history |
 | `/quit` | Exit REPL |
 """
@@ -981,6 +984,18 @@ class LACPRepl(App):
             if arg == "on":
                 self.idle_agent.start()
                 msgs.add_message("system", "🔬 Autoresearch enabled — will start after idle timeout")
+            elif arg == "start":
+                self.idle_agent.start_now()
+                msgs.add_message("system", "🔬 Autoresearch started immediately")
+            elif arg == "score":
+                # Run metrics inline
+                import subprocess as _sp
+                result = _sp.run(
+                    ["python3", str(Path(__file__).parent / "autoresearch_metrics.py")],
+                    capture_output=True, text=True, timeout=30,
+                    cwd=str(Path(__file__).parent.parent),
+                )
+                msgs.add_message("research", result.stdout.strip() if result.stdout else "Failed to compute score")
             elif arg == "off":
                 self.idle_agent.stop()
                 msgs.add_message("system", "🔬 Autoresearch stopped")
@@ -991,8 +1006,12 @@ class LACPRepl(App):
                 msgs.add_message("system", f"Autoresearch config:\n```\n{config}\n```")
             else:
                 msgs.add_message("system",
-                    "Usage: /autoresearch [on|off|status|config]\n"
-                    "Autonomous self-improvement when idle (Karpathy autoresearch pattern)")
+                    "Usage: /autoresearch [on|off|start|score|status|config]\n"
+                    "  on     — enable idle monitoring (starts after 5 min idle)\n"
+                    "  start  — run experiment immediately\n"
+                    "  score  — show current health score\n"
+                    "  status — show experiment history\n"
+                    "  off    — stop autoresearch")
 
         else:
             msgs.add_message("system", f"Unknown command: {cmd}. Type /help for commands.")

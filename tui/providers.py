@@ -451,11 +451,9 @@ def read_claude_oauth() -> str:
         except (json.JSONDecodeError, OSError):
             pass
 
-    # 4. ANTHROPIC_API_KEY env var (lowest priority)
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key:
-        return api_key
-
+    # API key fallback removed — OAuth only.
+    # ANTHROPIC_API_KEY env var causes conflicts (zero-credit key + OAuth token).
+    # Use: lacp auth setup (exports OAuth from keychain)
     return ""
 
 
