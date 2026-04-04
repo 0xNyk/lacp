@@ -236,7 +236,13 @@ class MessageDisplay(VerticalScroll):
             pass
 
     def add_streaming_placeholder(self) -> Static:
-        self.remove_thinking()  # remove thinking when streaming starts
+        self.remove_thinking()
+        # Remove any existing streaming placeholder first
+        try:
+            existing = self.query_one("#streaming", Static)
+            existing.remove()
+        except Exception:
+            pass
         widget = Static("", id="streaming")
         self.mount(widget)
         self.scroll_end(animate=False)
