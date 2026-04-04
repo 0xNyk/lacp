@@ -212,14 +212,14 @@ class MessageDisplay(VerticalScroll):
 
     def add_message(self, role: str, content: str) -> None:
         if role == "user":
-            widget = Static(f"\n[bold #00d4ff]❯ You[/]\n[#cccccc]{content}[/]\n", markup=True, classes="user-msg")
+            widget = Static(f"\n  [bold #00d4ff]❯ You[/]\n  [#cccccc]{content}[/]\n", markup=True, classes="user-msg")
         elif role == "assistant":
-            # Add response label before markdown
-            label = Static("[bold #aa88ff]⚡ LACP[/]", markup=True)
+            label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True)
             self.mount(label)
             widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         elif role == "system":
-            widget = Static(f"[#555577]{content}[/]", markup=True, classes="system-msg")
+            # System messages with horizontal rules
+            widget = Static(f"  [#333355]─────[/] [#555577]{content}[/] [#333355]─────[/]", markup=True, classes="system-msg")
         else:
             widget = Static(content)
         self.mount(widget)
@@ -240,9 +240,12 @@ class MessageDisplay(VerticalScroll):
 
     def add_streaming_placeholder(self) -> Static:
         self.remove_thinking()
+        # Show LACP label immediately when streaming starts
+        label = Static("  [bold #aa88ff]⚡ LACP[/]", markup=True)
+        self.mount(label)
         # Use unique ID to avoid DuplicateIds crash
         self._streaming_id = f"stream-{time.time_ns()}"
-        widget = Static("", id=self._streaming_id)
+        widget = Static("", id=self._streaming_id, classes="assistant-msg")
         self.mount(widget)
         self.scroll_end(animate=False)
         return widget
@@ -254,9 +257,7 @@ class MessageDisplay(VerticalScroll):
                 self.query_one(f"#{sid}", Static).remove()
             except Exception:
                 pass
-        # Add response label
-        label = Static("\n[bold #aa88ff]⚡ LACP[/]", markup=True)
-        self.mount(label)
+        # Label was already added in add_streaming_placeholder
         widget = Markdown(content, id=f"msg-{time.time_ns()}", classes="assistant-msg")
         self.mount(widget)
         self.scroll_end(animate=False)
@@ -310,15 +311,15 @@ class LACPRepl(App):
     }
     .user-msg {
         margin: 0 0 0 0;
-        padding: 0 0;
+        padding: 0 2;
     }
     .assistant-msg {
-        margin: 0 0 1 2;
-        padding: 0 0;
-        background: #0a0a18;
+        margin: 0 0 1 0;
+        padding: 0 4;
+        background: #08081a;
     }
     .system-msg {
-        margin: 0 0 0 0;
+        margin: 1 0;
         padding: 0 0;
     }
     Static {
