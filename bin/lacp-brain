@@ -1,0 +1,385 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+VAULT="${LACP_OBSIDIAN_VAULT}"
+REST_API="http://localhost:27123"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp brain <command> [options]
+
+Unified Obsidian brain CLI for the LACP agent control plane.
+
+Status & Health:
+  status                 Vault stats + health summary + SMS episodes
+  doctor [--json]        Full brain ecosystem health check
+  gaps [--json]          Knowledge graph gap analysis
+
+Content:
+  search <query> [--limit N]  Search vault (full-text via REST API)
+  read <path>                 Read a note from the vault
+  write <path> <content>      Write to inbox (respects write zones)
+  ingest <url|file>           Ingest content into vault inbox
+  promote <note> [--type T]   Promote inbox note to permanent location
+
+Knowledge Graph:
+  graph [--json]         Graph topology summary (nodes, hubs, orphans)
+  orphans [--json]       List disconnected notes
+  hubs [--json]          Most connected notes (>5 links)
+  links <note>           Show backlinks and outlinks for a note
+
+Memory:
+  expand [--days N]      Run brain expansion pipeline
+  episodes [--days N]    Show SMS episodes for current context
+  sync                   Sync agent sessions into vault
+  review                 Show FSRS review queue
+
+Options:
+  --json                 Machine-readable output
+  -h, --help             Show help
+EOF
+}
+
+AS_JSON=0
+
+if [[ $# -lt 1 ]]; then usage; exit 0; fi
+
+CMD="$1"; shift || true
+
+# Parse remaining flags
+LIMIT=10
+DAYS=7
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json)   AS_JSON=1; shift ;;
+    --limit)  LIMIT="$2"; shift 2 ;;
+    --days)   DAYS="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *)        ARGS+=("$1"); shift ;;
+  esac
+done
+
+cmd_status() {
+  echo "LACP Brain Status"
+  echo ""
+
+  # Vault stats via REST API
+  local stats
+  stats="$(curl -s "${REST_API}/" 2>/dev/null || echo "{}")"
+  if echo "${stats}" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+    echo "  Obsidian REST API: online"
+  else
+    echo "  Obsidian REST API: offline"
+  fi
+
+  # File count
+  local note_count
+  note_count="$(find "${VAULT}" -name "*.md" -not -path "*/.git/*" -not -path "*/.obsidian/*" -not -path "*/.smart-env/*" | wc -l | tr -d ' ')"
+  echo "  Notes: ${note_count}"
+  echo "  Vault: ${VAULT}"
+
+  # Brain doctor summary (quick)
+  local doc_json
+  doc_json="$("${ROOT}/bin/lacp-brain-doctor" --json 2>/dev/null || echo '{"summary":{"pass":0,"warn":0,"fail":0}}')"
+  local pass warn fail
+  pass="$(echo "${doc_json}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('summary',{}).get('pass',0))" 2>/dev/null || echo 0)"
+  warn="$(echo "${doc_json}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('summary',{}).get('warn',0))" 2>/dev/null || echo 0)"
+  fail="$(echo "${doc_json}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('summary',{}).get('fail',0))" 2>/dev/null || echo 0)"
+  echo "  Health: pass=${pass} warn=${warn} fail=${fail}"
+
+  # SMS episodes
+  local ep_count
+  ep_count="$(python3 -c "
+import sys; sys.path.insert(0, '${ROOT}/hooks')
+from self_memory_system import read_episodes
+print(len(read_episodes(days=7)))
+" 2>/dev/null || echo 0)"
+  echo "  SMS episodes (7d): ${ep_count}"
+
+  # Inbox count
+  local inbox_count
+  inbox_count="$(find "${VAULT}/inbox" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')"
+  echo "  Inbox: ${inbox_count} notes"
+
+  echo ""
+}
+
+cmd_search() {
+  local query="${ARGS[0]:-}"
+  [[ -n "${query}" ]] || die "Usage: lacp brain search <query>"
+
+  # Try REST API first (fast), fall back to grep (always works)
+  local encoded
+  encoded="$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${query}")"
+  local result
+  result="$(curl -s --max-time 3 "${REST_API}/search/simple/?query=${encoded}&contextLength=100" 2>/dev/null || echo "")"
+
+  if [[ -n "${result}" && "${result}" != "" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      echo "${result}"
+    else
+      echo "${result}" | python3 -c "
+import json, sys
+try:
+    results = json.load(sys.stdin)
+    if not results:
+        print('No results found.')
+        raise SystemExit(0)
+    for i, r in enumerate(results[:${LIMIT}]):
+        path = r.get('filename', '?')
+        matches = r.get('matches', [])
+        context = matches[0].get('match', {}).get('content', '')[:100] if matches else ''
+        print(f'  {i+1}. {path}')
+        if context:
+            print(f'     {context.strip()}')
+        print()
+except (json.JSONDecodeError, KeyError):
+    print('Search via REST API failed, trying file search...')
+    raise SystemExit(1)
+" 2>/dev/null || cmd_search_fallback "${query}"
+    fi
+  else
+    # Fallback: ripgrep search on vault files
+    cmd_search_fallback "${query}"
+  fi
+}
+
+cmd_search_fallback() {
+  local query="$1"
+  log "Searching vault files (Obsidian REST API offline)..."
+  local results
+  results="$(rg -l -i --glob '*.md' "${query}" "${VAULT}" 2>/dev/null | head -"${LIMIT}" || true)"
+
+  if [[ -z "${results}" ]]; then
+    echo "No results found."
+    return 0
+  fi
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    echo "${results}" | python3 -c "
+import json, sys
+files = [l.strip() for l in sys.stdin if l.strip()]
+print(json.dumps([{'path': f} for f in files], indent=2))
+"
+  else
+    local i=1
+    while IFS= read -r path; do
+      local rel="${path#${VAULT}/}"
+      local context
+      context="$(rg -i -m1 "${query}" "${path}" 2>/dev/null | head -1 | cut -c1-100)"
+      echo "  ${i}. ${rel}"
+      [[ -n "${context}" ]] && echo "     ${context}"
+      echo ""
+      i=$((i + 1))
+    done <<< "${results}"
+  fi
+}
+
+cmd_read() {
+  local path="${ARGS[0]:-}"
+  [[ -n "${path}" ]] || die "Usage: lacp brain read <path>"
+
+  # Try direct file read first
+  local full_path="${VAULT}/${path}"
+  if [[ -f "${full_path}" ]]; then
+    cat "${full_path}"
+  elif [[ -f "${full_path}.md" ]]; then
+    cat "${full_path}.md"
+  else
+    die "Note not found: ${path}"
+  fi
+}
+
+cmd_write() {
+  local path="${ARGS[0]:-}"
+  local content="${ARGS[1]:-}"
+  [[ -n "${path}" ]] || die "Usage: lacp brain write <path> <content>"
+
+  # Enforce write zones
+  case "${path}" in
+    inbox/*|_generated/*|00-home/daily/*)
+      ;;
+    *)
+      die "Write zone violation: can only write to inbox/, _generated/, or 00-home/daily/. Got: ${path}"
+      ;;
+  esac
+
+  local full_path="${VAULT}/${path}"
+  mkdir -p "$(dirname "${full_path}")"
+
+  if [[ -n "${content}" ]]; then
+    echo "${content}" > "${full_path}"
+    log "Written: ${path}"
+  else
+    # Read from stdin
+    cat > "${full_path}"
+    log "Written: ${path} (from stdin)"
+  fi
+}
+
+cmd_graph() {
+  "${ROOT}/bin/lacp-knowledge-doctor" --root "${VAULT}" ${AS_JSON:+--json} 2>/dev/null || true
+}
+
+cmd_orphans() {
+  local result
+  result="$("${ROOT}/bin/lacp-knowledge-doctor" --root "${VAULT}" --json 2>/dev/null || echo '{}')"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    echo "${result}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+orphans = d.get('hard_orphans', {}).get('files', []) + d.get('likely_orphans', {}).get('files', [])
+print(json.dumps({'orphans': orphans, 'count': len(orphans)}, indent=2))
+" 2>/dev/null
+  else
+    echo "${result}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+hard = d.get('hard_orphans', {}).get('files', [])
+likely = d.get('likely_orphans', {}).get('files', [])
+if hard:
+    print('Hard orphans (no links at all):')
+    for f in hard[:20]:
+        print(f'  {f}')
+if likely:
+    print(f'\nLikely orphans (no inbound links):')
+    for f in likely[:20]:
+        print(f'  {f}')
+if not hard and not likely:
+    print('No orphan notes found.')
+" 2>/dev/null
+  fi
+}
+
+cmd_hubs() {
+  local result
+  result="$("${ROOT}/bin/lacp-knowledge-doctor" --root "${VAULT}" --json 2>/dev/null || echo '{}')"
+
+  echo "${result}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+hubs = d.get('hubs', [])
+if not hubs:
+    print('No hub nodes found (>5 inbound links).')
+else:
+    as_json = ${AS_JSON}
+    if as_json:
+        print(json.dumps({'hubs': hubs}, indent=2))
+    else:
+        print('Hub notes (>5 inbound links):')
+        for h in hubs[:20]:
+            name = h if isinstance(h, str) else h.get('name', '?')
+            count = '' if isinstance(h, str) else f' ({h.get(\"inlinks\", \"?\")} links)'
+            print(f'  {name}{count}')
+" 2>/dev/null
+}
+
+cmd_links() {
+  local note="${ARGS[0]:-}"
+  [[ -n "${note}" ]] || die "Usage: lacp brain links <note>"
+
+  # Find the note and parse its links
+  local full_path="${VAULT}/${note}"
+  [[ -f "${full_path}" ]] || full_path="${VAULT}/${note}.md"
+  [[ -f "${full_path}" ]] || die "Note not found: ${note}"
+
+  python3 -c "
+import re, sys
+from pathlib import Path
+
+note_path = '${full_path}'
+vault = '${VAULT}'
+content = Path(note_path).read_text()
+
+# Extract wikilinks
+wikilinks = re.findall(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', content)
+# Extract external links
+ext_links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+
+print(f'Outgoing wikilinks ({len(wikilinks)}):')
+for w in sorted(set(wikilinks)):
+    exists = any(Path(vault).rglob(f'{w.split(\"/\")[-1]}*'))
+    status = '' if exists else ' [BROKEN]'
+    print(f'  [[{w}]]{status}')
+
+if ext_links:
+    print(f'\nExternal links ({len(ext_links)}):')
+    for text, url in ext_links[:10]:
+        print(f'  [{text[:40]}]({url[:60]})')
+
+# Find backlinks (notes that link TO this note)
+note_name = Path(note_path).stem
+backlinks = []
+for md in Path(vault).rglob('*.md'):
+    if md == Path(note_path):
+        continue
+    try:
+        c = md.read_text()
+        if f'[[{note_name}' in c or f'[[{Path(note_path).relative_to(vault)}' in str(c):
+            backlinks.append(str(md.relative_to(vault)))
+    except:
+        pass
+
+print(f'\nBacklinks ({len(backlinks)}):')
+for b in sorted(backlinks)[:20]:
+    print(f'  {b}')
+" 2>/dev/null
+}
+
+cmd_episodes() {
+  python3 -c "
+import sys, json; sys.path.insert(0, '${ROOT}/hooks')
+from self_memory_system import read_episodes
+episodes = read_episodes(days=${DAYS})
+as_json = ${AS_JSON}
+if as_json:
+    print(json.dumps(episodes, indent=2))
+else:
+    if not episodes:
+        print('No SMS episodes in the last ${DAYS} days.')
+    else:
+        print(f'SMS Episodes (last ${DAYS} days): {len(episodes)}')
+        print()
+        for ep in episodes[-10:]:
+            sig = ep.get('significance', 0)
+            summary = ep.get('summary', '')[:80]
+            print(f'  [{sig:.2f}] {summary}')
+" 2>/dev/null
+}
+
+cmd_review() {
+  local review_file="${VAULT}/_generated/review-queue.md"
+  if [[ -f "${review_file}" ]]; then
+    cat "${review_file}"
+  else
+    log "No review queue generated. Run: lacp brain expand"
+  fi
+}
+
+case "${CMD}" in
+  status)   cmd_status ;;
+  doctor)   exec "${ROOT}/bin/lacp-brain-doctor" "$@" ${AS_JSON:+--json} ;;
+  gaps)     exec "${ROOT}/bin/lacp-knowledge-doctor" --root "${VAULT}" "$@" ${AS_JSON:+--json} ;;
+  search)   cmd_search ;;
+  read)     cmd_read ;;
+  write)    cmd_write ;;
+  ingest)   exec "${ROOT}/bin/lacp-brain-ingest" "${ARGS[@]}" ;;
+  promote)  exec "${ROOT}/bin/lacp-brain-promote" "${ARGS[@]}" ;;
+  graph)    cmd_graph ;;
+  orphans)  cmd_orphans ;;
+  hubs)     cmd_hubs ;;
+  links)    cmd_links ;;
+  expand)   exec "${ROOT}/bin/lacp-brain-expand" --days "${DAYS}" "$@" ;;
+  episodes) cmd_episodes ;;
+  sync)     exec "${ROOT}/bin/lacp-brain-expand" --days "${DAYS}" --apply "$@" ;;
+  review)   cmd_review ;;
+  stack)    exec "${ROOT}/bin/lacp-brain-stack" "${ARGS[@]}" ;;
+  -h|--help|help) usage ;;
+  *) die "Unknown command: ${CMD}. Use --help for usage." ;;
+esac
