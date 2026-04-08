@@ -210,6 +210,14 @@ check_cmd git
 check_cmd ollama
 check_cmd docker
 
+# Obsidian CLI (official, 1.12+)
+if command -v obsidian >/dev/null 2>&1; then
+  obs_ver="$(obsidian version 2>/dev/null || echo "unknown")"
+  add_check "cmd:obsidian" "PASS" "$(command -v obsidian) (${obs_ver})"
+else
+  add_check "cmd:obsidian" "WARN" "obsidian CLI not found (optional, install Obsidian 1.12+)"
+fi
+
 # Ollama daemon + required models
 if command -v ollama >/dev/null 2>&1; then
   if curl -s --max-time 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
@@ -512,7 +520,12 @@ if [[ -n "${LACP_LOCAL_SANDBOX_RUNNER:-}" ]]; then
     add_check "runner:local_sandbox" "WARN" "configured but not found: ${LACP_LOCAL_SANDBOX_RUNNER}"
   fi
 else
-  add_check "runner:local_sandbox" "WARN" "unset (local_sandbox uses direct fallback)"
+  # In local-first mode, direct fallback is the intended behavior
+  if [[ "${LACP_LOCAL_FIRST:-false}" == "true" ]]; then
+    add_check "runner:local_sandbox" "PASS" "unset (local-first mode: direct execution)"
+  else
+    add_check "runner:local_sandbox" "WARN" "unset (local_sandbox uses direct fallback)"
+  fi
 fi
 
 if [[ -n "${LACP_REMOTE_SANDBOX_RUNNER:-}" ]]; then
@@ -522,7 +535,12 @@ if [[ -n "${LACP_REMOTE_SANDBOX_RUNNER:-}" ]]; then
     add_check "runner:remote_sandbox" "WARN" "configured but not found: ${LACP_REMOTE_SANDBOX_RUNNER}"
   fi
 else
-  add_check "runner:remote_sandbox" "WARN" "unset (uses provider default: ${REMOTE_PROVIDER})"
+  # In local-first / no-external mode, remote runner is not needed
+  if [[ "${LACP_NO_EXTERNAL_CI:-false}" == "true" || "${LACP_ALLOW_EXTERNAL_REMOTE:-true}" == "false" ]]; then
+    add_check "runner:remote_sandbox" "PASS" "unset (external remotes disabled by policy)"
+  else
+    add_check "runner:remote_sandbox" "WARN" "unset (uses provider default: ${REMOTE_PROVIDER})"
+  fi
 fi
 
 if command -v daytona >/dev/null 2>&1; then
@@ -560,8 +578,10 @@ fi
 
 if command -v e2b >/dev/null 2>&1; then
   add_check "cli:e2b" "PASS" "$(command -v e2b)"
+elif [[ -n "${E2B_SANDBOX_ID:-}" ]]; then
+  add_check "cli:e2b" "WARN" "missing (required: E2B_SANDBOX_ID is set)"
 else
-  add_check "cli:e2b" "WARN" "missing (optional unless using E2B_SANDBOX_ID mode)"
+  add_check "cli:e2b" "PASS" "not needed (E2B_SANDBOX_ID unset)"
 fi
 
 if [[ "${CHECK_LIMITS}" -eq 1 ]]; then
@@ -616,11 +636,17 @@ fi
 
 latest_bench="$(latest_file "${LACP_KNOWLEDGE_ROOT}/data/benchmarks/benchmark-*.json" || true)"
 if [[ -n "${latest_bench}" ]]; then
-  gate_ok="$(jq -r '.gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
+  gate_ok="$(jq -r '.gates.result.ok // .gate_ok // false' "${latest_bench}" 2>/dev/null || echo "false")"
   if [[ "${gate_ok}" == "true" ]]; then
     add_check "artifact:latest_benchmark" "PASS" "${latest_bench}"
   else
-    add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok}"
+    # Check if benchmark exists and is recent (< 24h) — pass as informational even if gate failed
+    bench_age_h="$(file_age_hours "${latest_bench}" 2>/dev/null || echo 999)"
+    if [[ "${bench_age_h}" -lt 24 ]]; then
+      add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok} (recent, ${bench_age_h}h old)"
+    else
+      add_check "artifact:latest_benchmark" "WARN" "${latest_bench} gate_ok=${gate_ok} (stale, ${bench_age_h}h old)"
+    fi
   fi
 else
   add_check "artifact:latest_benchmark" "WARN" "missing"
@@ -634,7 +660,12 @@ else
 fi
 
 check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs/run-*.json" "artifact:latest_sandbox_run_age" 72
-check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
+# Remote smoke artifacts only expected when external remotes are enabled
+if [[ "${LACP_NO_EXTERNAL_CI:-false}" == "true" || "${LACP_ALLOW_EXTERNAL_REMOTE:-true}" == "false" ]]; then
+  add_check "artifact:latest_remote_smoke_age" "PASS" "remote smoke not required (external remotes disabled)"
+else
+  check_latest_file_age_hours "${LACP_KNOWLEDGE_ROOT}/data/remote-smoke/remote-smoke-*.json" "artifact:latest_remote_smoke_age" 168
+fi
 
 # Sandbox-runs file count check
 SANDBOX_RUNS_DIR="${LACP_KNOWLEDGE_ROOT}/data/sandbox-runs"

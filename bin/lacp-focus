@@ -228,11 +228,55 @@ PY
   fi
 }
 
+cmd_update() {
+  local goal="${1:-}"
+  if [[ -z "${goal}" ]]; then
+    die "Usage: lacp focus update \"<goal text>\""
+  fi
+
+  if [[ ! -f "${FOCUS_FILE}" ]]; then
+    log "No focus brief found. Creating one first..."
+    cmd_init
+  fi
+
+  local today
+  today="$(date +%Y-%m-%d)"
+
+  python3 - "${FOCUS_FILE}" "${goal}" "${today}" <<'PYEOF'
+import re, sys
+path, goal, today = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path).read()
+
+# Update date
+text = re.sub(r'> Last updated: .+', f'> Last updated: {today}', text)
+
+# Update section 1 (Current Problem)
+text = re.sub(
+    r'(## 1\. Current Problem\n).*?(\n## 2)',
+    rf'\g<1>{goal}\n\n\g<2>',
+    text,
+    flags=re.DOTALL,
+)
+# Also handle "## Current Goal" format
+text = re.sub(
+    r'(## Current Goal\n).*?(\n## )',
+    rf'\g<1>{goal}\n\n\g<2>',
+    text,
+    flags=re.DOTALL,
+)
+
+open(path, 'w').write(text)
+PYEOF
+
+  log "Updated focus: ${goal}"
+}
+
 case "${sub}" in
   init) cmd_init "$@" ;;
   show) cmd_show "$@" ;;
   edit) cmd_edit "$@" ;;
   age) cmd_age "$@" ;;
   check) cmd_check "$@" ;;
+  update) cmd_update "$@" ;;
   *) die "Unknown subcommand: ${sub}" ;;
 esac

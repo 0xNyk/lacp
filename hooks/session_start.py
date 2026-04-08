@@ -158,46 +158,70 @@ def _load_context_mode(mode: str) -> str | None:
 def main() -> None:
     payload = _read_payload()
     matcher = payload.get("matcher") or ""
-    parts: list[str] = []
 
-    # Git context (always, when in a repo)
+    # Budget-aware injection: collect (priority, label, content) tuples
+    # Lower priority number = higher importance = injected first
+    injections: list[tuple[int, str, str]] = []
+    budget_tokens = int(os.getenv("LACP_SESSION_BUDGET_TOKENS", "1500"))
+
+    # Priority 1: LACP identity (always)
+    lacp_agent = os.environ.get("LACP_BANNER_AGENT", "")
+    lacp_model = os.environ.get("LACP_BANNER_MODEL", "")
+    lacp_mode = os.environ.get("LACP_BANNER_MODE", "")
+    lacp_ver = os.environ.get("LACP_BANNER_VERSION", "")
+    if lacp_agent or lacp_ver:
+        identity_parts = ["Session managed by LACP (Local Agent Control Plane)"]
+        if lacp_ver:
+            identity_parts[0] += f" v{lacp_ver}"
+        if lacp_agent:
+            identity_parts.append(f"Agent: {lacp_agent}")
+        if lacp_model:
+            identity_parts.append(f"Model: {lacp_model}")
+        if lacp_mode:
+            identity_parts.append(f"Mode: {lacp_mode}")
+        injections.append((1, "identity", " | ".join(identity_parts)))
+
+    # Priority 5: Git context (always, when in a repo)
     if _is_git_repo():
         git_parts = _git_context()
         if git_parts:
-            parts.append("gitStatus: " + " | ".join(git_parts))
+            injections.append((5, "git", "gitStatus: " + " | ".join(git_parts)))
 
-    # Detect and cache test command
+    # Priority 6: Detect and cache test command
     test_cmd = _detect_test_command()
     if test_cmd:
-        parts.append(f"Test command: {test_cmd}")
+        injections.append((6, "test_cmd", f"Test command: {test_cmd}"))
         _cache_test_command(test_cmd)
 
     # Compact-specific reminder
     if matcher == "compact":
-        parts.append(
+        injections.append((1, "compact",
             "Post-compaction reminder: Review CLAUDE.md for project conventions. "
             "Check git branch and recent commits for context. "
             "Verify build/test commands before making changes."
-        )
+        ))
 
-    # Focus brief injection
+    # Priority 3: Focus brief injection (skip if blank template)
     focus_file = Path(os.getenv("LACP_FOCUS_FILE", Path.home() / ".lacp" / "focus.md"))
     if focus_file.is_file():
         try:
             focus_content = focus_file.read_text().strip()
-            if focus_content:
-                # Check staleness (warn if >7 days old)
+            # Skip if it's still the blank template (all placeholders present)
+            is_blank = all(marker in focus_content for marker in [
+                "<!-- Replace", "{one sentence", "{decision 1}", "{blocker"
+            ])
+            if focus_content and not is_blank:
                 age_days = int((time.time() - focus_file.stat().st_mtime) / 86400)
                 stale_note = ""
                 if age_days > 7:
                     stale_note = (
-                        f" (STALE: {age_days} days old — run `lacp-focus edit` to refresh)"
+                        f" (STALE: {age_days} days old — run `lacp focus edit` to refresh)"
                     )
-                parts.append(f"Focus brief{stale_note}:\n{focus_content}")
+                injections.append((3, "focus", f"Focus brief{stale_note}:\n{focus_content}"))
         except OSError:
             pass
 
-    # Handoff artifact injection
+    # Priority 4: Handoff artifact injection
     try:
         import hashlib
         cwd_hash = hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:12]
@@ -222,11 +246,11 @@ def main() -> None:
                     handoff_parts.append(f"  Modified: {', '.join(files[:10])}")
                 if next_steps:
                     handoff_parts.append(f"  Next: {'; '.join(next_steps[:5])}")
-                parts.append("\n".join(handoff_parts))
+                injections.append((4, "handoff", "\n".join(handoff_parts)))
     except Exception:
         pass
 
-    # Health snapshot context — inject latest health score
+    # Priority 8: Health snapshot context
     try:
         snapshot_dir = Path.home() / ".lacp" / "health" / "snapshots"
         if snapshot_dir.is_dir():
@@ -240,25 +264,25 @@ def main() -> None:
                     health_line = f"System health: {score}/100 ({age_h}h ago)"
                     if penalties:
                         health_line += f" [{'; '.join(penalties[:3])}]"
-                    parts.append(health_line)
+                    injections.append((8, "health", health_line))
     except Exception:
         pass
 
-    # Self-Memory System context injection (Conway SMS — psychology-informed)
+    # Priority 7: Self-Memory System context (Conway SMS)
     try:
         from self_memory_system import build_session_context
         sms_context = build_session_context()
         if sms_context:
-            parts.append(f"Agent memory (SMS):\n{sms_context}")
+            injections.append((7, "sms", f"Agent memory (SMS):\n{sms_context}"))
     except Exception:
-        pass  # SMS is optional — fail silently
+        pass
 
-    # LACP context mode
+    # Priority 2: LACP context mode (high priority — behavioral rules)
     mode = os.getenv("LACP_CONTEXT_MODE", "").strip()
     if mode:
         mode_content = _load_context_mode(mode)
         if mode_content:
-            parts.append(mode_content)
+            injections.append((2, "mode", mode_content))
 
     # Cleanup stale contracts/state from old sessions (cheap, best-effort)
     try:
@@ -296,14 +320,25 @@ def main() -> None:
     except Exception:
         pass  # Contract writing is best-effort
 
-    # Graceful degradation feedback — surface silently disabled features
+    # Priority 9: Graceful degradation feedback
     degraded = []
     if not test_cmd:
         degraded.append("test verification (no test command detected)")
     if os.getenv("LACP_EVAL_CHECKPOINT_ENABLED") == "1" and not test_cmd:
         degraded.append("eval checkpoint (requires test command)")
     if degraded:
-        parts.append(f"Degraded: {', '.join(degraded)}")
+        injections.append((9, "degraded", f"Degraded: {', '.join(degraded)}"))
+
+    # Budget-aware assembly: sort by priority, include until budget exhausted
+    injections.sort(key=lambda x: x[0])
+    parts: list[str] = []
+    token_estimate = 0
+    for _priority, _label, content in injections:
+        content_tokens = len(content) // 4  # rough estimate
+        if token_estimate + content_tokens > budget_tokens and parts:
+            break  # budget exceeded, skip remaining lower-priority items
+        parts.append(content)
+        token_estimate += content_tokens
 
     if parts:
         print(json.dumps({"systemMessage": "\n".join(parts)}))

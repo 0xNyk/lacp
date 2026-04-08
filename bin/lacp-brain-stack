@@ -157,7 +157,6 @@ if with_ori_mnemos:
     'args': ['-y', 'ori-mnemos@latest', 'serve', '--mcp'],
     'env': {'ORI_VAULT': str(vault)}
   }
-
 print(json.dumps(payload, indent=2) + '\n')
 PY
 )"

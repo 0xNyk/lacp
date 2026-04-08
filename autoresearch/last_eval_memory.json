@@ -1,0 +1,46 @@
+{
+  "composite_score": 96.1768,
+  "scores": {
+    "code_quality": 84.8571,
+    "architecture": 100.0,
+    "retrieval": 100.0,
+    "consolidation": 100.0,
+    "multi_agent": 99.75
+  },
+  "details": {
+    "code_quality": {
+      "scripts_exist": "4/4",
+      "python_exist": "4/4",
+      "tests_exist": "4/5",
+      "configs_exist": "1/1",
+      "shellcheck_warnings": 1,
+      "tests_passed": "3/4"
+    },
+    "architecture": {
+      "layers": "5/5",
+      "stack_init": "present",
+      "shared_lib": "present",
+      "policies": "2/2",
+      "doctors": "3/3",
+      "max_loc": 404
+    },
+    "retrieval": {
+      "embeddings": "present",
+      "qmd_search": "available",
+      "structure": "3/3",
+      "notes": 1600
+    },
+    "consolidation": {
+      "features": "5/5",
+      "periodic": "configured",
+      "taxonomy": "present"
+    },
+    "multi_agent": {
+      "vault_sync": "running",
+      "agents": "3 agents",
+      "inter_agent_bus": "yes",
+      "shared_read": "syncthing"
+    }
+  },
+  "elapsed_seconds": 62.8
+}

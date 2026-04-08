@@ -54,7 +54,7 @@ assert_lt() {
   PASS_COUNT=$((PASS_COUNT + 1))
 }
 
-SCRIPTS_DIR="${LACP_AUTOMATION_ROOT:-${HOME}/.lacp/automation}/scripts"
+SCRIPTS_DIR="${LACP_AUTOMATION_ROOT:-${ROOT}/automation}/scripts"
 
 if ! python3 -c "import sys; sys.path.insert(0, '${SCRIPTS_DIR}'); import sync_research_knowledge" >/dev/null 2>&1; then
   echo "[brain-memory-test] SKIP sync_research_knowledge.py missing under ${SCRIPTS_DIR}"

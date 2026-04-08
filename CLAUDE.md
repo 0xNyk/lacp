@@ -11,6 +11,7 @@ Framework for hardening, orchestrating, and validating Claude Code sessions on l
 | `scripts/lacp-lib.sh` | Shared shell library — sourced by all bin/ commands |
 | `scripts/ci/` | CI test scripts (`test-*.sh`) |
 | `scripts/runners/` | Pipeline runners (brain-expand steps, etc.) |
+| `automation/scripts/` | 44 Python + 22 shell automation scripts (brain-expand steps, RAG, benchmarks, sync) |
 | `config/` | Policy files (sandbox, MCP auth, route policy) |
 | `dist/` | Distribution/packaging assets |
 | `Formula/` | Homebrew formula |
@@ -95,11 +96,22 @@ lacp scaffold-audit               # identify removable pipeline stages
 
 All configurable via env or `.env` file. Key ones:
 
-- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `~/.lacp/automation`)
+- `LACP_AUTOMATION_ROOT` — automation scripts root (default: `<repo>/automation`)
 - `LACP_KNOWLEDGE_ROOT` — knowledge graph root (default: `~/.lacp/knowledge`)
 - `LACP_DRAFTS_ROOT` — article drafts root (default: `~/.lacp/drafts`)
 - `LACP_OBSIDIAN_VAULT` — Obsidian vault path (default: `~/obsidian/vault`)
 - `LACP_WRITE_VALIDATE_PATHS` — colon-separated paths for write validation
+
+## Obsidian Data Access
+
+`bin/lacp-obsidian-cli` wraps the official Obsidian CLI (1.12+) for vault data access:
+- `check` — verify CLI installed, app running, vault accessible
+- `read <note>` — read a note via official CLI
+- `search <query>` — search the vault
+- `doctor` — full CLI diagnostic
+
+This is separate from `bin/lacp-obsidian` (config management).
+The third-party `obsidian-mcp` npm package has been removed in favor of the official CLI.
 - `LACP_TAXONOMY_PATH` — taxonomy.json location for category validation
 - `LACP_CONTEXT_MODE` — active context mode (tdd, debugging, sprint, etc.)
 - `LACP_EVAL_CHECKPOINT_ENABLED` — enable continuous QA during work (default: `0`)

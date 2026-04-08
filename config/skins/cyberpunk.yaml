@@ -1,0 +1,66 @@
+name: cyberpunk
+description: "Neon grid — magenta and cyan glitch aesthetic"
+
+colors:
+  banner_border: "#ff00ff"
+  banner_title: "#00ffff"
+  banner_accent: "#ff00ff"
+  banner_dim: "#333355"
+  status_bg: "#0d0d1a"
+  status_text: "#00ffff"
+  status_accent: "#ff00ff"
+  user_label: "#00ffff"
+  assistant_label: "#ff00ff"
+  assistant_border: "#440066"
+  prompt_border: "#ff00ff"
+  system_text: "#555577"
+  ok: "#00ff88"
+  error: "#ff3366"
+  warn: "#ffaa00"
+
+branding:
+  agent_name: "LACP"
+  tagline: "// neural_interface.active"
+  welcome: "Neural link established. All nodes online."
+  prompt_symbol: "λ ❯ "
+  response_label: " λ LACP "
+  goodbye: "Disconnecting neural link..."
+  help_header: "λ System Commands"
+
+spinner:
+  thinking_faces:
+    - "⟐"
+    - "⟑"
+    - "⬡"
+    - "⬢"
+  thinking_verbs:
+    - computing
+    - decrypting
+    - linking nodes
+    - scanning
+    - injecting
+  wings:
+    - ["⟪λ", "λ⟫"]
+
+provider_badges:
+  anthropic: "[bold #a855f7]anthropic[/]"
+  openai: "[bold #00ff88]openai[/]"
+  ollama: "[bold #ff6600]ollama[/]"
+
+banner_logo: |
+  [bold #00ffff]██╗      █████╗  ██████╗██████╗
+  ██║     ██╔══██╗██╔════╝██╔══██╗
+  ██║     ███████║██║     ██████╔╝
+  ██║     ██╔══██║██║     ██╔═══╝
+  ███████╗██║  ██║╚██████╗██║
+  ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝[/]
+
+banner_hero: |
+  [#ff00ff]⠀⠀⠀⠀⣠⣤⣤⣤⣤⣤⣤⣄⠀⠀⠀⠀
+  ⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀
+  ⠀⠀⢸⣿⡟⠛⠛⠛⠛⢻⣿⡇⠀⠀
+  ⠀⠀⢸⣿⡇⠀⢰⡆⠀⢸⣿⡇⠀⠀
+  ⠀⠀⢸⣿⡇⠀⢸⡇⠀⢸⣿⡇⠀⠀
+  ⠀⠀⠘⢿⣷⣤⣤⣤⣤⣾⡿⠃⠀⠀
+  ⠀⠀⠀⠀⠉⠛⠛⠛⠛⠉⠀⠀⠀⠀
+  ⠀⠀⠀ neural.online ⠀⠀⠀[/]

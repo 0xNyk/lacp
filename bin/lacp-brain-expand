@@ -43,6 +43,7 @@ AS_JSON=0
 SKIP_QMD=0
 ACTIVATE=0
 CONSOLIDATE=0
+SANDBOX=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,6 +73,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --consolidate)
       CONSOLIDATE=1
+      shift
+      ;;
+    --sandbox)
+      SANDBOX=1
+      shift
+      ;;
+    --progress)
+      PROGRESS=1
       shift
       ;;
     -h|--help)
@@ -128,6 +137,22 @@ log_step() {
     WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
     FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
   esac
+
+  # Progress mode: emit structured JSON event to stderr for TUI consumption
+  if [[ "${PROGRESS:-0}" -eq 1 ]]; then
+    printf '{"event":"step","status":"%s","name":"%s","detail":"%s","ts":"%s"}\n' \
+      "${status}" "${name}" "${detail}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  fi
+}
+
+# Sandboxed execution wrapper: drops network access on macOS via sandbox-exec
+# Falls back to normal execution on Linux or when --sandbox not set
+run_sandboxed() {
+  if [[ "${SANDBOX}" -eq 1 ]] && command -v sandbox-exec >/dev/null 2>&1; then
+    sandbox-exec -p '(version 1)(allow default)(deny network*)' "$@"
+  else
+    "$@"
+  fi
 }
 
 run_step() {
@@ -182,6 +207,66 @@ if [[ -x "${ROOT}/bin/lacp-obsidian" ]]; then
   fi
 else
   log_step "WARN" "obsidian_config_guard" "missing ${ROOT}/bin/lacp-obsidian"
+fi
+
+# 0.8) Promote per-turn memory extractions from staging
+STAGING_FILE="${HOME}/.lacp/memory-staging/pending.jsonl"
+if [[ -f "${STAGING_FILE}" ]]; then
+  STAGING_COUNT="$(wc -l < "${STAGING_FILE}" 2>/dev/null | tr -d ' ')"
+  if [[ "${STAGING_COUNT}" -gt 0 ]]; then
+    log_step "PASS" "staging_promote" "${STAGING_COUNT} pending signals from per-turn extraction"
+    # Staging signals will be consumed by sync_research_knowledge.py in step 3
+    # (it reads from inbox + registry; we move staging to inbox format)
+    if [[ "${APPLY}" -eq 1 ]]; then
+      run_step_soft "staging_promote" python3 -c "
+import json
+from pathlib import Path
+from datetime import datetime, timezone
+
+staging = Path('${STAGING_FILE}')
+inbox = Path('${LACP_OBSIDIAN_VAULT:-$HOME/obsidian/vault}/inbox')
+inbox.mkdir(parents=True, exist_ok=True)
+
+promoted = 0
+for line in staging.read_text().splitlines():
+    if not line.strip():
+        continue
+    try:
+        sig = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    # Write as inbox note for sync_research_knowledge to pick up
+    ts = sig.get('timestamp', datetime.now(timezone.utc).isoformat())
+    day = sig.get('day', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
+    text = sig.get('text', '')
+    if len(text) < 20:
+        continue
+    note_id = f'staged-{day}-{promoted:03d}'
+    note_path = inbox / f'{note_id}.md'
+    note_path.write_text(f'''---
+type: research
+source: per-turn-extraction
+created: {day}
+agent_id: {sig.get('session_id', 'local')[:20]}
+confidence: 0.6
+---
+
+# {text[:80]}
+
+{text}
+''')
+    promoted += 1
+
+# Clear staging after promotion
+staging.write_text('')
+print(f'Promoted {promoted} signals from staging to inbox')
+"
+    fi
+  else
+    log_step "PASS" "staging_promote" "no pending signals"
+  fi
+else
+  log_step "PASS" "staging_promote" "no staging file"
 fi
 
 # 1) Session sync
@@ -253,9 +338,9 @@ fi
 if [[ "${CONSOLIDATE}" -eq 1 && -f "${SCRIPTS_DIR}/memory_consolidation.py" ]]; then
   # Enhanced consolidation with prune/merge logic
   if [[ "${APPLY}" -eq 1 ]]; then
-    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/memory_consolidation.py" --apply
+    run_step_soft "consolidate_research" run_sandboxed python3 "${SCRIPTS_DIR}/memory_consolidation.py" --apply
   else
-    run_step_soft "consolidate_research" python3 "${SCRIPTS_DIR}/memory_consolidation.py" --dry-run
+    run_step_soft "consolidate_research" run_sandboxed python3 "${SCRIPTS_DIR}/memory_consolidation.py" --dry-run
   fi
 elif [[ -f "${SCRIPTS_DIR}/consolidate_research.py" ]]; then
   if [[ "${APPLY}" -eq 1 ]]; then
@@ -274,7 +359,29 @@ else
   log_step "WARN" "detect_knowledge_gaps" "missing ${SCRIPTS_DIR}/detect_knowledge_gaps.py"
 fi
 
-# 7.6) FSRS review queue
+# 7.55) Wiki compiler — rewrite raw signals into clean wiki articles (Karpathy pattern)
+if [[ -f "${SCRIPTS_DIR}/compile_wiki.py" ]]; then
+  if [[ "${APPLY}" -eq 1 ]]; then
+    run_step_soft "compile_wiki" python3 "${SCRIPTS_DIR}/compile_wiki.py" --apply --max-items 10
+  else
+    run_step_soft "compile_wiki" python3 "${SCRIPTS_DIR}/compile_wiki.py" --dry-run
+  fi
+else
+  log_step "WARN" "compile_wiki" "missing ${SCRIPTS_DIR}/compile_wiki.py"
+fi
+
+# 7.6) Active Recall Probes (test actual retrievability before review queue)
+if [[ -f "${SCRIPTS_DIR}/active_recall_probes.py" ]]; then
+  PROBE_ARGS=(--threshold 0.3 --max-items 100)
+  if [[ "${APPLY}" -eq 1 ]]; then
+    PROBE_ARGS+=(--apply)
+  fi
+  run_step_soft "active_recall_probes" python3 "${SCRIPTS_DIR}/active_recall_probes.py" "${PROBE_ARGS[@]}"
+else
+  log_step "WARN" "active_recall_probes" "missing ${SCRIPTS_DIR}/active_recall_probes.py"
+fi
+
+# 7.7) FSRS review queue (now informed by probe results)
 if [[ -f "${SCRIPTS_DIR}/generate_review_queue.py" ]]; then
   run_step_soft "review_queue" python3 "${SCRIPTS_DIR}/generate_review_queue.py"
 else
@@ -313,7 +420,23 @@ fi
 run_step_soft "brain_doctor" "${ROOT}/bin/lacp-brain-doctor" --json
 run_step_soft "knowledge_doctor" "${ROOT}/bin/lacp-knowledge-doctor" --root "${KNOWLEDGE_DOCTOR_ROOT}" --json
 
-# 10.5) SMS epoch synthesis (psychology-informed memory consolidation)
+# 10.5) Memory index guard — enforce MEMORY.md size caps
+if [[ -f "${SCRIPTS_DIR}/memory_index_guard.py" ]]; then
+  # Find all MEMORY.md files in Claude project memory dirs
+  for memfile in "${HOME}/.claude/projects/"*/memory/MEMORY.md; do
+    if [[ -f "${memfile}" ]]; then
+      if [[ "${APPLY}" -eq 1 ]]; then
+        run_step_soft "memory_index_guard" python3 "${SCRIPTS_DIR}/memory_index_guard.py" --enforce "${memfile}"
+      else
+        run_step_soft "memory_index_guard" python3 "${SCRIPTS_DIR}/memory_index_guard.py" --check "${memfile}"
+      fi
+    fi
+  done
+else
+  log_step "WARN" "memory_index_guard" "missing ${SCRIPTS_DIR}/memory_index_guard.py"
+fi
+
+# 10.6) SMS epoch synthesis (psychology-informed memory consolidation)
 if python3 -c "
 import sys; sys.path.insert(0, '${ROOT}/hooks')
 from self_memory_system import read_episodes, synthesize_epoch, write_epoch
