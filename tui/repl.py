@@ -201,26 +201,42 @@ class StatusBar(Static):
         if len(cwd_short) > 30:
             cwd_short = "…" + cwd_short[-28:]
 
-        # Build segments
-        parts = [
-            f" {badge} [bold]{short_model}[/]",
-            f"[{mode_color}]{mode}[/]",
-        ]
-        if mcp_tools > 0:
-            parts.append(f"[dim]MCP:{mcp_tools}[/]")
-        if memory_count > 0:
-            parts.append(f"[dim]🧠{memory_count}[/]")
-        parts.append(f"tok:{tokens:,}")
-        if cost > 0:
-            parts.append(f"${cost:.4f}")
-        parts.append(time_str)
-        if researching:
-            parts.append("[bold #e8a838]🔬 researching[/]")
-        elif research_count > 0:
-            parts.append(f"[dim]🔬{research_count}[/]")
-        parts.append(f"[dim]{cwd_short}[/]")
+        # Build segments adaptively based on terminal width
+        try:
+            term_width = self.app.size.width
+        except Exception:
+            term_width = 120
 
-        self.update("  │  ".join(parts))
+        parts = [f" {badge} [bold]{short_model}[/]"]
+
+        if term_width >= 50:
+            parts.append(f"[{mode_color}]{mode}[/]")
+
+        if term_width >= 100 and mcp_tools > 0:
+            parts.append(f"[dim]MCP:{mcp_tools}[/]")
+
+        if term_width >= 100 and memory_count > 0:
+            parts.append(f"[dim]🧠{memory_count}[/]")
+
+        if term_width >= 70:
+            parts.append(f"tok:{tokens:,}")
+
+        if term_width >= 90 and cost > 0:
+            parts.append(f"${cost:.4f}")
+
+        if term_width >= 60:
+            parts.append(time_str)
+
+        if researching:
+            parts.append("[bold #e8a838]🔬[/]" if term_width < 80 else "[bold #e8a838]🔬 researching[/]")
+        elif term_width >= 100 and research_count > 0:
+            parts.append(f"[dim]🔬{research_count}[/]")
+
+        if term_width >= 120:
+            parts.append(f"[dim]{cwd_short}[/]")
+
+        sep = " │ " if term_width >= 80 else " "
+        self.update(sep.join(parts))
 
 
 class ThinkingIndicator(Static):
@@ -476,6 +492,38 @@ class LACPRepl(App):
     Static {
         background: transparent;
     }
+
+    /* Compact layout classes applied dynamically on resize */
+    .compact .banner-box {
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    .compact .user-msg {
+        margin: 0 0;
+        padding: 0 1;
+    }
+    .compact .assistant-msg {
+        margin: 0 0 0 0;
+        padding: 0 1 0 1;
+    }
+    .compact .assistant-label {
+        margin: 0 0 0 0;
+        padding: 0 1;
+    }
+    .compact .system-msg, .compact .tool-msg {
+        margin: 0;
+        padding: 0 1;
+    }
+    .compact .research-box {
+        margin: 0;
+        padding: 0 1;
+    }
+    .compact StatusBar {
+        padding: 0 1;
+    }
+    .compact ThinkingIndicator, .compact .thinking-spinner {
+        padding: 0 1;
+    }
     """
 
     # Agent modes: cycle with Shift+Tab
@@ -527,6 +575,18 @@ class LACPRepl(App):
         yield StatusBar(id="status")
         yield Footer()
 
+    def on_resize(self, event=None) -> None:
+        """Adapt layout based on terminal width."""
+        w = self.size.width
+        screen = self.screen
+        if w < 80:
+            screen.add_class("compact")
+        else:
+            screen.remove_class("compact")
+        # Update status bar with new width context
+        if self.provider:
+            self._update_status()
+
     def on_mount(self) -> None:
         # Set true dark theme
         self.theme = "textual-dark"
@@ -568,7 +628,9 @@ class LACPRepl(App):
         available = list_providers()
         tool_defs = get_tool_definitions()
 
-        logo = self.skin.banner_logo.strip()
+        # Adaptive: skip logo on narrow terminals
+        term_width = self.size.width
+        logo = self.skin.banner_logo.strip() if term_width >= 80 else ""
 
         # Categorize tools
         tool_categories = {
@@ -600,25 +662,34 @@ class LACPRepl(App):
         if len(short_model) > 15 and short_model[-8:].isdigit():
             short_model = short_model[:-9]
 
-        # Build banner
+        # Build banner — adaptive to terminal width
+        sep_width = min(term_width - 6, 62)
         banner_text = ""
         if logo:
             banner_text += f"{logo}\n"
-        banner_text += f"  [dim #333355]{'─' * 62}[/]\n"
+        banner_text += f"  [dim #333355]{'─' * sep_width}[/]\n"
 
-        # Tools summary
+        # Tools summary — compact on narrow
         tool_lines = []
         for cat, names in tool_categories.items():
             if names:
                 tool_lines.append(f"[dim #666688]{cat}:[/] [bold]{', '.join(names)}[/]")
-        banner_text += "  [bold #00d4ff]Tools[/]  " + "  │  ".join(tool_lines[:4]) + "\n"
-        if len(tool_lines) > 4:
-            banner_text += "         " + "  │  ".join(tool_lines[4:]) + "\n"
+        if term_width >= 100:
+            banner_text += "  [bold #00d4ff]Tools[/]  " + "  │  ".join(tool_lines[:4]) + "\n"
+            if len(tool_lines) > 4:
+                banner_text += "         " + "  │  ".join(tool_lines[4:]) + "\n"
+        else:
+            banner_text += f"  [bold #00d4ff]{len(tool_defs)} tools[/]  │  "
+            banner_text += f"{providers_line}\n"
 
         # Providers + model + session
-        banner_text += f"\n  {providers_line}  │  [bold]{short_model}[/]  │  {len(tool_defs)} tools\n"
-        banner_text += f"  [dim]Session: {self.session_id[:20]}  ·  {Path.cwd()}[/]\n"
-        banner_text += f"  [dim]{self.skin.brand('welcome')} /help for commands · Ctrl+T mode · Ctrl+E model[/]"
+        if term_width >= 100:
+            banner_text += f"\n  {providers_line}  │  [bold]{short_model}[/]  │  {len(tool_defs)} tools\n"
+        banner_text += f"  [dim]Session: {self.session_id[:16]}[/]  ·  [bold]{short_model}[/]\n"
+        if term_width >= 80:
+            banner_text += f"  [dim]{self.skin.brand('welcome')} /help · Ctrl+T mode · Ctrl+E model[/]"
+        else:
+            banner_text += f"  [dim]/help for commands[/]"
 
         banner_widget = Static(banner_text, markup=True, classes="banner-box")
         msgs.mount(banner_widget)
@@ -1105,45 +1176,57 @@ class LACPRepl(App):
                 # Auto-fallback on rate limit (429), credit error (400), or auth error (401)
                 if any(x in err_str for x in ("429", "rate_limit", "credit balance", "401", "missing_scope")):
                     import time as _time
-                    # Try fallback chain
-                    fallback_models = [
-                        ("anthropic", "claude-haiku-4-5-20251001"),  # cheaper, less rate limited
-                        ("ollama", "llama3.1:8b"),  # local, no rate limits
-                    ]
-                    # Remove current provider from fallbacks
-                    current = self.provider.name if self.provider else ""
-                    fallback_models = [(p, m) for p, m in fallback_models if p != current]
 
                     def clear_ph() -> None:
                         msgs.remove_streaming()
                     self.call_from_thread(clear_ph)
 
-                    # Try each fallback
-                    switched = False
-                    for fb_provider, fb_model in fallback_models:
-                        try:
-                            test_provider = create_provider(provider_name=fb_provider, model=fb_model)
-                            if test_provider.is_available():
-                                self.provider = test_provider
-                                self.provider._client = None  # force re-init
-                                def show_switch(p=fb_provider, m=fb_model) -> None:
-                                    msgs.add_message("system", f"Auto-switched to [bold]{p}/{m}[/] (rate limited)")
-                                    self._update_status()
-                                self.call_from_thread(show_switch)
-                                switched = True
-                                break
-                        except Exception:
+                    is_auth_error = any(x in err_str for x in ("401", "missing_scope", "credit balance"))
+
+                    if is_auth_error and hasattr(self.provider, 'refresh_token'):
+                        def show_refresh() -> None:
+                            msgs.add_message("system", "🔑 Auth error — refreshing OAuth token...")
+                        self.call_from_thread(show_refresh)
+                        if self.provider.refresh_token():
                             continue
 
-                    if switched:
-                        continue  # retry with new provider
-                    else:
-                        # No fallback available — wait and retry same provider
-                        def show_retry() -> None:
-                            msgs.add_message("system", "⏳ Rate limited — retrying in 5s...")
-                        self.call_from_thread(show_retry)
-                        _time.sleep(5)
+                    # Rate limit — check concurrent sessions and retry with backoff
+                    current_model = self.provider.model if self.provider else ""
+                    import subprocess as _sp
+                    try:
+                        cc_count = len(_sp.run(["pgrep", "-la", "claude"], capture_output=True, text=True, timeout=3).stdout.strip().splitlines())
+                    except Exception:
+                        cc_count = 0
+
+                    # Exponential backoff: 5s, 10s, 20s (max 3 retries then fall to haiku)
+                    retry_key = "_rate_limit_retries"
+                    retries = getattr(self, retry_key, 0)
+                    if retries < 3:
+                        wait_secs = 5 * (2 ** retries)
+                        setattr(self, retry_key, retries + 1)
+                        sessions_note = f" ({cc_count} Claude Code sessions active)" if cc_count > 1 else ""
+                        def show_wait(model=current_model, secs=wait_secs, note=sessions_note) -> None:
+                            msgs.add_message("system", f"⏳ Rate limited on {model}{note} — retry in {secs}s...")
+                        self.call_from_thread(show_wait)
+                        _time.sleep(wait_secs)
+                        if hasattr(self.provider, '_client'):
+                            self.provider._client = None
                         continue
+                    else:
+                        # After 3 retries, fall back to Haiku
+                        setattr(self, retry_key, 0)
+                        try:
+                            self.provider = create_provider(provider_name="anthropic", model="claude-haiku-4-5-20251001")
+                            self.provider._client = None
+                            def show_fallback() -> None:
+                                msgs.add_message("system",
+                                    f"⚡ Switched to Haiku (Sonnet/Opus quota exhausted by {cc_count} concurrent sessions). "
+                                    f"Use /model sonnet when sessions free up.")
+                                self._update_status()
+                            self.call_from_thread(show_fallback)
+                            continue
+                        except Exception:
+                            pass
 
                 # Add debug info for auth errors
                 if "credit balance" in err_str or "400" in err_str:

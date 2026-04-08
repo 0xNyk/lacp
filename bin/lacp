@@ -165,6 +165,9 @@ case "${cmd}" in
     # TUI control plane dashboard
     exec python3 "${ROOT}/tui/app.py"
     ;;
+  brain)
+    exec "${ROOT}/bin/lacp-brain" "$@"
+    ;;
   stream|session)
     # Launch agent session
     exec "${ROOT}/bin/lacp-stream" "$@"
