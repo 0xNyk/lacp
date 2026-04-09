@@ -153,7 +153,7 @@ fi
 if [[ "${cmd}" != "help" && ! -x "${ROOT}/bin/lacp-${cmd}" ]]; then
   # Check aliases (start→onboard, status→status-report, run→sandbox-run)
   case "${cmd}" in
-    start|onboard|status|run) ;;  # known aliases — fall through
+    start|onboard|status|run|gaps|brain|tui|hub|stream|session) ;;  # known aliases — fall through
     *) exec "${ROOT}/bin/lacp-stream" "$@" ;;
   esac
 fi
@@ -167,6 +167,9 @@ case "${cmd}" in
     ;;
   brain)
     exec "${ROOT}/bin/lacp-brain" "$@"
+    ;;
+  gaps)
+    exec "${ROOT}/bin/lacp-capability-gaps" "$@"
     ;;
   stream|session)
     # Launch agent session

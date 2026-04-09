@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp gaps [--json]
+
+Capability-gap registry — tracks what LACP cannot do because it
+delegates to provider runtimes. Council verdict: when hard_blockers >= 5,
+reconsider runtime architecture.
+
+Options:
+  --json    Machine-readable output
+  -h, --help  Show help
+EOF
+}
+
+GAPS_FILE="${ROOT}/config/capability-gaps.json"
+AS_JSON=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if [[ ! -f "${GAPS_FILE}" ]]; then
+  die "Capability-gaps registry not found: ${GAPS_FILE}"
+fi
+
+if [[ "${AS_JSON}" -eq 1 ]]; then
+  cat "${GAPS_FILE}"
+else
+  python3 -c "
+import json, sys
+with open('${GAPS_FILE}') as f:
+    data = json.load(f)
+
+summary = data.get('summary', {})
+threshold = data.get('threshold', 5)
+gaps = data.get('gaps', [])
+
+hard = [g for g in gaps if g.get('severity') == 'hard_blocker']
+soft = [g for g in gaps if g.get('severity') == 'soft_blocker']
+
+print(f'Capability-Gap Registry')
+print(f'  Threshold: {threshold} hard blockers → reconsider runtime')
+print(f'  Current:   {len(hard)} hard / {len(soft)} soft / {len(gaps)} total')
+print(f'  Verdict:   {summary.get(\"verdict\", \"?\")}')
+print()
+
+if hard:
+    print('Hard Blockers:')
+    for g in hard:
+        ws = 'yes' if g.get('workaround_sufficient') else 'NO'
+        print(f'  [{g[\"id\"]}] {g[\"name\"]}')
+        print(f'         {g[\"description\"][:100]}')
+        print(f'         Workaround sufficient: {ws}')
+        print()
+
+if soft:
+    print('Soft Blockers:')
+    for g in soft:
+        ws = 'yes' if g.get('workaround_sufficient') else 'NO'
+        print(f'  [{g[\"id\"]}] {g[\"name\"]}')
+        print(f'         Workaround sufficient: {ws}')
+        print()
+
+if len(hard) >= threshold:
+    print(f'⚠️  THRESHOLD REACHED — {len(hard)} hard blockers >= {threshold}. Reconsider runtime architecture.')
+else:
+    remaining = threshold - len(hard)
+    print(f'  {remaining} more hard blockers before runtime reconsideration.')
+"
+fi
