@@ -1,0 +1,13 @@
+{
+  "name": "lacp-hardening",
+  "version": "1.0.0",
+  "description": "Production hardening for AI coding agents — quality gates, security guards, continuous QA, and session memory. From the LACP (Local Agent Control Plane) framework.",
+  "author": {
+    "name": "Nyk",
+    "url": "https://github.com/0xNyk"
+  },
+  "homepage": "https://github.com/0xNyk/lacp",
+  "repository": "https://github.com/0xNyk/lacp",
+  "license": "MIT",
+  "keywords": ["quality-gate", "security", "hardening", "memory", "hooks", "production", "testing", "guardrails"]
+}
