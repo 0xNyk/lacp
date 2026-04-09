@@ -38,6 +38,9 @@ Memory:
   sync                   Sync agent sessions into vault
   review                 Show FSRS review queue
 
+Terminal:
+  terminal               Open LACP terminal inside Obsidian (installs plugin if needed)
+
 Options:
   --json                 Machine-readable output
   -h, --help             Show help
@@ -362,6 +365,43 @@ cmd_review() {
   fi
 }
 
+cmd_terminal() {
+  local plugin_dir="${VAULT}/.obsidian/plugins/terminal"
+
+  # Check if terminal plugin is installed
+  if [[ ! -d "${plugin_dir}" ]]; then
+    log "Installing obsidian-terminal plugin..."
+
+    # Download latest release
+    local release_url="https://github.com/polyipseity/obsidian-terminal/releases/latest/download"
+    mkdir -p "${plugin_dir}"
+
+    curl -sL "${release_url}/main.js" -o "${plugin_dir}/main.js" 2>/dev/null
+    curl -sL "${release_url}/manifest.json" -o "${plugin_dir}/manifest.json" 2>/dev/null
+    curl -sL "${release_url}/styles.css" -o "${plugin_dir}/styles.css" 2>/dev/null
+
+    if [[ ! -f "${plugin_dir}/main.js" || ! -s "${plugin_dir}/main.js" ]]; then
+      die "Failed to download terminal plugin. Install manually from Obsidian Community Plugins."
+    fi
+
+    log "Terminal plugin installed. Restart Obsidian and enable it in Settings → Community Plugins."
+  else
+    log "Terminal plugin already installed."
+  fi
+
+  # Open Obsidian with terminal URI
+  log "Opening Obsidian terminal..."
+  log "Tip: Configure a profile in Settings → Terminal → Profiles:"
+  log "  Name: LACP"
+  log "  Command: lacp"
+  log "  This will launch LACP's TUI inside Obsidian."
+
+  # Try to open Obsidian
+  if command -v open >/dev/null 2>&1; then
+    open "obsidian://open" 2>/dev/null || true
+  fi
+}
+
 case "${CMD}" in
   status)   cmd_status ;;
   doctor)   exec "${ROOT}/bin/lacp-brain-doctor" "$@" ${AS_JSON:+--json} ;;
@@ -380,6 +420,7 @@ case "${CMD}" in
   sync)     exec "${ROOT}/bin/lacp-brain-expand" --days "${DAYS}" --apply "$@" ;;
   review)   cmd_review ;;
   stack)    exec "${ROOT}/bin/lacp-brain-stack" "${ARGS[@]}" ;;
+  terminal) cmd_terminal ;;
   -h|--help|help) usage ;;
   *) die "Unknown command: ${CMD}. Use --help for usage." ;;
 esac
