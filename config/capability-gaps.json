@@ -1,0 +1,75 @@
+{
+  "schema_version": "1",
+  "description": "Capability-gap registry — tracks things LACP cannot do because it delegates to provider runtimes. When hard_blockers >= 5, reconsider runtime architecture.",
+  "threshold": 5,
+  "last_reviewed": "2026-04-09",
+  "gaps": [
+    {
+      "id": "GAP-001",
+      "name": "No compaction control",
+      "severity": "hard_blocker",
+      "description": "LACP cannot trigger or control compaction strategies (microcompact, snip, auto, collapse). Can only hint at /compact via systemMessage. Provider owns the compaction decision.",
+      "workaround": "Context pressure hints in stop hook suggest /compact. Handoff artifacts persist state across resets.",
+      "workaround_sufficient": false,
+      "added": "2026-04-09",
+      "provider_affected": ["claude", "codex", "hermes"]
+    },
+    {
+      "id": "GAP-002",
+      "name": "No tool result budgeting",
+      "severity": "hard_blocker",
+      "description": "Large bash outputs fill context window. LACP cannot truncate or budget tool results before they enter the provider's context. Provider controls tool result handling.",
+      "workaround": "None. PostToolUse hooks fire after the result is already in context.",
+      "workaround_sufficient": false,
+      "added": "2026-04-09",
+      "provider_affected": ["claude", "codex"]
+    },
+    {
+      "id": "GAP-003",
+      "name": "No mid-loop tool interception",
+      "severity": "soft_blocker",
+      "description": "PreToolUse hooks can block tools but cannot modify tool inputs or reorder tool execution. Cannot implement concurrency classification (read=parallel, write=serial) from outside the loop.",
+      "workaround": "PreToolUse blocks dangerous tools. Cannot optimize execution order.",
+      "workaround_sufficient": true,
+      "added": "2026-04-09",
+      "provider_affected": ["claude", "codex", "hermes"]
+    },
+    {
+      "id": "GAP-004",
+      "name": "No streaming backpressure",
+      "severity": "soft_blocker",
+      "description": "When the TUI renders slower than the model streams, LACP cannot signal the provider to slow down. Memory grows unbounded in long streaming turns.",
+      "workaround": "TUI buffers and renders async. Not a problem in practice yet.",
+      "workaround_sufficient": true,
+      "added": "2026-04-09",
+      "provider_affected": ["claude", "codex"]
+    },
+    {
+      "id": "GAP-005",
+      "name": "No per-error-class retry strategy",
+      "severity": "soft_blocker",
+      "description": "Provider SDK handles retries generically. LACP cannot implement different strategies for 429 vs 529 vs 400 vs 401 like Claude Code's 823-line retry system.",
+      "workaround": "Provider SDK max_retries=10 with generic backoff. TUI-level fallback on persistent 429.",
+      "workaround_sufficient": true,
+      "added": "2026-04-09",
+      "provider_affected": ["claude"]
+    },
+    {
+      "id": "GAP-006",
+      "name": "No session continuity across provider switches",
+      "severity": "hard_blocker",
+      "description": "When switching from Claude to Codex mid-session, conversation history format is incompatible. No portable session format exists. SMS episodes are provider-agnostic but conversation state is not.",
+      "workaround": "Handoff artifacts capture summary but not full conversation. User must start fresh.",
+      "workaround_sufficient": false,
+      "added": "2026-04-09",
+      "provider_affected": ["claude", "codex", "hermes"]
+    }
+  ],
+  "summary": {
+    "total": 6,
+    "hard_blockers": 3,
+    "soft_blockers": 3,
+    "threshold_reached": false,
+    "verdict": "Stay wrapper. 3 hard blockers < 5 threshold. Revisit when count reaches 5."
+  }
+}
