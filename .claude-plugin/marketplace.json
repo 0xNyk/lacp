@@ -1,0 +1,45 @@
+{
+  "name": "lacp-plugins",
+  "owner": {
+    "name": "Nyk",
+    "email": "nyk@builderz.dev"
+  },
+  "metadata": {
+    "description": "Production hardening hooks for AI coding agents \u2014 quality gates, security guards, continuous QA, and psychology-informed session memory.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "lacp-hardening",
+      "source": "./plugin",
+      "description": "5 lifecycle hooks (Stop quality gate, SessionStart context injection, PreToolUse security guards, PostToolUse continuous QA, UserPromptSubmit thinking nudge) + 11 context modes + 3 skills. Battle-tested across 3,000+ sessions.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Nyk"
+      },
+      "homepage": "https://github.com/0xNyk/lacp",
+      "repository": "https://github.com/0xNyk/lacp",
+      "license": "MIT",
+      "keywords": [
+        "quality-gate",
+        "security",
+        "hardening",
+        "memory",
+        "hooks",
+        "production",
+        "testing",
+        "guardrails",
+        "tdd",
+        "debugging"
+      ],
+      "category": "productivity",
+      "tags": [
+        "quality",
+        "security",
+        "testing",
+        "session-management",
+        "memory"
+      ]
+    }
+  ]
+}
