@@ -28,7 +28,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pretool_guard.py",
+          "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pretool_guard.py bash",
           "timeout": 5
         }
       ]
@@ -38,7 +38,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pretool_guard.py",
+          "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pretool_guard.py write",
           "timeout": 5
         }
       ]
