@@ -52,7 +52,8 @@
     "omnisearch",
     "quickadd",
     "smart-connections",
-    "templater-obsidian"
+    "templater-obsidian",
+    "terminal"
   ],
   "graph_view": {
     "showOrphans": false,
