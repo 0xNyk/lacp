@@ -20,7 +20,7 @@ bin/lacp orchestrate doctor --json | jq
 ## 3) Iterate in isolated cycles
 
 ```bash
-bin/lacp test --quick
+HOMEBREW_NO_AUTO_UPDATE=1 bin/lacp test --quick --isolated
 bin/lacp loop --task "targeted change" --repo-trust trusted --dry-run --json -- /bin/echo hello
 ```
 
@@ -36,7 +36,7 @@ bin/lacp run --task "guarded mutation" --repo-trust trusted --context-contract "
 
 ```bash
 bin/lacp worktree list --json | jq
-bin/lacp swarm doctor --json | jq
+bin/lacp orchestrate doctor --json | jq '.backends'
 bin/lacp swarm status --latest --json | jq '.collaboration_summary'
 ```
 

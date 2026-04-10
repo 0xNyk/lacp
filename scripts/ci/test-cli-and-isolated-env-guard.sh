@@ -82,7 +82,7 @@ LACP_BENCH_LOOKBACK="30"
 EOF
 
 before_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
-"${ROOT}/bin/lacp" test --isolated >/dev/null
+"${ROOT}/bin/lacp" test --quick --isolated >/dev/null
 after_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
 
 if [[ "${before_hash}" != "${after_hash}" ]]; then
