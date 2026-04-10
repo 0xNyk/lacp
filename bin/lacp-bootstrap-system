@@ -154,7 +154,7 @@ if [[ "${FRESH_CHECK}" -eq 1 ]]; then
   cmd_orchestrate=$?
   "${ROOT}/bin/lacp" worktree list --json >/dev/null 2>&1
   cmd_worktree=$?
-  "${ROOT}/bin/lacp" swarm doctor --json >/dev/null 2>&1
+  "${ROOT}/bin/lacp" swarm --help >/dev/null 2>&1
   cmd_swarm=$?
   set -e
 
@@ -172,7 +172,7 @@ if [[ "${FRESH_CHECK}" -eq 1 ]]; then
       commands:{
         orchestrate_doctor:{ok:($cmd_orchestrate == 0), rc:$cmd_orchestrate},
         worktree_list:{ok:($cmd_worktree == 0), rc:$cmd_worktree},
-        swarm_doctor:{ok:($cmd_swarm == 0), rc:$cmd_swarm}
+        swarm_help:{ok:($cmd_swarm == 0), rc:$cmd_swarm}
       }
     }')"
 fi

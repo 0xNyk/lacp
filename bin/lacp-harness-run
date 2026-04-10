@@ -16,13 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import yaml  # type: ignore
-except Exception as exc:
-    print(f"[lacp] ERROR: missing yaml support: {exc}", file=sys.stderr)
-    raise SystemExit(2)
-
-
 def utc_stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -418,6 +411,12 @@ def main() -> int:
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON summary")
     args = parser.parse_args()
+
+    try:
+        import yaml  # type: ignore
+    except Exception as exc:
+        print(f"[lacp] ERROR: missing yaml support: {exc}", file=sys.stderr)
+        return 2
 
     root_env = os.environ.get("LACP_SCRIPT_ROOT", "")
     if not root_env:

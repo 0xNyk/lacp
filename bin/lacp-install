@@ -599,6 +599,15 @@ ONBOARD_ARGS=()
 if [[ "${WITH_VERIFY}" -eq 1 ]]; then
   ONBOARD_ARGS+=(--with-verify --hours "${HOURS}")
 fi
+if [[ "${AUTO_DEPS}" -eq 0 ]]; then
+  ONBOARD_ARGS+=(--no-auto-deps)
+fi
+if [[ "${AUTO_DEPS_DRY_RUN}" -eq 1 ]]; then
+  ONBOARD_ARGS+=(--auto-deps-dry-run)
+fi
+if [[ "${AUTO_DEPS_FORCE}" -eq 1 ]]; then
+  ONBOARD_ARGS+=(--auto-deps-force)
+fi
 if [[ "${AUTO_ADOPT}" -eq 0 ]]; then
   ONBOARD_ARGS+=(--no-auto-adopt)
 fi
