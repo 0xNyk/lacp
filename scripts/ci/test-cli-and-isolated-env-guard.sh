@@ -82,6 +82,17 @@ LACP_BENCH_LOOKBACK="30"
 EOF
 
 before_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
+
+# Guard against truncated placeholder policy paths accidentally committed.
+if grep -F 'LACP_MCP_AUTH_POLICY_FILE="${ROOT...json"' "${ROOT}/bin/lacp-test" >/dev/null; then
+  echo "[cli-env-guard] FAIL malformed LACP_MCP_AUTH_POLICY_FILE in bin/lacp-test" >&2
+  exit 1
+fi
+if grep -F 'LACP_MCP_AUTH_POLICY_FILE="${LACP...son}"' "${ROOT}/scripts/lacp-lib.sh" >/dev/null; then
+  echo "[cli-env-guard] FAIL malformed LACP_MCP_AUTH_POLICY_FILE in scripts/lacp-lib.sh" >&2
+  exit 1
+fi
+
 "${ROOT}/bin/lacp" test --isolated >/dev/null
 after_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
 
