@@ -82,6 +82,10 @@ LACP_BENCH_LOOKBACK="30"
 EOF
 
 before_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
+
+# Guard against malformed isolated env policy paths in lacp-test.
+grep -F 'export LACP_MCP_AUTH_POLICY_FILE="${ROOT}/config/mcp-auth-policy.json"' "${ROOT}/bin/lacp-test" >/dev/null
+
 "${ROOT}/bin/lacp" test --quick --isolated >/dev/null
 after_hash="$(shasum "${ENV_FILE}" | awk '{print $1}')"
 
