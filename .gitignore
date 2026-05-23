@@ -21,3 +21,12 @@ dist/
 # Claude Code / GitNexus local state
 .claude/
 .gitnexus/
+
+# Editor / agent scratch state
+.collaborator/
+.dmux/
+.playwright-mcp/
+
+# Local-only personal automation (machine-specific paths)
+automation/scripts/fieldtheory_*.py
+Entities/

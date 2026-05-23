@@ -6,8 +6,9 @@ DAYS="${1:-30}"
 MIN_SCORE="${2:-0.80}"
 MIN_COUNT="${3:-2}"
 
-LOG_DIR="/Users/nyk/control/knowledge/knowledge-memory/data/research/promotions"
-LOG_FILE="/Users/nyk/control/knowledge/knowledge-memory/data/research-promotions.log"
+: "${LACP_KNOWLEDGE_ROOT:=${HOME}/.lacp/knowledge}"
+LOG_DIR="${LACP_RESEARCH_PROMOTIONS_LOG_DIR:-${LACP_KNOWLEDGE_ROOT}/data/research/promotions}"
+LOG_FILE="${LACP_RESEARCH_PROMOTIONS_LOG_FILE:-${LACP_KNOWLEDGE_ROOT}/data/research-promotions.log}"
 mkdir -p "${LOG_DIR}"
 
 python3 "${SCRIPT_DIR}/suggest_research_promotions.py" \

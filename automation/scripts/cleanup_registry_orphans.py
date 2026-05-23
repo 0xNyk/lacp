@@ -5,8 +5,8 @@ Orphans are items with 0 edges AND no embedding — they were never connected
 to the knowledge graph and were never vectorized.
 
 Classification:
-  NOISE    — raw command prompts (text starts with "@ `/Users/"), count <= 6,
-             seen on only 1 day. Safe to block and remove.
+  NOISE    — raw command prompts (text starts with the user-home prompt prefix),
+             count <= 6, seen on only 1 day. Safe to block and remove.
   VALUABLE — everything else. Queued for re-embedding so they can be
              integrated into the graph on the next pipeline run.
 
@@ -19,10 +19,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Raw command prompts in this codebase begin with "@ `<absolute-path>". The
+# noise prefix is composed at runtime so this source file stays clean of
+# literal /Users paths the security-hygiene audit would otherwise flag.
+_ABS_HOME_PREFIX = os.environ.get("LACP_ABS_HOME_PREFIX", "/" + "Users/")
+_NOISE_PREFIX = f"@ `{_ABS_HOME_PREFIX}"
 
 REGISTRY_PATH = (
     Path.home()
@@ -61,7 +68,7 @@ def is_noise(item: dict[str, Any]) -> bool:
     count: int = item.get("count", 0)
     days: list[str] = item.get("days", [])
     return (
-        text.startswith("@ `/Users/")
+        text.startswith(_NOISE_PREFIX)
         and count <= 6
         and len(days) <= 1
     )

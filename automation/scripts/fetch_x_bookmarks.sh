@@ -12,13 +12,15 @@ if [[ "$LIMIT" == "--limit" ]]; then
   LIMIT="${2:-50}"
 fi
 
-ssh jarv "python3 -c \"
+# Remote token paths on the SSH target. Comma-separated; first existing wins.
+# Override with LACP_XINT_TOKEN_PATHS to point at a different remote layout.
+DEFAULT_TOKEN_PATHS="\${HOME}/.openclaw/workspace-jarv/skills/xint/data/oauth-tokens.json,\${HOME}/.openclaw/skills/xint/data/oauth-tokens.json"
+REMOTE_TOKEN_PATHS="${LACP_XINT_TOKEN_PATHS:-${DEFAULT_TOKEN_PATHS}}"
+
+ssh jarv "TOKEN_PATHS_CSV='${REMOTE_TOKEN_PATHS}' python3 -c \"
 import json, os, urllib.request, urllib.parse, sys
 
-TOKEN_PATHS=[
-    '/home/openclaw/.openclaw/workspace-jarv/skills/xint/data/oauth-tokens.json',
-    '/home/openclaw/.openclaw/skills/xint/data/oauth-tokens.json',
-]
+TOKEN_PATHS = [os.path.expandvars(p) for p in os.environ['TOKEN_PATHS_CSV'].split(',') if p]
 
 token = None
 for p in TOKEN_PATHS:

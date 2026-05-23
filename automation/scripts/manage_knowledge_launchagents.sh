@@ -3,8 +3,9 @@ set -euo pipefail
 
 ACTION="${1:-status}"
 UID_NUM="$(id -u)"
-SRC_DIR="/Users/nyk/control/knowledge/knowledge-memory/launchd"
-DST_DIR="/Users/nyk/Library/LaunchAgents"
+: "${LACP_KNOWLEDGE_ROOT:=${HOME}/.lacp/knowledge}"
+SRC_DIR="${LACP_LAUNCHD_SRC_DIR:-${LACP_KNOWLEDGE_ROOT}/launchd}"
+DST_DIR="${LACP_LAUNCHD_DST_DIR:-${HOME}/Library/LaunchAgents}"
 
 LABELS=(
   "com.nyk.knowledge-memory.extract"
