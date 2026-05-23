@@ -121,6 +121,45 @@ The third-party `obsidian-mcp` npm package has been removed in favor of the offi
 
 > Full list of 40+ environment variables with defaults: `config/lacp.env.example`
 
+## Memory Architecture (two orthogonal axes)
+
+LACP's memory is described along two independent dimensions. They are not the
+same axis — a note has both an access tier and a lifecycle layer.
+
+**Access tiers (where memory lives / how it's retrieved):**
+
+| Tier | What | Backed by |
+|------|------|-----------|
+| L1 | `MEMORY.md` — always in context (hard cap 200 lines) | auto-memory + `session_start.py` cap guard |
+| L2 | Topic files — on-demand reads | `~/.claude/projects/<slug>/memory/*.md` |
+| L3 | MCP-queried external knowledge | Obsidian + smart-connections + qmd |
+| L4 | Offline synthesis pipeline | `brain-expand` (11 stages) |
+| L5 | Identity & provenance | `agent-id` + `provenance` |
+
+**Lifecycle layers (what happens to a note from birth to retrieval):**
+
+| Layer | What | Backed by |
+|-------|------|-----------|
+| 1 | Session memory | `CLAUDE.md` + auto-memory (`MEMORY.md` ≤200 lines, enforced) |
+| 2 | Knowledge graph at rest | Obsidian vault + MCP bridge |
+| 3 | Ingestion | `brain-ingest` (tags new notes `needs_curation: true`) |
+| 4 | **Curation** — keeps the graph coherent between ingestion & retrieval | see below |
+
+**Layer 4 (curation) is split across LACP, by job:**
+- **rename** (title-shape normalization) → `bin/lacp-curate` / `curate_titles.py`, also `brain-expand` stage 7.8. Renames category/timestamp-shaped vault titles to claim-shaped ones drawn from each note's H1, fixing wikilinks vault-wide. Dry-run by default; hub-aware.
+- **link** (related-claim wikilink proposals) → `brain-expand` stage 7.5 (`detect_knowledge_gaps.py`).
+- **prune** (decay/archival) → `brain-expand` stages 7.7 (`generate_review_queue.py`, FSRS) + 8 (`archive_inbox.py`); `knowledge-doctor` reports orphans.
+
+```bash
+lacp curate                 # dry-run title-normalization report on default vault
+lacp curate --json          # machine-readable proposals
+lacp curate --apply         # apply renames + fix wikilinks vault-wide
+```
+
+The 200-line `MEMORY.md` cap is a structural constraint, not a style rule:
+past it the model under-parses and starts inventing entries. `session_start.py`
+warns when exceeded (configurable via `LACP_MEMORY_MD_LINE_CAP`).
+
 ## Self-Memory System (SMS)
 
 Psychology-informed agent memory based on Conway's Self-Memory System (2005).

@@ -21,6 +21,7 @@ Runs the local Obsidian brain expansion loop:
   7) Weekly consolidation gate (canonical synthesis notes from promoted research)
   7.5) Gap detection (cross-category bridges + under-researched areas)
   7.6) FSRS review queue (decaying nodes by retrievability score)
+  7.8) Title normalization (rename category/timestamp titles -> claim-shaped)
   8) Route + archive inbox notes
   9) Refresh QMD index (optional)
  10) Run brain + knowledge doctors
@@ -387,6 +388,24 @@ if [[ -f "${SCRIPTS_DIR}/generate_review_queue.py" ]]; then
   run_step_soft "review_queue" python3 "${SCRIPTS_DIR}/generate_review_queue.py"
 else
   log_step "WARN" "review_queue" "missing ${SCRIPTS_DIR}/generate_review_queue.py"
+fi
+
+# 7.8) Title normalization (Layer 4): rename category/timestamp-shaped vault
+# notes to claim-shaped titles drawn from their H1. Dry-run unless --apply.
+# Link/prune are NOT done here — they live in stages 7.5 (gaps) and 7.7 (FSRS).
+CURATE_VAULT="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
+if [[ -f "${SCRIPTS_DIR}/curate_titles.py" ]]; then
+  if [[ -d "${CURATE_VAULT}" ]]; then
+    if [[ "${APPLY}" -eq 1 ]]; then
+      run_step_soft "curate_titles" python3 "${SCRIPTS_DIR}/curate_titles.py" --vault "${CURATE_VAULT}" --apply
+    else
+      run_step_soft "curate_titles" python3 "${SCRIPTS_DIR}/curate_titles.py" --vault "${CURATE_VAULT}"
+    fi
+  else
+    log_step "WARN" "curate_titles" "vault not found: ${CURATE_VAULT}"
+  fi
+else
+  log_step "WARN" "curate_titles" "missing ${SCRIPTS_DIR}/curate_titles.py"
 fi
 
 # 8) Route/archive inbox
