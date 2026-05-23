@@ -155,6 +155,40 @@ def _load_context_mode(mode: str) -> str | None:
     return None
 
 
+MEMORY_LINE_CAP = int(os.getenv("LACP_MEMORY_MD_LINE_CAP", "200"))
+
+
+def _memory_md_path() -> Path:
+    """Path to this project's auto-memory MEMORY.md (Claude Code project slug)."""
+    slug = str(Path.cwd()).replace("/", "-")
+    return Path.home() / ".claude" / "projects" / slug / "memory" / "MEMORY.md"
+
+
+def _memory_cap_warning() -> str | None:
+    """Warn when MEMORY.md exceeds the hard line cap.
+
+    Beyond ~200 lines the model stops treating MEMORY.md as a routing document
+    (it under-parses, then starts inventing entries). The cap is a structural
+    constraint, not a style preference — surface a warning so it gets trimmed
+    before it degrades retrieval.
+    """
+    try:
+        mp = _memory_md_path()
+        if not mp.is_file():
+            return None
+        n = sum(1 for _ in mp.open("r", encoding="utf-8", errors="replace"))
+        if n > MEMORY_LINE_CAP:
+            return (
+                f"MEMORY.md is {n} lines (cap {MEMORY_LINE_CAP}). It is a routing "
+                f"document, not a store — trim least-load-bearing entries or move "
+                f"detail into topic files. Past the cap the model under-parses and "
+                f"starts inventing entries."
+            )
+    except OSError:
+        return None
+    return None
+
+
 def main() -> None:
     payload = _read_payload()
     matcher = payload.get("matcher") or ""
@@ -319,6 +353,11 @@ def main() -> None:
         _write_contract("session_start", _contract)
     except Exception:
         pass  # Contract writing is best-effort
+
+    # Priority 8: MEMORY.md line-cap guard (structural constraint)
+    _cap_warn = _memory_cap_warning()
+    if _cap_warn:
+        injections.append((8, "memory_cap", f"⚠ {_cap_warn}"))
 
     # Priority 9: Graceful degradation feedback
     degraded = []
