@@ -49,6 +49,7 @@ EOF
 result="$(bash "${ROOT}/bin/lacp-brain-promote" "${MOCK_INBOX}/test-note.md" --json 2>/dev/null)"
 status_change="$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status_change'])")"
 moved="$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin)['moved'])")"
+# shellcheck disable=SC2034  # captured for potential debug; not used in assertions below
 note_type="$(echo "${result}" | python3 -c "import json,sys; print(json.load(sys.stdin)['type'])")"
 
 assert_eq "${status_change}" "inbox -> active" "promote_status_change"

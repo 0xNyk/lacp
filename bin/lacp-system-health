@@ -170,6 +170,7 @@ if [[ "${FIX}" -eq 1 && "${#spotlight_missing[@]}" -gt 0 ]]; then
   # Build defaults write array args
   args=()
   for p in "${merged[@]}"; do args+=("${p}"); done
+  # shellcheck disable=SC2015  # log() never fails; pattern is intentional for success/failure messaging
   defaults write com.apple.Spotlight _SPExcludedPaths -array "${args[@]}" 2>/dev/null && \
     log "system-health: added ${#spotlight_missing[@]} Spotlight exclusion(s)" || \
     log "system-health: failed to write Spotlight exclusions (may need System Settings)"
@@ -284,7 +285,7 @@ warn_agent_patterns="$(jq -r '.background_processes.warn_agents_patterns[]' "${P
 found_deny=0
 while IFS= read -r pattern; do
   [[ -n "${pattern}" ]] || continue
-  if ps aux 2>/dev/null | grep -i "${pattern}" | grep -qv grep 2>/dev/null; then
+  if pgrep -il "${pattern}" >/dev/null 2>&1; then
     add_check "background:${pattern}" "FAIL" "running (known CPU-wasting process)"
     add_hint "Remove ${pattern}: check Activity Monitor and uninstall the app"
     found_deny=1

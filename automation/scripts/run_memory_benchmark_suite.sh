@@ -2,7 +2,10 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-THRESHOLDS_FILE="/Users/nyk/control/knowledge/knowledge-memory/benchmarks/thresholds.env"
+: "${LACP_KNOWLEDGE_ROOT:=${HOME}/.lacp/knowledge}"
+BENCH_DIR="${LACP_MEMORY_BENCH_DIR:-${LACP_KNOWLEDGE_ROOT}/data/benchmarks}"
+BENCH_LOG="${LACP_MEMORY_BENCH_LOG:-${LACP_KNOWLEDGE_ROOT}/data/benchmark.log}"
+THRESHOLDS_FILE="${LACP_MEMORY_BENCH_THRESHOLDS:-${LACP_KNOWLEDGE_ROOT}/benchmarks/thresholds.env}"
 if [[ -f "${THRESHOLDS_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${THRESHOLDS_FILE}"
@@ -20,7 +23,7 @@ MIN_EMBED_DIM="${9:-${MEMORY_BENCH_MIN_EMBED_DIM:-256}}"
 MAX_INVALID_PATH_RATIO="${10:-${MEMORY_BENCH_MAX_INVALID_PATH_RATIO:-0}}"
 MAX_LEGACY_PATH_RATIO="${11:-${MEMORY_BENCH_MAX_LEGACY_PATH_RATIO:-0}}"
 
-mkdir -p /Users/nyk/control/knowledge/knowledge-memory/data/benchmarks /Users/nyk/control/knowledge/knowledge-memory/data/benchmarks/trends
+mkdir -p "${BENCH_DIR}" "${BENCH_DIR}/trends"
 
 set +e
 python3 "${SCRIPT_DIR}/benchmark_memory_retrieval.py" \
@@ -36,11 +39,11 @@ python3 "${SCRIPT_DIR}/benchmark_memory_retrieval.py" \
   --max-invalid-path-ratio "${MAX_INVALID_PATH_RATIO}" \
   --max-legacy-path-ratio "${MAX_LEGACY_PATH_RATIO}" \
   --require-dense-capability \
-  >> /Users/nyk/control/knowledge/knowledge-memory/data/benchmark.log 2>&1
+  >> "${BENCH_LOG}" 2>&1
 BENCH_RC=$?
 set -e
 
 python3 "${SCRIPT_DIR}/benchmark_memory_trends.py" --limit "${LOOKBACK}" \
-  >> /Users/nyk/control/knowledge/knowledge-memory/data/benchmark.log 2>&1
+  >> "${BENCH_LOG}" 2>&1
 
 exit "${BENCH_RC}"

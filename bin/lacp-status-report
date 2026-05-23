@@ -7,11 +7,13 @@ source "${ROOT}/scripts/lacp-lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: lacp-status-report [--print] [--json]
+Usage: lacp-status-report [--print] [--json] [--html] [--out FILE]
 
 Options:
-  --print   Print markdown report to stdout instead of writing file
-  --json    Print JSON payload to stdout
+  --print     Print markdown report to stdout instead of writing file
+  --json      Print JSON payload to stdout
+  --html      Write self-contained HTML report (default: docs/system-status.html)
+  --out FILE  (html only) Write HTML to FILE instead of default path
 
 Default:
   Writes markdown report to docs/system-status.md
@@ -20,6 +22,7 @@ EOF
 
 MODE="write"
 FORMAT="md"
+OUT_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,6 +32,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --json)
       FORMAT="json"
+      shift
+      ;;
+    --html)
+      FORMAT="html"
+      shift
+      ;;
+    --out)
+      shift
+      OUT_PATH="${1:-}"
+      [[ -z "${OUT_PATH}" ]] && die "--out requires a path"
       shift
       ;;
     -h|--help)
@@ -132,8 +145,10 @@ BRAIN_FAIL_JSON="$(as_json_int "${BRAIN_FAIL}")"
 
 REPORT_TIME_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 REPORT_FILE="${ROOT}/docs/system-status.md"
+HTML_REPORT_FILE="${ROOT}/docs/system-status.html"
+RENDERER="${ROOT}/automation/scripts/render_html.py"
 
-if [[ "${FORMAT}" == "json" ]]; then
+build_status_json() {
   jq -n \
     --arg generated_at "${REPORT_TIME_UTC}" \
     --arg mode "${MODE_NAME}" \
@@ -202,6 +217,23 @@ if [[ "${FORMAT}" == "json" ]]; then
       intervention_rate: $intervention_rate,
       memory_kpi: $memory_kpi
     }'
+}
+
+if [[ "${FORMAT}" == "json" ]]; then
+  build_status_json
+  exit 0
+fi
+
+if [[ "${FORMAT}" == "html" ]]; then
+  [[ -f "${RENDERER}" ]] || die "Renderer missing: ${RENDERER}"
+  target="${OUT_PATH:-${HTML_REPORT_FILE}}"
+  mkdir -p "$(dirname "${target}")"
+  build_status_json | python3 "${RENDERER}" status --out "${target}"
+  if [[ "${MODE}" == "print" ]]; then
+    cat "${target}"
+  else
+    log "status html written: ${target}"
+  fi
   exit 0
 fi
 

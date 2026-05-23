@@ -97,6 +97,7 @@ if [[ "${APPLY}" -eq 1 ]]; then
 fi
 
 expand_exit=0
+# shellcheck disable=SC2034  # output tee'd to log file; variable kept for potential debug inspection
 expand_output="$("${ROOT}/bin/lacp-brain-expand" "${EXPAND_ARGS[@]}" 2>&1 | tee "${LOG_FILE}")" || expand_exit=$?
 
 ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

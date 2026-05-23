@@ -12,15 +12,22 @@ Usage: lacp-handoff <command> [options]
 Commands:
   show [--latest]           Show handoff artifact for current directory
   list                      List all handoff artifacts
+  html [--open] [--out F]   Render handoff artifact for cwd as HTML
   clean [--older-than 7d]   Remove old handoff artifacts
 
 Options:
   --json                    Output as JSON
+  --open                    (html only) Open the rendered file after writing
+  --out FILE                (html only) Write to FILE instead of default path
 EOF
 }
 
 HANDOFF_DIR="${HOME}/.lacp/handoffs"
+REPORTS_DIR="${HOME}/.lacp/reports"
+RENDERER="${ROOT}/automation/scripts/render_html.py"
 AS_JSON=0
+OPEN_AFTER=0
+OUT_PATH=""
 
 cwd_hash() {
   echo -n "$(pwd)" | shasum -a 256 | cut -c1-12
@@ -74,6 +81,43 @@ cmd_show() {
     if [[ -n "$diff_summary" ]]; then
       echo "  Git diff:"
       echo "$diff_summary" | head -5 | sed 's/^/    /'
+    fi
+  fi
+}
+
+cmd_html() {
+  local hash
+  hash="$(cwd_hash)"
+  local file="${HANDOFF_DIR}/${hash}-latest.json"
+
+  if [[ ! -f "$file" ]]; then
+    die "No handoff artifact found for $(pwd) at ${file}"
+  fi
+  if [[ ! -f "${RENDERER}" ]]; then
+    die "Renderer missing: ${RENDERER}"
+  fi
+
+  local out_file="${OUT_PATH}"
+  if [[ -z "${out_file}" ]]; then
+    mkdir -p "${REPORTS_DIR}"
+    out_file="${REPORTS_DIR}/handoff-${hash}.html"
+  else
+    mkdir -p "$(dirname "${out_file}")"
+  fi
+
+  python3 "${RENDERER}" handoff --in "${file}" --out "${out_file}"
+
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '{"ok":true,"path":"%s"}\n' "${out_file}"
+  else
+    log "handoff html written: ${out_file}"
+  fi
+
+  if [[ "${OPEN_AFTER}" -eq 1 ]]; then
+    if command -v open >/dev/null 2>&1; then
+      open "${out_file}"
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "${out_file}" >/dev/null 2>&1 || true
     fi
   fi
 }
@@ -154,8 +198,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     show)    CMD="show"; shift ;;
     list)    CMD="list"; shift ;;
+    html)    CMD="html"; shift ;;
     clean)   CMD="clean"; shift ;;
     --json)  AS_JSON=1; shift ;;
+    --open)  OPEN_AFTER=1; shift ;;
+    --out)
+      shift
+      OUT_PATH="${1:-}"
+      [[ -z "${OUT_PATH}" ]] && die "--out requires a path"
+      shift
+      ;;
     --latest) shift ;; # default behavior for show
     --older-than)
       shift
@@ -172,5 +224,6 @@ done
 case "$CMD" in
   show)  cmd_show ;;
   list)  cmd_list ;;
+  html)  cmd_html ;;
   clean) cmd_clean "$CLEAN_DAYS" ;;
 esac

@@ -101,6 +101,7 @@ assert_eq "default threshold is 2.5" "2.5" "${threshold}"
 
 # --- Test 9: Scoring prompt has calibration examples ---
 has_examples=$(grep -c "Example [0-9]" "${ROOT}/hooks/stop_quality_gate.py")
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ "${has_examples}" -ge 3 ]] && pass=$((pass + 1)) || { echo "[scoring-gate-test] FAIL fewer than 3 calibration examples" >&2; fail=$((fail + 1)); }
 
 # --- Summary ---

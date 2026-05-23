@@ -97,6 +97,7 @@ if [[ "${SKIP_BOOTSTRAP}" -eq 1 ]]; then
   add_check "bootstrap:sanity" "WARN" "skipped by flag"
 else
   set +e
+  # shellcheck disable=SC2034  # output captured but only exit code checked; JSON reserved for future assertions
   bootstrap_json="$("${ROOT}/bin/lacp-install" --profile existing --no-auto-deps --no-auto-adopt --no-obsidian-setup 2>/dev/null)"
   rc=$?
   set -e
@@ -160,8 +161,20 @@ else
 fi
 
 # skill audit
+# Allow callers (notably CI) to scope the skill audit to specific dirs via
+# LACP_SKILL_AUDIT_PATHS (colon-separated) so the check does not depend on
+# whatever skills happen to be installed in the host's ~/.agents/skills.
 set +e
-skill_json="$("${ROOT}/bin/lacp-skill-audit" --json 2>/dev/null)"
+if [[ -n "${LACP_SKILL_AUDIT_PATHS:-}" ]]; then
+  declare -a _skill_audit_args=()
+  IFS=':' read -r -a _skill_audit_dirs <<<"${LACP_SKILL_AUDIT_PATHS}"
+  for _d in "${_skill_audit_dirs[@]}"; do
+    [[ -n "${_d}" ]] && _skill_audit_args+=(--path "${_d}")
+  done
+  skill_json="$("${ROOT}/bin/lacp-skill-audit" "${_skill_audit_args[@]}" --json 2>/dev/null)"
+else
+  skill_json="$("${ROOT}/bin/lacp-skill-audit" --json 2>/dev/null)"
+fi
 skill_rc=$?
 set -e
 if [[ "${skill_rc}" -eq 0 && "$(jq -r '.ok // false' <<<"${skill_json}")" == "true" ]]; then

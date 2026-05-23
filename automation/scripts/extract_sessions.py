@@ -278,7 +278,7 @@ def process_session(jsonl_path: Path, agent: str) -> dict | None:
     if not slug:
         slug = jsonl_path.stem
     if not cwd:
-        cwd = "/Users/nyk"
+        cwd = str(Path.home())
 
     # Determine date/time
     if timestamp_iso:

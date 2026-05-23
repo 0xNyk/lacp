@@ -226,7 +226,7 @@ if [[ -z "${MODEL}" && -t 0 && "${PRINT_MODE}" -eq 0 && "${DRY_RUN}" -eq 0 && "$
 
   if [[ ${#MODELS[@]} -gt 1 ]]; then
     printf '\n  \033[90mModels for %s:\033[0m ' "${AGENT}" >&2
-    local model_list=""
+    model_list=""
     for m in "${MODELS[@]}"; do
       if [[ "${m}" == "${DEFAULT_MODEL}" ]]; then
         model_list+="[\033[1m${m}\033[0m] "
@@ -237,7 +237,7 @@ if [[ -z "${MODEL}" && -t 0 && "${PRINT_MODE}" -eq 0 && "${DRY_RUN}" -eq 0 && "$
     printf '%b\n' "${model_list}" >&2
     printf '  \033[90mSelect model or press Enter for %s:\033[0m ' "${DEFAULT_MODEL}" >&2
 
-    local model_choice
+    model_choice=""
     read -r model_choice </dev/tty 2>/dev/null || model_choice=""
 
     if [[ -n "${model_choice}" ]]; then
@@ -453,15 +453,18 @@ show_banner() {
   {
     case "${PROFILE_BANNER_STYLE}" in
       box)
-        printf "${color_code}"
+        printf '%b' "${color_code}"
         printf '  ╔═══════════════════════════════════╗\n'
         printf '  ║  %s %-30s ║\n' "${PROFILE_EMOJI}" "${PROFILE_NAME}"
         printf '  ║  %-33s ║\n' "${PROFILE_TAGLINE}"
         printf '  ╚═══════════════════════════════════╝\n'
-        printf "${reset}"
+        printf '%b' "${reset}"
+        # shellcheck disable=SC2059  # format string contains ANSI escape vars; %b would double-interpret
         printf "  ${dim}Agent:${reset}  %-12s  ${dim}Model:${reset} %s\n" "${agent_display}" "${model_display}"
+        # shellcheck disable=SC2059  # format string contains ANSI escape vars; %b would double-interpret
         printf "  ${dim}Mode:${reset}   %-12s  ${dim}Ver:${reset}   %s\n" "${mode_display}" "${LACP_VERSION}"
         if [[ "${LACP_EVAL_CHECKPOINT_ENABLED:-0}" == "1" ]]; then
+          # shellcheck disable=SC2059  # format string contains ANSI escape vars; %b would double-interpret
           printf "  ${dim}Eval:${reset}   \033[32mactive${reset}\n"
         fi
         # Focus one-liner

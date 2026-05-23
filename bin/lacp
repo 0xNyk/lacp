@@ -229,9 +229,6 @@ case "${cmd}" in
   brain-expand)
     exec "${ROOT}/bin/lacp-brain-expand" "$@"
     ;;
-  brain-ingest)
-    exec "${ROOT}/bin/lacp-brain-ingest" "$@"
-    ;;
   brain-stack)
     exec "${ROOT}/bin/lacp-brain-stack" "$@"
     ;;

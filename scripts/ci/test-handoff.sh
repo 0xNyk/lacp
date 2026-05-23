@@ -59,12 +59,14 @@ assert_contains "handoff help has list" "list" "${help_out}"
 assert_contains "handoff help has clean" "clean" "${help_out}"
 
 # --- Test 4: lacp-handoff list (no crash) ---
+# shellcheck disable=SC2034  # output not checked; command run to verify it doesn't crash
 list_out=$("${ROOT}/bin/lacp-handoff" list 2>&1) || true
 pass=$((pass + 1))  # Just ensure no crash
 
 # --- Test 5: lacp-handoff list --json ---
 list_json=$("${ROOT}/bin/lacp-handoff" list --json 2>&1) || true
 # Should be valid JSON (array)
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 echo "${list_json}" | jq 'type' >/dev/null 2>&1 && pass=$((pass + 1)) || { echo "[handoff-test] FAIL list --json not valid JSON" >&2; fail=$((fail + 1)); }
 
 # --- Test 6: lacp-scaffold-audit help ---
@@ -75,6 +77,7 @@ assert_contains "scaffold-audit help has --threshold" "--threshold" "${audit_hel
 # --- Test 7: lacp-scaffold-audit --json (no crash) ---
 audit_json=$("${ROOT}/bin/lacp-scaffold-audit" --json 2>&1) || true
 stages=$(echo "${audit_json}" | jq '.stages | length' 2>/dev/null || echo "0")
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ "${stages}" -ge 1 ]] && pass=$((pass + 1)) || { echo "[handoff-test] FAIL scaffold-audit no stages" >&2; fail=$((fail + 1)); }
 
 # --- Summary ---

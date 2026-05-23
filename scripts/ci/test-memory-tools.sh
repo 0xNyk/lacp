@@ -55,17 +55,17 @@ links:
 # Concept A
 EOF
 
-resolve_json="$(${ROOT}/bin/lacp-brain-resolve --id d-1 --resolution superseded --superseded-by c-1 --reason "validated new pattern" --json)"
+resolve_json="$("${ROOT}"/bin/lacp-brain-resolve --id d-1 --resolution superseded --superseded-by c-1 --reason "validated new pattern" --json)"
 assert_eq "$(echo "${resolve_json}" | jq -r '.ok')" "true" "resolve.ok"
 assert_eq "$(echo "${resolve_json}" | jq -r '.resolution')" "superseded" "resolve.resolution"
 assert_eq "$(echo "${resolve_json}" | jq -r '.updated_count >= 1')" "true" "resolve.updated_count"
 
-kpi_json="$(${ROOT}/bin/lacp-memory-kpi --json)"
+kpi_json="$("${ROOT}"/bin/lacp-memory-kpi --json)"
 assert_eq "$(echo "${kpi_json}" | jq -r '.ok')" "true" "kpi.ok"
 assert_eq "$(echo "${kpi_json}" | jq -r '.kpis.total_notes >= 2')" "true" "kpi.total_notes"
 assert_eq "$(echo "${kpi_json}" | jq -r '.kpis.contradiction_notes >= 1')" "true" "kpi.contradiction_notes"
 
-opt_json="$(${ROOT}/bin/lacp-obsidian-memory-optimize --vault "${LACP_OBSIDIAN_VAULT}" --json)"
+opt_json="$("${ROOT}"/bin/lacp-obsidian-memory-optimize --vault "${LACP_OBSIDIAN_VAULT}" --json)"
 assert_eq "$(echo "${opt_json}" | jq -r '.ok')" "true" "opt.ok"
 assert_eq "$(echo "${opt_json}" | jq -r '.graph.wrote')" "true" "opt.graph.wrote"
 

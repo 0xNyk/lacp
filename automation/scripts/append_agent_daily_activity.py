@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-VAULT = Path('/Users/nyk/obsidian/nyk')
+VAULT = Path(os.environ.get('LACP_OBSIDIAN_VAULT', str(Path.home() / 'obsidian' / 'vault')))
 DAILY_DIR = VAULT / '00-home' / 'daily'
 STATE = Path.home() / '.lacp' / 'cache' / 'agent-daily-activity-state.json'
 CLAUDE_TELEMETRY = Path.home() / '.local' / 'share' / 'claude-hooks' / 'telemetry.jsonl'

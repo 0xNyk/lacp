@@ -137,6 +137,7 @@ print(json.dumps({
     log "Community plugins (registered/installed): ${community_count}/${installed_count}"
     log "Graph color groups: ${color_group_count}"
     if [[ -n "${community_list}" ]]; then
+      # shellcheck disable=SC2001  # multi-line prefix insertion; ${var//…} cannot prepend per line
       echo "${community_list}" | sed 's/^/  - /'
     fi
   fi

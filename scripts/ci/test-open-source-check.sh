@@ -9,7 +9,11 @@ export LACP_SKIP_DOTENV=1
 export LACP_AUTOMATION_ROOT="${TMP}/automation"
 export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
-mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+# Scope the embedded skill audit to an isolated empty skills dir so this test
+# verifies open-source-check behavior rather than whatever skills happen to be
+# installed in the host's ~/.agents/skills.
+export LACP_SKILL_AUDIT_PATHS="${TMP}/skills"
+mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}" "${TMP}/skills"
 
 REPO="${TMP}/repo"
 mkdir -p "${REPO}/docs" "${REPO}/dist"
@@ -23,7 +27,7 @@ printf 'artifact\n' > "${REPO}/dist/lacp-0.0.0.tar.gz"
   shasum -a 256 lacp-0.0.0.tar.gz > SHA256SUMS
 )
 
-json="$(${ROOT}/bin/lacp-open-source-check --repo-root "${REPO}" --artifacts-dir "${REPO}/dist" --skip-bootstrap --json)"
+json="$("${ROOT}/bin/lacp-open-source-check" --repo-root "${REPO}" --artifacts-dir "${REPO}/dist" --skip-bootstrap --json)"
 echo "${json}" | jq -e '.ok == true' >/dev/null
 echo "${json}" | jq -e '.summary.fail == 0' >/dev/null
 echo "${json}" | jq -e '.checks[] | select(.name=="docs:required_files") | .status == "PASS"' >/dev/null

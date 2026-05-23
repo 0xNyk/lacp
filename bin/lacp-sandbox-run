@@ -5,6 +5,7 @@ set -euo pipefail
 # a parent lacp-sandbox-run process. This prevents accidental env leakage from
 # disabling policy gates.
 if [[ "${LACP_SANDBOX_RECURSION_GUARD:-0}" == "1" && "${LACP_SANDBOX_DEPTH:-0}" -gt 0 ]]; then
+  # shellcheck disable=SC2034  # counter kept for symmetry; loop advances via explicit shift
   shift_past_opts=0
   while [[ $# -gt 0 ]]; do
     case "$1" in

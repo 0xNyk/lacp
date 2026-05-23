@@ -9,6 +9,12 @@ export LACP_SKIP_DOTENV=1
 export LACP_AUTOMATION_ROOT="${TMP}/automation"
 export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
+# Neutralize gates that a local .env may have enabled and that the parent
+# suite leaks into this test's environment. This test exercises the context
+# contract gate specifically, so the unrelated session-fingerprint and
+# input-contract gates must be forced off for a deterministic result.
+export LACP_REQUIRE_SESSION_FINGERPRINT=false
+export LACP_REQUIRE_INPUT_CONTRACT=false
 mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
 
 "/bin/bash" "${ROOT}/bin/lacp-install" --profile starter >/dev/null

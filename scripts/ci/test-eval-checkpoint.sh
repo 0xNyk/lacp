@@ -75,8 +75,11 @@ python3 -c "import py_compile; py_compile.compile('${HOOK}', doraise=True)" 2>/d
 pass=$((pass + 1))
 
 # --- Test 5: Structural checks ---
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 grep -q 'LACP_EVAL_CHECKPOINT_ENABLED' "${HOOK}" && pass=$((pass + 1)) || { echo "[eval-checkpoint-test] FAIL missing env var" >&2; fail=$((fail + 1)); }
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 grep -q 'LACP_EVAL_CHECKPOINT_INTERVAL' "${HOOK}" && pass=$((pass + 1)) || { echo "[eval-checkpoint-test] FAIL missing interval env" >&2; fail=$((fail + 1)); }
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 grep -q 'systemMessage' "${HOOK}" && pass=$((pass + 1)) || { echo "[eval-checkpoint-test] FAIL missing systemMessage output" >&2; fail=$((fail + 1)); }
 
 # --- Summary ---

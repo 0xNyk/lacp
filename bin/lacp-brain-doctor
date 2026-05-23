@@ -44,8 +44,11 @@ done
 VAULT_ROOT="${LACP_OBSIDIAN_VAULT:-${HOME}/obsidian/vault}"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.local.json"
 SESSIONS_ROOT="${LACP_SESSIONS_ROOT:-${HOME}/.lacp/sessions}"
+# shellcheck disable=SC2034  # reserved for future per-agent session checks
 SESSIONS_DIR="${SESSIONS_ROOT}/claude"
+# shellcheck disable=SC2034  # reserved for future per-agent session checks
 CODEX_SESSIONS_DIR="${SESSIONS_ROOT}/codex"
+# shellcheck disable=SC2034  # reserved for future per-agent session checks
 HERMES_SESSIONS_DIR="${SESSIONS_ROOT}/hermes"
 DAILY_DIR="${VAULT_ROOT}/00-home/daily"
 ATLAS_DIR="${VAULT_ROOT}/atlas"

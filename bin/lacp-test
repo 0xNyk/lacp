@@ -187,6 +187,7 @@ done
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-score.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-skill-orient.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-write-validate.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-html-render.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-install.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-bootstrap-system.sh"
 "/bin/bash" "${ROOT}/scripts/ci/smoke.sh"

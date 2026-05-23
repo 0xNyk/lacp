@@ -60,6 +60,7 @@ print(f'{r1:.1f},{r2:.1f}')
 # r1 should be higher than r2
 r1=$(echo "${rel}" | cut -d, -f1)
 r2=$(echo "${rel}" | cut -d, -f2)
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 python3 -c "assert ${r1} > ${r2}, '${r1} should be > ${r2}'" 2>/dev/null && pass=$((pass + 1)) || { echo "[sms-test] FAIL goal relevance: ${r1} not > ${r2}" >&2; fail=$((fail + 1)); }
 
 # --- Test 5: Self-model write/read ---
@@ -111,6 +112,7 @@ ctx = build_session_context()
 print('ok' if 'test-first' in ctx or 'control plane' in ctx or 'Current focus' in ctx else 'empty')
 ")
 # Context should have something (working self at minimum, since focus.md exists)
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ "${ctx_result}" != "" ]] && pass=$((pass + 1)) || { echo "[sms-test] FAIL context builder empty" >&2; fail=$((fail + 1)); }
 
 # --- Test 9: CLI commands don't crash ---

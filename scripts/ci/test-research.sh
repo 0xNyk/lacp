@@ -34,6 +34,7 @@ assert_eq "dry run decision" "dry_run" "${decisions}"
 
 # --- Test 5: Status with no experiments ---
 status=$("${ROOT}/bin/lacp-research" status --json 2>&1 | jq '.total')
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ "${status}" -ge 0 ]] && pass=$((pass + 1)) || { echo "[research-test] FAIL status total" >&2; fail=$((fail + 1)); }
 
 # --- Test 6: Surfaces config is valid JSON ---
