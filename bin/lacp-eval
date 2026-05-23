@@ -21,25 +21,45 @@ Graders:
 Options:
   --days N    Lookback window (default: 7)
   --json      Machine-readable output
+  --html      Render self-contained HTML scorecard
+  --out FILE  (html only) Write HTML to FILE
+              (default: ~/.lacp/reports/quality-<ts>.html)
   -h, --help  Show help
 EOF
 }
 
 DAYS=7
 AS_JSON=0
+AS_HTML=0
+OUT_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --days)  DAYS="$2"; shift 2 ;;
     --json)  AS_JSON=1; shift ;;
+    --html)  AS_HTML=1; shift ;;
+    --out)
+      shift
+      OUT_PATH="${1:-}"
+      [[ -z "${OUT_PATH}" ]] && die "--out requires a path"
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
 
 TELEMETRY_FILE="${HOME}/.local/share/claude-hooks/telemetry.jsonl"
+RENDERER="${ROOT}/automation/scripts/render_html.py"
 
-python3 - "${TELEMETRY_FILE}" "${DAYS}" "${AS_JSON}" "${ROOT}/hooks" <<'PYTHON'
+# For --html we need JSON output from the inline python; render after.
+PY_AS_JSON="${AS_JSON}"
+if [[ "${AS_HTML}" -eq 1 ]]; then
+  PY_AS_JSON=1
+fi
+
+run_python() {
+  python3 - "${TELEMETRY_FILE}" "${DAYS}" "${PY_AS_JSON}" "${ROOT}/hooks" <<'PYTHON'
 import json
 import sys
 import time
@@ -205,3 +225,25 @@ else:
         for r in recs:
             print(f"    - {r}")
 PYTHON
+}
+
+if [[ "${AS_HTML}" -eq 1 ]]; then
+  [[ -f "${RENDERER}" ]] || die "Renderer missing: ${RENDERER}"
+  payload="$(run_python)"
+  target="${OUT_PATH}"
+  if [[ -z "${target}" ]]; then
+    mkdir -p "${HOME}/.lacp/reports"
+    target="${HOME}/.lacp/reports/quality-$(date -u +%Y%m%dT%H%M%SZ).html"
+  else
+    mkdir -p "$(dirname "${target}")"
+  fi
+  printf '%s\n' "${payload}" | python3 "${RENDERER}" quality --out "${target}"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '{"ok":true,"path":"%s"}\n' "${target}"
+  else
+    log "quality scorecard written: ${target}"
+  fi
+  exit 0
+fi
+
+run_python
