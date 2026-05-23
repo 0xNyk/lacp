@@ -279,4 +279,18 @@ jq -e '.contract_evidence.required == true and .contract_evidence.ok == false' "
   --contract-evidence "${TMP}/contract-evidence-valid.json" \
   --json | jq -e '.ok == true and .contract_evidence.required == true and .contract_evidence.ok == true' >/dev/null
 
+# gstack native-consumption fields are always present (advisory; never gating).
+# Value is environment-dependent (whether gstack is installed), so assert the
+# structural contract, not a specific value.
+"${ROOT}/bin/lacp-pr-preflight" \
+  --changed-files "${TMP}/changed-files-contract.txt" \
+  --head-sha "abc123" \
+  --checks-json "${TMP}/checks-valid.json" \
+  --review-json "${TMP}/review-valid.json" \
+  --browser-evidence "${TMP}/browser-evidence-valid.json" \
+  --contract-evidence "${TMP}/contract-evidence-valid.json" \
+  --json > "${TMP}/gstack-fields.json"
+jq -e 'has("gstack_available") and (.gstack_available | type == "boolean")' "${TMP}/gstack-fields.json" >/dev/null
+jq -e 'has("gstack_recommendations") and (.gstack_recommendations | type == "array")' "${TMP}/gstack-fields.json" >/dev/null
+
 echo "[pr-preflight-test] pr preflight tests passed"

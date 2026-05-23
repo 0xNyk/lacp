@@ -189,6 +189,27 @@ def _memory_cap_warning() -> str | None:
     return None
 
 
+def _workflow_brief() -> str | None:
+    """Inject a workflow reminder when LACP_WORKFLOW names a known choreography.
+
+    Currently supports 'gstack' (Garry Tan's six-command flow). LACP and gstack
+    are complementary: gstack choreographs the dev loop with persona gates; LACP
+    hardens execution within each phase. The brief names which steps LACP already
+    covers so the two don't double-gate. No hard dependency — if gstack isn't
+    installed the reminder is harmless prose.
+    """
+    workflow = os.getenv("LACP_WORKFLOW", "").strip().lower()
+    if workflow != "gstack":
+        return None
+    return (
+        "Workflow (gstack): office-hours → plan-ceo-review → plan-eng-review "
+        "→ build → review → qa → ship. "
+        "LACP already covers build (context modes + eval checkpoints) and review "
+        "(stop quality gate); lean on gstack for /office-hours, /plan-ceo-review, "
+        "/qa (browser QA), and /ship. Avoid double-running tests/PR steps both own."
+    )
+
+
 def main() -> None:
     payload = _read_payload()
     matcher = payload.get("matcher") or ""
@@ -353,6 +374,11 @@ def main() -> None:
         _write_contract("session_start", _contract)
     except Exception:
         pass  # Contract writing is best-effort
+
+    # Priority 2: Workflow choreography brief (opt-in via LACP_WORKFLOW)
+    _wf = _workflow_brief()
+    if _wf:
+        injections.append((2, "workflow", _wf))
 
     # Priority 8: MEMORY.md line-cap guard (structural constraint)
     _cap_warn = _memory_cap_warning()

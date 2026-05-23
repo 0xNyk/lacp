@@ -86,6 +86,31 @@ def evidence_required(cfg: dict, risk_tier: str, changed_files: list[str]) -> bo
     return any(any(fnmatch.fnmatch(f, g) for g in globs) for f in changed_files)
 
 
+def gstack_available() -> bool:
+    """True when the gstack skill toolkit is installed on this machine.
+
+    LACP consumes gstack natively when present but never edits or hard-depends
+    on it — this is a pure detection check.
+    """
+    return (Path.home() / ".claude" / "skills" / "gstack").is_dir()
+
+
+def gstack_recommendations(browser_required: bool, browser_ok: bool) -> list[str]:
+    """Advisory next-steps that defer to gstack for capabilities LACP lacks.
+
+    LACP has no browser QA; when this PR touches a browser-evidence surface and
+    that evidence is missing, recommend gstack's /qa. Always recommend /ship as
+    the orchestration entry point. Empty when gstack is not installed.
+    """
+    if not gstack_available():
+        return []
+    recs: list[str] = []
+    if browser_required and not browser_ok:
+        recs.append("/qa — run gstack browser QA (LACP has no browser QA of its own)")
+    recs.append("/ship — let gstack orchestrate the PR; it runs this preflight as its audit step")
+    return recs
+
+
 def validate_manifest(
     *,
     root_env: Path,
@@ -548,6 +573,8 @@ def main() -> int:
         },
         "errors": errors,
         "warnings": warnings,
+        "gstack_available": gstack_available(),
+        "gstack_recommendations": gstack_recommendations(browser_required, browser_ok),
     }
 
     if args.json:
@@ -559,6 +586,8 @@ def main() -> int:
             print(f"[lacp] preflight failed (tier={risk_tier})", file=sys.stderr)
             for item in errors:
                 print(f" - {item}", file=sys.stderr)
+        for rec in payload["gstack_recommendations"]:
+            print(f"[lacp] next: {rec}")
 
     return 0 if gate_ok else 1
 
