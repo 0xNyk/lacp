@@ -45,6 +45,7 @@ assert_eq "$(echo "${out}" | python3 -c 'import json,sys; print(json.load(sys.st
 assert_eq "$(echo "${out}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["synced"] >= 1)')" "True" "session_sync:synced_count"
 
 # Verify the note landed in inbox with frontmatter
+# shellcheck disable=SC2206  # glob expansion is intentional to collect matching files
 inbox_files=(${INBOX}/session-*.md)
 if [[ -f "${inbox_files[0]}" ]]; then
   assert_eq "$(head -1 "${inbox_files[0]}")" "---" "session_sync:frontmatter_present"
@@ -117,6 +118,7 @@ assert_eq "$([[ "${routed}" -ge 1 ]] && echo yes || echo no)" "yes" "route_inbox
 assert_eq "$(test -f "${INBOX}/route-test.md" && echo yes)" "yes" "route_inbox:dry_run_no_move"
 
 # Test --apply actually moves the file
+# shellcheck disable=SC2034  # command run for side effect (moves files); output not needed
 out4b="$(PYTHONPATH="${ROOT}/scripts" python3 "${ROOT}/scripts/route_inbox.py" --apply 2>/dev/null)"
 assert_eq "$(test -f "${INBOX}/route-test.md" && echo yes || echo no)" "no" "route_inbox:apply_moved"
 assert_eq "$(test -f "${GRAPH}/sessions/route-test.md" && echo yes)" "yes" "route_inbox:apply_destination"
@@ -140,6 +142,7 @@ assert_eq "$([[ "${archived}" -ge 1 ]] && echo yes || echo no)" "yes" "archive_i
 assert_eq "$(test -f "${INBOX}/archive-test.md" && echo yes)" "yes" "archive_inbox:dry_run_no_move"
 
 # Apply
+# shellcheck disable=SC2034  # command run for side effect (archives files); output not needed
 out5b="$(PYTHONPATH="${ROOT}/scripts" python3 "${ROOT}/scripts/archive_inbox.py" --days 7 --apply 2>/dev/null)"
 assert_eq "$(test -f "${INBOX}/archive-test.md" && echo yes || echo no)" "no" "archive_inbox:apply_moved"
 assert_eq "$(test -f "${LACP_KNOWLEDGE_ROOT}/archive/inbox/archive-test.md" && echo yes)" "yes" "archive_inbox:apply_destination"
@@ -148,6 +151,7 @@ assert_eq "$(test -f "${LACP_KNOWLEDGE_ROOT}/archive/inbox/archive-test.md" && e
 
 # Create a file with .. in the name (should be skipped)
 touch "${INBOX}/..sneaky..md"
+# shellcheck disable=SC2034  # command run for side effect (tests path traversal guard); output not needed
 out6="$(PYTHONPATH="${ROOT}/scripts" python3 "${ROOT}/scripts/route_inbox.py" --apply 2>/dev/null)"
 # The file should still be in inbox (skipped by guard)
 assert_eq "$(test -f "${INBOX}/..sneaky..md" && echo yes)" "yes" "path_traversal:skipped"

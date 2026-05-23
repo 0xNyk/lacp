@@ -273,6 +273,7 @@ out.write_text(json.dumps(payload, indent=2) + "\n")
 print("{}")
 '
 
+  # shellcheck disable=SC2016  # single-quoted stub content intentionally unexpanded (written to a file)
   write_stub_if_needed "$(automation_script run_session_sync.sh)" "755" '#!/usr/bin/env bash
 set -euo pipefail
 
@@ -331,6 +332,7 @@ for agent in claude codex hermes; do
   fi
 done
 
+# shellcheck disable=SC2016,SC2026  # quoted heredoc delimiter prevents expansion; complex quoting is intentional
 python3 - <<'"'"'PY'"'"' "${SESSIONS_ROOT}" "${SOURCE_ROOT}" "${copied}" "${agents_with_content}" "${DRY_RUN}" "${AS_JSON}"
 import json
 import sys
@@ -559,6 +561,7 @@ if [[ "${WITH_MCP}" -eq 1 ]]; then
       log "context7 already configured"
     else
       log "Adding context7 (live library docs)..."
+      # shellcheck disable=SC2015  # log() never fails; pattern is intentional for success/failure messaging
       claude mcp add context7 -- npx -y @upstash/context7-mcp 2>/dev/null && \
         log "context7 added" || \
         log "context7 setup failed — add manually: claude mcp add context7 -- npx -y @upstash/context7-mcp"
@@ -569,6 +572,7 @@ if [[ "${WITH_MCP}" -eq 1 ]]; then
       log "playwright already configured"
     else
       log "Adding playwright (browser automation)..."
+      # shellcheck disable=SC2015  # log() never fails; pattern is intentional for success/failure messaging
       claude mcp add playwright -- npx -y @playwright/mcp@latest 2>/dev/null && \
         log "playwright added" || \
         log "playwright setup failed — add manually: claude mcp add playwright -- npx -y @playwright/mcp@latest"
@@ -581,6 +585,7 @@ if [[ "${WITH_MCP}" -eq 1 ]]; then
       tavily_key="${TAVILY_API_KEY:-}"
       if [[ -n "${tavily_key}" ]]; then
         log "Adding tavily-search (structured web search)..."
+        # shellcheck disable=SC2015  # log() never fails; pattern is intentional for success/failure messaging
         claude mcp add tavily-search -e TAVILY_API_KEY="${tavily_key}" -- npx -y tavily-mcp 2>/dev/null && \
           log "tavily-search added" || \
           log "tavily-search setup failed — add manually"

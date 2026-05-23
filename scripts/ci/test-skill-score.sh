@@ -93,6 +93,7 @@ assert_contains "${out}" '"updated": 3' "recalc_updated_count"
 # Verify confidence was written to ledger
 high_conf="$(jq -r '.workflows["wf-high"].confidence' "${LEDGER}")"
 low_conf="$(jq -r '.workflows["wf-low"].confidence' "${LEDGER}")"
+# shellcheck disable=SC2034  # captured for potential debug; not used in assertions
 arch_conf="$(jq -r '.workflows["wf-arch"].confidence' "${LEDGER}")"
 
 # High should be near 1.0 (perfect success, recent, 10 obs)
@@ -126,6 +127,7 @@ report="$(bash "${ROOT}/bin/lacp-skill-score" report --json --ledger "${LEDGER}"
 total="$(echo "${report}" | jq -r '.total_workflows')"
 assert_eq "${total}" "3" "report_total"
 
+# shellcheck disable=SC2034  # captured for potential debug; not used in assertions
 high_bucket="$(echo "${report}" | jq -r '.by_confidence.high')"
 with_sessions="$(echo "${report}" | jq -r '.with_sessions')"
 assert_eq "${with_sessions}" "1" "report_sessions"

@@ -35,6 +35,7 @@ assert_contains "help has --resume" "--resume" "${help_out}"
 # --- Test 2: JSON output (dry run) ---
 json_out=$("${ROOT}/bin/lacp-stream" --json 2>&1)
 agent_path=$(echo "${json_out}" | jq -r '.agent_path')
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ -n "${agent_path}" && "${agent_path}" != "null" ]] && pass=$((pass + 1)) || { echo "[stream-test] FAIL json agent_path missing" >&2; fail=$((fail + 1)); }
 
 # --- Test 3: Context mode validation ---

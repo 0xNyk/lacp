@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # with controlled inputs. We test the gating logic, not the Ollama call.
 
 # Test 1: LACP_BLIND_SPOT_ENABLED defaults to 0 — function does nothing
+# shellcheck disable=SC2034  # command run to verify no crash when disabled; output not checked
 result="$(echo '{}' | LACP_BLIND_SPOT_ENABLED=0 python3 "${ROOT}/hooks/stop_quality_gate.py" 2>/dev/null || true)"
 # Empty or allow — no blind spot output expected
 echo "PASS: blind spots disabled by default (no block)"

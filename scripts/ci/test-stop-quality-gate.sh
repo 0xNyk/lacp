@@ -95,6 +95,7 @@ assert_empty "ralph active + ollama unreachable → allow (no crash)" "${out7}"
 rm -f "${TMP}/.claude/ralph-loop.local.md"
 
 # --- Test 6: Script is executable ---
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 [[ -x "${HOOK}" ]] && pass=$((pass + 1)) || { echo "[stop-quality-gate-test] FAIL hook not executable" >&2; fail=$((fail + 1)); }
 
 # --- Test 7: Script has correct shebang ---
@@ -103,8 +104,11 @@ assert_eq "shebang is #!/usr/bin/env bash" "#!/usr/bin/env bash" "${head_line}"
 
 # --- Test 8: Environment overrides work ---
 # Verify the script reads LACP_QUALITY_GATE_MODEL (structural check via grep)
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 /usr/bin/grep -q 'LACP_QUALITY_GATE_MODEL' "${HOOK}" && pass=$((pass + 1)) || { echo "[stop-quality-gate-test] FAIL missing LACP_QUALITY_GATE_MODEL env var support" >&2; fail=$((fail + 1)); }
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 /usr/bin/grep -q 'LACP_QUALITY_GATE_URL' "${HOOK}" && pass=$((pass + 1)) || { echo "[stop-quality-gate-test] FAIL missing LACP_QUALITY_GATE_URL env var support" >&2; fail=$((fail + 1)); }
+# shellcheck disable=SC2015  # pass=$((…)) never fails; pattern is intentional
 /usr/bin/grep -q 'LACP_QUALITY_GATE_TIMEOUT' "${HOOK}" && pass=$((pass + 1)) || { echo "[stop-quality-gate-test] FAIL missing LACP_QUALITY_GATE_TIMEOUT env var support" >&2; fail=$((fail + 1)); }
 
 # --- Summary ---

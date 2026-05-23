@@ -147,6 +147,7 @@ log_step() {
 
 # Sandboxed execution wrapper: drops network access on macOS via sandbox-exec
 # Falls back to normal execution on Linux or when --sandbox not set
+# shellcheck disable=SC2329  # false positive: invoked via run_step_soft at lines 341, 343
 run_sandboxed() {
   if [[ "${SANDBOX}" -eq 1 ]] && command -v sandbox-exec >/dev/null 2>&1; then
     sandbox-exec -p '(version 1)(allow default)(deny network*)' "$@"

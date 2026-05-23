@@ -43,11 +43,11 @@ assert_contains() {
 }
 
 # 1. Help output
-help_out="$(${ROOT}/bin/lacp-obsidian-cli --help 2>&1 || true)"
+help_out="$("${ROOT}"/bin/lacp-obsidian-cli --help 2>&1 || true)"
 assert_contains "help_output" "official Obsidian CLI" "${help_out}"
 
 # 2. Check command (JSON) — vault should be found
-check_json="$(${ROOT}/bin/lacp-obsidian-cli check --json 2>&1 || true)"
+check_json="$("${ROOT}"/bin/lacp-obsidian-cli check --json 2>&1 || true)"
 vault_status="$(echo "${check_json}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -75,7 +75,7 @@ else
 fi
 
 # 4. Doctor command (JSON)
-doctor_json="$(${ROOT}/bin/lacp-obsidian-cli doctor --json 2>&1 || true)"
+doctor_json="$("${ROOT}"/bin/lacp-obsidian-cli doctor --json 2>&1 || true)"
 doctor_vault="$(echo "${doctor_json}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -108,7 +108,7 @@ for c in d.get('checks', []):
 
 # 6. Read command fails gracefully without CLI
 if ! command -v obsidian >/dev/null 2>&1; then
-  read_err="$(${ROOT}/bin/lacp-obsidian-cli read test-note.md 2>&1 || true)"
+  read_err="$("${ROOT}"/bin/lacp-obsidian-cli read test-note.md 2>&1 || true)"
   assert_contains "read_requires_cli" "not found" "${read_err}"
 else
   echo "SKIP  read_requires_cli (obsidian CLI is installed)"
@@ -116,14 +116,14 @@ fi
 
 # 7. Search command fails gracefully without CLI
 if ! command -v obsidian >/dev/null 2>&1; then
-  search_err="$(${ROOT}/bin/lacp-obsidian-cli search "test" 2>&1 || true)"
+  search_err="$("${ROOT}"/bin/lacp-obsidian-cli search "test" 2>&1 || true)"
   assert_contains "search_requires_cli" "not found" "${search_err}"
 else
   echo "SKIP  search_requires_cli (obsidian CLI is installed)"
 fi
 
 # 8. Unknown subcommand
-unknown_err="$(${ROOT}/bin/lacp-obsidian-cli foobar 2>&1 || true)"
+unknown_err="$("${ROOT}"/bin/lacp-obsidian-cli foobar 2>&1 || true)"
 assert_contains "unknown_subcommand" "Unknown subcommand" "${unknown_err}"
 
 echo

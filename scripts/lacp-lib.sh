@@ -416,9 +416,9 @@ acquire_gpu_lock() {
       if [[ -d "${lock_dir}" ]]; then
         local lock_age
         if [[ "$(uname)" == "Darwin" ]]; then
-          lock_age=$(( ($(date +%s) - $(stat -f %m "${lock_dir}")) ))
+          lock_age=$(( $(date +%s) - $(stat -f %m "${lock_dir}") ))
         else
-          lock_age=$(( ($(date +%s) - $(stat -c %Y "${lock_dir}")) ))
+          lock_age=$(( $(date +%s) - $(stat -c %Y "${lock_dir}") ))
         fi
         if [[ "${lock_age}" -gt 3600 ]]; then
           rmdir "${lock_dir}" 2>/dev/null || true

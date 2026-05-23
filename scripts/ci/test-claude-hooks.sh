@@ -236,6 +236,7 @@ qg_timeout=$(jq -r '.hooks.Stop[-1].hooks[-1].timeout // 0' "${CLAUDE_DIR}/setti
 }
 
 # Verify idempotency — applying again shouldn't duplicate
+# shellcheck disable=SC2034  # output not checked; command run to verify idempotency via settings.json
 qg_apply2="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${CLAUDE_DIR}" --profile quality-gate --json)"
 stop_count=$(jq '[.hooks.Stop[]?.hooks[]? | select(.command and (.command | test("stop_quality_gate")))] | length' "${CLAUDE_DIR}/settings.json")
 [[ "${stop_count}" == "1" ]] || {

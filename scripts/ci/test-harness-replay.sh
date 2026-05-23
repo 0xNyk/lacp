@@ -81,7 +81,7 @@ cat > "${tasks_file}" <<'EOF_JSON'
 EOF_JSON
 
 set +e
-run_json="$(${ROOT}/bin/lacp-harness-run \
+run_json="$("${ROOT}"/bin/lacp-harness-run \
   --tasks "${tasks_file}" \
   --profiles "${profiles_file}" \
   --verification "${verification_file}" \
@@ -99,7 +99,7 @@ echo "${run_json}" | jq -e '.tasks[0].status == "failed"' >/dev/null
 run_id="$(echo "${run_json}" | jq -r '.run_id')"
 
 set +e
-replay_json="$(${ROOT}/bin/lacp-harness-replay \
+replay_json="$("${ROOT}"/bin/lacp-harness-replay \
   --run-id "${run_id}" \
   --task-id task-replay \
   --workdir "${TMP}/workspace" \
@@ -117,7 +117,7 @@ echo "${replay_json}" | jq -e '.runner.exit_code == 0' >/dev/null
 echo "${replay_json}" | jq -e '.verification.replayed == true and .verification.ok == false' >/dev/null
 
 echo "{}" > "${TMP}/workspace/artifact.json"
-replay_runner_only_json="$(${ROOT}/bin/lacp-harness-replay \
+replay_runner_only_json="$("${ROOT}"/bin/lacp-harness-replay \
   --run-id "${run_id}" \
   --task-id task-replay \
   --workdir "${TMP}/workspace" \

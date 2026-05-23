@@ -152,7 +152,9 @@ if [[ -n "${TEAM}" ]]; then
   log "Team: ${TEAM_NAME}"
 
   # Expand roles into per-instance commands
+  # shellcheck disable=SC2034  # purpose is destructured from TSV but not used in loop body
   while IFS=$'\t' read -r agent model purpose count role_name; do
+    # shellcheck disable=SC2034  # j is a counter; loop body uses INSTANCE_COMMANDS, not the index
     for j in $(seq 1 "${count}"); do
       cmd="${ROOT}/bin/lacp-stream --agent ${agent}"
       if [[ -n "${model}" && "${model}" != "default" ]]; then

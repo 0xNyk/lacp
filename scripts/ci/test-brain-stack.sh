@@ -14,12 +14,12 @@ export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"
 export LACP_DRAFTS_ROOT="${TMP}/drafts"
 mkdir -p "${LACP_OBSIDIAN_VAULT}" "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
 
-init_json="$(${ROOT}/bin/lacp-brain-stack init --json)"
+init_json="$("${ROOT}"/bin/lacp-brain-stack init --json)"
 echo "${init_json}" | jq -e '.ok == true and .dry_run == false' >/dev/null
 settings_path="$(echo "${init_json}" | jq -r '.claude_settings')"
 [[ -f "${settings_path}" ]] || { echo "[brain-stack-test] missing settings file" >&2; exit 1; }
 
-status_json="$(${ROOT}/bin/lacp-brain-stack status --json)"
+status_json="$("${ROOT}"/bin/lacp-brain-stack status --json)"
 echo "${status_json}" | jq -e '.ok == true' >/dev/null
 
 python3 - <<'PY' "${settings_path}"
@@ -35,7 +35,7 @@ if 'gitnexus' in servers:
 PY
 
 ## --- init with --with-gitnexus ---
-gn_json="$(${ROOT}/bin/lacp-brain-stack init --with-gitnexus --json)"
+gn_json="$("${ROOT}"/bin/lacp-brain-stack init --with-gitnexus --json)"
 echo "${gn_json}" | jq -e '.ok == true' >/dev/null
 python3 - <<'PY' "${settings_path}"
 import json, sys
@@ -51,7 +51,7 @@ if gn.get('args') != ['-y', 'gitnexus@latest', 'mcp']:
 PY
 
 ## --- audit subcommand (empty state) ---
-audit_json="$(${ROOT}/bin/lacp-brain-stack audit --json)"
+audit_json="$("${ROOT}"/bin/lacp-brain-stack audit --json)"
 echo "${audit_json}" | jq -e '.ok == true and .kind == "brain_stack_audit"' >/dev/null
 echo "${audit_json}" | jq -e '.total_projects >= 0' >/dev/null
 
@@ -74,14 +74,14 @@ echo "# existing" > "${PROJ_C}/memory/MEMORY.md"
 for i in 1 2 3 4 5 6 7; do touch "${PROJ_C}/session-${i}.jsonl"; done
 
 # dry-run: should report alpha as scaffolded, beta below threshold, gamma skipped
-dryrun_json="$(${ROOT}/bin/lacp-brain-stack scaffold-all --min-sessions 5 --dry-run --json)"
+dryrun_json="$("${ROOT}"/bin/lacp-brain-stack scaffold-all --min-sessions 5 --dry-run --json)"
 echo "${dryrun_json}" | jq -e '.ok == true and .dry_run == true' >/dev/null
 echo "${dryrun_json}" | jq -e '.scaffolded >= 1' >/dev/null
 # alpha should NOT have memory yet (dry-run)
 [[ ! -f "${PROJ_A}/memory/MEMORY.md" ]] || { echo "[brain-stack-test] dry-run created files" >&2; exit 1; }
 
 # real run
-scaffold_json="$(${ROOT}/bin/lacp-brain-stack scaffold-all --min-sessions 5 --json)"
+scaffold_json="$("${ROOT}"/bin/lacp-brain-stack scaffold-all --min-sessions 5 --json)"
 echo "${scaffold_json}" | jq -e '.ok == true and .dry_run == false' >/dev/null
 echo "${scaffold_json}" | jq -e '.scaffolded >= 1' >/dev/null
 # alpha should now have memory
@@ -98,12 +98,12 @@ echo "${scaffold_json}" | jq -e '.scaffolded >= 1' >/dev/null
 grep -q "existing" "${PROJ_C}/memory/MEMORY.md" || { echo "[brain-stack-test] scaffold-all overwrote existing memory" >&2; exit 1; }
 
 # re-run should skip alpha (already scaffolded)
-rescan_json="$(${ROOT}/bin/lacp-brain-stack scaffold-all --min-sessions 5 --json)"
+rescan_json="$("${ROOT}"/bin/lacp-brain-stack scaffold-all --min-sessions 5 --json)"
 alpha_in_projects="$(echo "${rescan_json}" | jq '[.projects[] | select(.slug | test("alpha"))] | length')"
 [[ "${alpha_in_projects}" -eq 0 ]] || { echo "[brain-stack-test] scaffold-all re-scaffolded already-done project" >&2; exit 1; }
 
 ## --- audit after scaffold ---
-post_audit_json="$(${ROOT}/bin/lacp-brain-stack audit --json)"
+post_audit_json="$("${ROOT}"/bin/lacp-brain-stack audit --json)"
 echo "${post_audit_json}" | jq -e '.with_memory >= 1' >/dev/null
 
 echo "[brain-stack-test] brain stack tests passed"
