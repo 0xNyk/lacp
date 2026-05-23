@@ -183,6 +183,32 @@ lacp sms self-model        # view/update evolving self-model
 Core module: `hooks/self_memory_system.py`
 Data: `~/.lacp/sms/` (episodes.jsonl, epochs.jsonl, narrative.json, self-model.json)
 
+## Development Workflow (gstack)
+
+LACP composes with [gstack](https://github.com/garrytan/gstack)'s six-command
+flow. gstack choreographs the dev loop with persona gates; LACP hardens
+execution *within* each phase. They are complementary, not competing.
+
+```
+office-hours → plan-ceo-review → plan-eng-review → build → review → qa → ship
+```
+
+| Phase | Owner |
+|-------|-------|
+| `/office-hours`, `/plan-ceo-review`, `/plan-eng-review` | gstack (scope + architecture gates) |
+| build | LACP (context modes + eval checkpoints) |
+| `/review` | both — LACP's stop quality gate + `code-reviewer`; gstack's staff-eng persona |
+| `/qa` | gstack (real-browser QA — LACP has no browser QA) |
+| `/ship` | gstack orchestrates; runs `lacp-pr-preflight` as its audit step when present |
+
+Set `LACP_WORKFLOW=gstack` to inject a one-line reminder of this flow at session
+start (notes which steps LACP already covers, to avoid double-gating). It is a
+no-op when unset and has no hard dependency on gstack being installed.
+
+**Lean on gstack for the genuine LACP gaps:** `/qa` (browser QA) and
+`/plan-ceo-review` (scope challenge). Avoid double-running tests/PR steps that
+both `/ship` and `lacp-pr-preflight` own.
+
 ## Git Workflow
 
 - Branch from `main` for features: `feat/<name>`
