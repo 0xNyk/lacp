@@ -118,7 +118,10 @@ def render_link_note(url: str, title: str) -> tuple[str, str]:
             f'  - "{url}"',
             "source_sessions: []",
             f"last_verified: {created}",
-            "tags: [web-link, inbox, memory-layer-3]",
+            "tags: [web-link, inbox, memory-layer-3, needs-curation]",
+            # Title is derived from URL/HTML and is category-shaped by default;
+            # flag it for the Layer-4 title-normalization curator (lacp-curate).
+            "needs_curation: true",
             "links:",
             "  supports: []",
             "  contradicts: []",

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lacp-curate [--vault PATH] [--apply] [--json] [--report FILE]
+
+Layer-4 title normalization for the Obsidian vault. Detects category- and
+timestamp-shaped note titles (the ones brain-ingest creates by default, which
+poison retrieval by matching on broad surface words) and proposes claim-shaped
+rewrites drawn from each note's own H1. On --apply, renames files and fixes
+wikilinks vault-wide.
+
+This does ONLY the rename job. Link proposals and prune/decay are handled by
+the existing brain-expand stages (detect_knowledge_gaps, generate_review_queue,
+archive_inbox) and are not duplicated here.
+
+Dry-run by default. Hub-aware: never touches navigation notes (MOCs, indexes).
+
+Options:
+  --vault PATH    Obsidian vault root (default: $LACP_OBSIDIAN_VAULT)
+  --apply         Apply rename proposals (default: dry-run report only)
+  --json          Machine-readable output
+  --report FILE   Write text report to FILE (default: stdout)
+  -h, --help      Show help
+
+Examples:
+  lacp-curate                              # dry-run report on default vault
+  lacp-curate --json                       # machine-readable proposals
+  lacp-curate --apply                      # apply renames + fix wikilinks
+  lacp-curate --report ~/obsidian/vault/00-home/curator-log.md
+EOF
+}
+
+VAULT="${LACP_OBSIDIAN_VAULT:-}"
+APPLY=0
+AS_JSON=0
+REPORT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --vault)  VAULT="$2"; shift 2 ;;
+    --apply)  APPLY=1; shift ;;
+    --json)   AS_JSON=1; shift ;;
+    --report) REPORT="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "${VAULT}" ]] || die "no vault: pass --vault or set LACP_OBSIDIAN_VAULT"
+require_cmd python3
+
+CURATOR="${ROOT}/automation/scripts/curate_titles.py"
+[[ -f "${CURATOR}" ]] || die "curator script missing: ${CURATOR}"
+
+args=(--vault "${VAULT}")
+[[ "${APPLY}" -eq 1 ]] && args+=(--apply)
+[[ "${AS_JSON}" -eq 1 ]] && args+=(--json)
+[[ -n "${REPORT}" ]] && args+=(--report "${REPORT}")
+
+exec python3 "${CURATOR}" "${args[@]}"

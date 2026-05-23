@@ -101,6 +101,7 @@ Knowledge:
   brain-ingest       Ingest text/audio/video sources, links, and transcripts into the Obsidian inbox
   brain-doctor       Validate Obsidian brain ecosystem health (vault, QMD, MCP, voice, sessions)
   brain-expand       Run automated Obsidian brain expansion loop from sessions/research signals
+  curate             Layer-4 title normalization: rename category/timestamp titles to claim-shaped
   brain-stack        Bootstrap official 5-layer memory stack (MCP + memory scaffolding)
   brain-promote      Promote inbox notes to permanent vault locations
   agent-id           Persistent agent identity registry (show/list/register/revoke/touch)
@@ -228,6 +229,9 @@ case "${cmd}" in
     ;;
   brain-expand)
     exec "${ROOT}/bin/lacp-brain-expand" "$@"
+    ;;
+  curate)
+    exec "${ROOT}/bin/lacp-curate" "$@"
     ;;
   brain-stack)
     exec "${ROOT}/bin/lacp-brain-stack" "$@"
