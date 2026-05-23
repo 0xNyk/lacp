@@ -59,6 +59,13 @@ JSON
 python3 "${RENDERER}" status --in "${TMP}/status.json" --out "${TMP}/status.html"
 assert_html "${TMP}/status.html" "LACP system status"
 assert_html "${TMP}/status.html" "Doctor"
+# Status pills must render as real markup, not appear double-escaped as text.
+if grep -q '&lt;span class="pill' "${TMP}/status.html"; then
+  echo "[html-render] FAIL: status pills are double-escaped (rendered as literal text)"
+  exit 1
+fi
+grep -q '<span class="pill good">OK</span>' "${TMP}/status.html" || {
+  echo "[html-render] FAIL: expected an unescaped status pill in output"; exit 1; }
 
 # ---------- 3. Direct renderer: quality ----------
 cat >"${TMP}/quality.json" <<'JSON'

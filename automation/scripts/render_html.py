@@ -196,11 +196,14 @@ def render_handoff(payload: dict) -> str:
 
 # ---------- status renderer ----------
 
-def _kpi(label: str, value: Any, kind: str = "") -> str:
+def _kpi(label: str, value: Any, kind: str = "", raw: bool = False) -> str:
+    """Render a KPI card. `value` is HTML-escaped unless `raw=True`, which is
+    reserved for trusted, already-escaped internal markup (e.g. _pill/_bar)."""
     cls = f"value {kind}".strip()
+    rendered = str(value) if raw else _esc(value)
     return (
         f'<div class="kpi"><div class="label">{_esc(label)}</div>'
-        f'<div class="{cls}">{_esc(value)}</div></div>'
+        f'<div class="{cls}">{rendered}</div></div>'
     )
 
 
@@ -223,7 +226,7 @@ def render_status(payload: dict) -> str:
 
     top = (
         '<div class="grid">'
-        + _kpi("Overall", overall_pill)
+        + _kpi("Overall", overall_pill, raw=True)
         + _kpi("Mode", mode)
         + _kpi("Allow remote", allow_remote, "warn" if allow_remote == "true" else "")
         + _kpi("Provider", provider)
@@ -233,7 +236,7 @@ def render_status(payload: dict) -> str:
     doctor_kind = "good" if doctor.get("ok") else ("warn" if doctor.get("warn", 0) else "bad")
     doctor_block = (
         '<h2>Doctor</h2><div class="grid">'
-        + _kpi("Status", _pill("OK" if doctor.get("ok") else "FAIL", doctor_kind))
+        + _kpi("Status", _pill("OK" if doctor.get("ok") else "FAIL", doctor_kind), raw=True)
         + _kpi("Pass", doctor.get("pass", 0), "good")
         + _kpi("Warn", doctor.get("warn", 0), "warn" if doctor.get("warn") else "")
         + _kpi("Fail", doctor.get("fail", 0), "bad" if doctor.get("fail") else "")
@@ -245,7 +248,7 @@ def render_status(payload: dict) -> str:
     brain_label = "OK" if brain_status is True else ("UNKNOWN" if brain_status == "unknown" else "FAIL")
     brain_block = (
         '<h2>Brain</h2><div class="grid">'
-        + _kpi("Status", _pill(brain_label, brain_kind))
+        + _kpi("Status", _pill(brain_label, brain_kind), raw=True)
         + _kpi("Pass", brain.get("pass", 0), "good")
         + _kpi("Warn", brain.get("warn", 0), "warn" if brain.get("warn") else "")
         + _kpi("Fail", brain.get("fail", 0), "bad" if brain.get("fail") else "")
@@ -344,7 +347,8 @@ def render_quality(payload: dict) -> str:
         + _kpi("Sessions", sessions)
         + _kpi("Stop events", stop_events)
         + _kpi("Trend",
-               f'<span class="{trend_cls}">{trend_arrow} {_esc(direction)} ({delta:+.3f})</span>')
+               f'<span class="{trend_cls}">{trend_arrow} {_esc(direction)} ({delta:+.3f})</span>',
+               raw=True)
         + '</div>'
     )
 
