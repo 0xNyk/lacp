@@ -125,11 +125,17 @@ add_check() {
   local name="$1"
   local status="$2"
   local detail="$3"
+  detail="${detail//$'\r'/ }"
+  detail="${detail//$'\n'/ }"
+  detail="${detail//$'\t'/ }"
   printf '%s\t%s\t%s\n' "${status}" "${name}" "${detail}" >> "${checks_tmp}"
 }
 
 add_hint() {
   local hint="$1"
+  hint="${hint//$'\r'/ }"
+  hint="${hint//$'\n'/ }"
+  hint="${hint//$'\t'/ }"
   [[ -n "${hint}" ]] || return 0
   if ! grep -Fqx "${hint}" "${hints_tmp}" 2>/dev/null; then
     printf '%s\n' "${hint}" >> "${hints_tmp}"

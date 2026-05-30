@@ -42,7 +42,25 @@ enable_isolated_roots() {
   export LACP_AUTOMATION_ROOT="${tmp_root}/automation"
   export LACP_KNOWLEDGE_ROOT="${tmp_root}/knowledge"
   export LACP_DRAFTS_ROOT="${tmp_root}/drafts"
-  mkdir -p "${LACP_AUTOMATION_ROOT}" "${LACP_KNOWLEDGE_ROOT}" "${LACP_DRAFTS_ROOT}"
+  export LACP_SESSIONS_ROOT="${tmp_root}/sessions"
+  export LACP_OBSIDIAN_VAULT="${tmp_root}/obsidian-vault"
+  export LACP_KNOWLEDGE_GRAPH_ROOT="${LACP_KNOWLEDGE_ROOT}"
+  export LACP_REMOTE_APPROVAL_FILE="${LACP_KNOWLEDGE_ROOT}/data/approvals/remote-approval.json"
+  export LACP_TIME_TRACKING_ROOT="${LACP_KNOWLEDGE_ROOT}/data/time-tracking"
+  export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
+  export LACP_MCP_AUTH_POLICY_FILE="${ROOT}/config/mcp-auth-policy.json"
+  export LACP_SKIP_DOTENV="${LACP_SKIP_DOTENV:-1}"
+  export LACP_AUTO_HOOK_OPTIMIZE="${LACP_AUTO_HOOK_OPTIMIZE:-false}"
+  export LACP_AUTO_DEPS_FORMULAS="${LACP_AUTO_DEPS_FORMULAS:-}"
+  export LACP_AUTO_DEPS_CASKS="${LACP_AUTO_DEPS_CASKS:-}"
+  export LACP_AUTO_DEPS_NPM_PACKAGES="${LACP_AUTO_DEPS_NPM_PACKAGES:-}"
+  export HOMEBREW_NO_AUTO_UPDATE="${HOMEBREW_NO_AUTO_UPDATE:-1}"
+  mkdir -p \
+    "${LACP_AUTOMATION_ROOT}" \
+    "${LACP_KNOWLEDGE_ROOT}" \
+    "${LACP_DRAFTS_ROOT}" \
+    "${LACP_SESSIONS_ROOT}" \
+    "${LACP_OBSIDIAN_VAULT}"
 }
 
 record_env_guard() {
@@ -101,12 +119,19 @@ export LACP_AUTO_ADOPT_LOCAL="${LACP_AUTO_ADOPT_LOCAL:-false}"
 
 if [[ "${QUICK}" -eq 1 ]]; then
   log "Running quick test suite"
+  record_env_guard
   enable_isolated_roots
-  "${ROOT}/bin/lacp-install" --profile starter >/dev/null
+  "${ROOT}/bin/lacp-install" \
+    --profile starter \
+    --no-auto-deps \
+    --no-auto-adopt \
+    --no-auto-hook-optimize \
+    --no-obsidian-setup >/dev/null
   "${ROOT}/bin/lacp-posture" --strict --json >/dev/null
   "${ROOT}/bin/lacp-doctor" --json | jq -e '.ok == true' >/dev/null
   "${ROOT}/bin/lacp-knowledge-doctor" --json >/dev/null || true
   "${ROOT}/scripts/ci/test-route-policy.sh"
+  check_env_guard
   log "Quick suite passed"
   exit 0
 fi

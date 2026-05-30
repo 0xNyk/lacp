@@ -68,8 +68,9 @@ default_project() {
   fi
 }
 
-declare -A CUSTOM_COMMAND_PATHS=()
-declare -A CUSTOM_COMMAND_SOURCE=()
+declare -a CUSTOM_COMMAND_NAMES=()
+declare -a CUSTOM_COMMAND_PATHS=()
+declare -a CUSTOM_COMMAND_SOURCES=()
 declare -a EVAL_LINES=()
 
 PROJECT_COMMANDS_ENABLED=1
@@ -81,6 +82,36 @@ TIME_PROJECT=""
 TIME_CLIENT=""
 TIME_SESSION_ID=""
 TIME_TRACKING_ACTIVE=0
+
+custom_command_index() {
+  local needle="$1"
+  local idx
+  for idx in "${!CUSTOM_COMMAND_NAMES[@]}"; do
+    if [[ "${CUSTOM_COMMAND_NAMES[idx]}" == "${needle}" ]]; then
+      printf '%s' "${idx}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+custom_command_exists() {
+  custom_command_index "$1" >/dev/null
+}
+
+custom_command_add() {
+  local name="$1"
+  local path="$2"
+  local source_label="$3"
+
+  if custom_command_exists "${name}"; then
+    return 0
+  fi
+
+  CUSTOM_COMMAND_NAMES+=("${name}")
+  CUSTOM_COMMAND_PATHS+=("${path}")
+  CUSTOM_COMMAND_SOURCES+=("${source_label}")
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -159,10 +190,7 @@ load_custom_commands_from_dir() {
     base="$(basename "${file}")"
     name="${base%.*}"
     [[ -n "${name}" ]] || continue
-    if [[ -z "${CUSTOM_COMMAND_PATHS["${name}"]+x}" ]]; then
-      CUSTOM_COMMAND_PATHS["${name}"]="${file}"
-      CUSTOM_COMMAND_SOURCE["${name}"]="${source_label}"
-    fi
+    custom_command_add "${name}" "${file}" "${source_label}"
   done < <(find "${dir}" -maxdepth 1 -type f -print0 | sort -z)
 }
 
@@ -186,8 +214,11 @@ run_lacp_subcommand() {
 run_custom_command() {
   local name="$1"
   local args="${2:-}"
-  local path="${CUSTOM_COMMAND_PATHS["${name}"]:-}"
-  [[ -n "${path}" ]] || return 1
+  local idx
+  idx="$(custom_command_index "${name}" || true)"
+  [[ -n "${idx}" ]] || return 1
+
+  local path="${CUSTOM_COMMAND_PATHS[idx]}"
 
   if [[ -x "${path}" ]]; then
     local cmd="\"${path}\""
@@ -227,7 +258,10 @@ run_custom_command() {
 run_loop_shortcut() {
   local raw="$1"
   local -a words=()
-  mapfile -d '' -t words < <(python3 - <<'PY' "${raw}"
+  local word
+  while IFS= read -r -d '' word; do
+    words+=("${word}")
+  done < <(python3 - "${raw}" <<PY
 import shlex
 import sys
 
@@ -274,15 +308,19 @@ PY
 }
 
 print_custom_commands() {
-  if [[ "${#CUSTOM_COMMAND_PATHS[@]}" -eq 0 ]]; then
+  if [[ "${#CUSTOM_COMMAND_NAMES[@]}" -eq 0 ]]; then
     echo "No custom slash commands loaded."
     return 0
   fi
 
-  local name
-  for name in $(printf '%s\n' "${!CUSTOM_COMMAND_PATHS[@]}" | sort); do
-    printf '/%s\t%s\t%s\n' "${name}" "${CUSTOM_COMMAND_SOURCE["${name}"]}" "${CUSTOM_COMMAND_PATHS["${name}"]}"
-  done
+  local idx name
+  while IFS=$'\t' read -r name idx; do
+    printf '/%s\t%s\t%s\n' "${name}" "${CUSTOM_COMMAND_SOURCES[idx]}" "${CUSTOM_COMMAND_PATHS[idx]}"
+  done < <(
+    for idx in "${!CUSTOM_COMMAND_NAMES[@]}"; do
+      printf '%s\t%s\n' "${CUSTOM_COMMAND_NAMES[idx]}" "${idx}"
+    done | sort
+  )
 }
 
 dispatch_line() {
@@ -341,7 +379,7 @@ dispatch_line() {
       ;;
     /*)
       local custom_name="${cmd_token#/}"
-      if [[ -n "${CUSTOM_COMMAND_PATHS["${custom_name}"]+x}" ]]; then
+      if custom_command_exists "${custom_name}"; then
         run_custom_command "${custom_name}" "${rest}"
         return $?
       fi
