@@ -3,6 +3,22 @@ set -euo pipefail
 
 LACP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+lacp_prepend_path_if_missing() {
+  local dir="$1"
+  [[ -d "${dir}" ]] || return 0
+  case ":${PATH}:" in
+    *":${dir}:"*) return 0 ;;
+  esac
+  PATH="${dir}:${PATH}"
+}
+
+lacp_prepend_path_if_missing "${HOME}/.local/bin"
+lacp_prepend_path_if_missing "/opt/homebrew/bin"
+lacp_prepend_path_if_missing "/opt/homebrew/sbin"
+lacp_prepend_path_if_missing "/usr/local/bin"
+lacp_prepend_path_if_missing "/usr/local/sbin"
+export PATH
+
 if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
   # Strict KEY=VALUE parser — does not execute .env as bash (H2: CWE-94)
   while IFS='=' read -r key value; do
@@ -17,9 +33,12 @@ if [[ "${LACP_SKIP_DOTENV:-0}" != "1" && -f "${LACP_ROOT}/.env" ]]; then
     value="${value#\'}" ; value="${value%\'}"
     # Validate key is a valid identifier
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Safe expansion: $HOME, ${HOME}, and ~ (no general variable/command expansion)
+    # Safe expansion: a small allowlist of path anchors only.
+    # This keeps the parser non-executable while still supporting the shipped env example.
     value="${value//\$\{HOME\}/${HOME}}"
     value="${value//\$HOME/${HOME}}"
+    value="${value//\$\{LACP_ROOT\}/${LACP_ROOT}}"
+    value="${value//\$LACP_ROOT/${LACP_ROOT}}"
     value="${value/#\~\//${HOME}/}"
     export "${key}=${value}"
   done < "${LACP_ROOT}/.env"
