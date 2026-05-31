@@ -1,0 +1,335 @@
+{
+  "version": "1.0",
+  "spec_id": "cross-cli-learning-control-plane-2026-04-13",
+  "generated_at_utc": "2026-04-13T22:45:00Z",
+  "orchestrator": {
+    "reasoning_tier": "high",
+    "memory_keys": [
+      "lacp-learning-control-plane",
+      "cross-cli-policy-routing",
+      "learning-rollout-kpis"
+    ],
+    "max_restarts_per_task": 2,
+    "default_models": {
+      "planner": "claude-sonnet-4",
+      "implementer": "claude-sonnet-4",
+      "verifier": "o3"
+    }
+  },
+  "tasks": [
+    {
+      "id": "define-learning-event-schema",
+      "title": "Define learning event schema and docs",
+      "description": "Create config schema and docs for normalized capture events.",
+      "complexity": "medium",
+      "depends_on": [],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 6000,
+        "max_output_tokens": 2000
+      },
+      "iterations": {
+        "loop_1_max": 4,
+        "loop_2_max": 2,
+        "quality_loop_max": 2
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "code-quality-default",
+      "runner": {
+        "command": "python3 -m json.tool config/learning/learning-events.schema.json >/dev/null"
+      },
+      "escalation_policy": "retry_stronger_model",
+      "expected_outputs": [
+        {
+          "id": "learning-events-schema",
+          "path": "config/learning/learning-events.schema.json",
+          "kind": "json-schema",
+          "required": true
+        },
+        {
+          "id": "learning-schema-doc",
+          "path": "config/learning/README.md",
+          "kind": "doc",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "define-promotion-policy",
+      "title": "Define promotion policy thresholds and rollback triggers",
+      "description": "Create policy contract for candidate promotion.",
+      "complexity": "medium",
+      "depends_on": [
+        "define-learning-event-schema"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 6000,
+        "max_output_tokens": 2000
+      },
+      "iterations": {
+        "loop_1_max": 4,
+        "loop_2_max": 2,
+        "quality_loop_max": 2
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "security-sensitive",
+      "runner": {
+        "command": "python3 -m json.tool config/learning/promotion-policy.json >/dev/null"
+      },
+      "escalation_policy": "retry_stronger_model",
+      "expected_outputs": [
+        {
+          "id": "promotion-policy",
+          "path": "config/learning/promotion-policy.json",
+          "kind": "policy",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "define-learning-event-schema-input",
+          "from_task": "define-learning-event-schema",
+          "output_id": "learning-events-schema",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "implement-learn-capture",
+      "title": "Implement lacp-learn-capture command and hook",
+      "description": "Capture normalized LearningEvent records from run artifacts in shadow mode.",
+      "complexity": "high",
+      "depends_on": [
+        "define-learning-event-schema",
+        "define-promotion-policy"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 12000,
+        "max_output_tokens": 3000
+      },
+      "iterations": {
+        "loop_1_max": 6,
+        "loop_2_max": 3,
+        "quality_loop_max": 3
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "security-sensitive",
+      "runner": {
+        "command": "bin/lacp-learn-capture --help >/dev/null"
+      },
+      "escalation_policy": "require_human_review",
+      "expected_outputs": [
+        {
+          "id": "learn-capture-cli",
+          "path": "bin/lacp-learn-capture",
+          "kind": "script",
+          "required": true
+        },
+        {
+          "id": "learn-capture-hook",
+          "path": "hooks/learn_capture.py",
+          "kind": "hook",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "define-learning-event-schema-input",
+          "from_task": "define-learning-event-schema",
+          "output_id": "learning-events-schema",
+          "required": true
+        },
+        {
+          "id": "define-promotion-policy-input",
+          "from_task": "define-promotion-policy",
+          "output_id": "promotion-policy",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "implement-learn-retrieve",
+      "title": "Implement lacp-learn-retrieve with confidence and token caps",
+      "description": "Add preflight retrieval of top-k high-confidence lessons.",
+      "complexity": "high",
+      "depends_on": [
+        "implement-learn-capture"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 12000,
+        "max_output_tokens": 3000
+      },
+      "iterations": {
+        "loop_1_max": 6,
+        "loop_2_max": 3,
+        "quality_loop_max": 3
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "security-sensitive",
+      "runner": {
+        "command": "bin/lacp-learn-retrieve --help >/dev/null"
+      },
+      "escalation_policy": "require_human_review",
+      "expected_outputs": [
+        {
+          "id": "learn-retrieve-cli",
+          "path": "bin/lacp-learn-retrieve",
+          "kind": "script",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "implement-learn-capture-input",
+          "from_task": "implement-learn-capture",
+          "output_id": "learn-capture-cli",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "add-learning-ci-gate",
+      "title": "Add CI test for learning loop contracts",
+      "description": "Add deterministic test script for capture/retrieve/promotion gates.",
+      "complexity": "medium",
+      "depends_on": [
+        "implement-learn-retrieve"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 8000,
+        "max_output_tokens": 2000
+      },
+      "iterations": {
+        "loop_1_max": 4,
+        "loop_2_max": 2,
+        "quality_loop_max": 2
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "code-quality-default",
+      "runner": {
+        "command": "scripts/ci/test-learning-loop.sh"
+      },
+      "escalation_policy": "retry_same_model",
+      "expected_outputs": [
+        {
+          "id": "learning-ci-script",
+          "path": "scripts/ci/test-learning-loop.sh",
+          "kind": "ci-script",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "implement-learn-retrieve-input",
+          "from_task": "implement-learn-retrieve",
+          "output_id": "learn-retrieve-cli",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "implement-promote-eval-rollback",
+      "title": "Implement promote, eval, and rollback commands",
+      "description": "Ship promotion gates, replay eval, and one-command rollback.",
+      "complexity": "critical",
+      "depends_on": [
+        "add-learning-ci-gate"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 16000,
+        "max_output_tokens": 4000
+      },
+      "iterations": {
+        "loop_1_max": 8,
+        "loop_2_max": 4,
+        "quality_loop_max": 4
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "security-sensitive",
+      "runner": {
+        "command": "bin/lacp-learn-promote --help >/dev/null && bin/lacp-learn-eval --help >/dev/null && bin/lacp-learn-rollback --help >/dev/null"
+      },
+      "escalation_policy": "require_human_review",
+      "expected_outputs": [
+        {
+          "id": "learn-promote-cli",
+          "path": "bin/lacp-learn-promote",
+          "kind": "script",
+          "required": true
+        },
+        {
+          "id": "learn-eval-cli",
+          "path": "bin/lacp-learn-eval",
+          "kind": "script",
+          "required": true
+        },
+        {
+          "id": "learn-rollback-cli",
+          "path": "bin/lacp-learn-rollback",
+          "kind": "script",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "add-learning-ci-gate-input",
+          "from_task": "add-learning-ci-gate",
+          "output_id": "learning-ci-script",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "wire-provenance-and-docs",
+      "title": "Wire signed receipts and rollout docs",
+      "description": "Attach learning decisions to provenance and update runbooks/release gates.",
+      "complexity": "high",
+      "depends_on": [
+        "implement-promote-eval-rollback"
+      ],
+      "primary_model": "claude-sonnet-4",
+      "reasoning_budget": {
+        "max_input_tokens": 10000,
+        "max_output_tokens": 3000
+      },
+      "iterations": {
+        "loop_1_max": 6,
+        "loop_2_max": 2,
+        "quality_loop_max": 2
+      },
+      "sandbox_profile": "local-safe",
+      "verification_policy": "code-quality-default",
+      "runner": {
+        "command": "bin/lacp release-gate --quick --json >/dev/null"
+      },
+      "escalation_policy": "retry_stronger_model",
+      "expected_outputs": [
+        {
+          "id": "runbook-update",
+          "path": "docs/runbook.md",
+          "kind": "doc",
+          "required": true
+        },
+        {
+          "id": "release-checklist-update",
+          "path": "docs/release-checklist.md",
+          "kind": "doc",
+          "required": true
+        }
+      ],
+      "expected_inputs": [
+        {
+          "id": "implement-promote-eval-rollback-input",
+          "from_task": "implement-promote-eval-rollback",
+          "output_id": "learn-promote-cli",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
