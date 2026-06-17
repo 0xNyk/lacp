@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-learn-capture record [options] [--json]
+  lacp-learn-capture validate <file.json> [--json]
+  lacp-learn-capture list [--last N] [--json]
+  lacp-learn-capture status [--json]
+
+Cross-CLI learning loop — Phase A (shadow capture only).
+
+Captures normalized learning events for later (advisory/enforce) phases.
+SAFETY: this command is observational. It NEVER mutates routing or policy.
+Capture is gated by LACP_LEARNING_ENABLED (0|1) and LACP_LEARNING_MODE
+(off|shadow). In any mode other than shadow, record is a no-op.
+
+record options:
+  --cli NAME            Source CLI (claude|codex|hermes|opencode|gemini|goose|aider|openclaw|unknown)
+  --event-type TYPE     route_decision|task_outcome|tool_usage|error_recovery|verification
+  --task SUMMARY        Short task description (required)
+  --repo-trust LEVEL    trusted|semi|untrusted|unknown (default: unknown)
+  --keywords "a,b,c"    Comma-separated task keywords
+  --status STATUS       success|failure|partial|aborted (required)
+  --score FLOAT         Outcome score 0..1
+  --duration-ms INT     Task duration in milliseconds
+  --notes TEXT          Free-form notes
+
+Subcommands:
+  record     Capture one event (writes to the learning store in shadow mode)
+  validate   Validate an event file against the schema (exit 0 = valid)
+  list       Show recently captured events
+  status     Show capture configuration and store stats
+EOF
+}
+
+require_cmd jq
+require_cmd python3
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+CLI="unknown"
+EVENT_TYPE="task_outcome"
+TASK=""
+REPO_TRUST="unknown"
+KEYWORDS=""
+STATUS=""
+SCORE=""
+DURATION_MS=""
+NOTES=""
+LIST_LAST=10
+VALIDATE_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --cli) CLI="$2"; shift 2 ;;
+    --event-type) EVENT_TYPE="$2"; shift 2 ;;
+    --task) TASK="$2"; shift 2 ;;
+    --repo-trust) REPO_TRUST="$2"; shift 2 ;;
+    --keywords) KEYWORDS="$2"; shift 2 ;;
+    --status) STATUS="$2"; shift 2 ;;
+    --score) SCORE="$2"; shift 2 ;;
+    --duration-ms) DURATION_MS="$2"; shift 2 ;;
+    --notes) NOTES="$2"; shift 2 ;;
+    --last) LIST_LAST="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      if [[ "${SUB}" == "validate" && -z "${VALIDATE_FILE}" && "$1" != --* ]]; then
+        VALIDATE_FILE="$1"; shift
+      else
+        die "Unknown argument: $1"
+      fi
+      ;;
+  esac
+done
+
+SCHEMA_FILE="${LACP_LEARNING_SCHEMA_FILE}"
+STORE_DIR="${LACP_LEARNING_ROOT}"
+STORE_FILE="${STORE_DIR}/events.jsonl"
+
+require_file "${SCHEMA_FILE}"
+
+# Validate a JSON document (from a file) against the learning-event schema.
+# Prints nothing on success; prints the validation error and returns non-zero on failure.
+validate_event_file() {
+  local file="$1"
+  python3 - "$file" "${SCHEMA_FILE}" <<'PY'
+import json, sys
+
+event_path, schema_path = sys.argv[1], sys.argv[2]
+
+try:
+    with open(event_path) as f:
+        event = json.load(f)
+except Exception as e:
+    print(f"invalid JSON: {e}", file=sys.stderr); sys.exit(2)
+
+with open(schema_path) as f:
+    schema = json.load(f)
+
+# Prefer jsonschema if available; fall back to a minimal structural check that
+# enforces the contract's required fields, enums and patterns so CI never
+# silently passes invalid fixtures even on a stdlib-only host.
+try:
+    import jsonschema
+    try:
+        jsonschema.validate(event, schema)
+        sys.exit(0)
+    except jsonschema.ValidationError as e:
+        print(f"schema violation: {e.message}", file=sys.stderr); sys.exit(1)
+except ImportError:
+    import re
+
+    def fail(msg):
+        print(f"schema violation: {msg}", file=sys.stderr); sys.exit(1)
+
+    def check(obj, sch, path="$"):
+        t = sch.get("type")
+        if t == "object":
+            if not isinstance(obj, dict): fail(f"{path}: expected object")
+            for req in sch.get("required", []):
+                if req not in obj: fail(f"{path}.{req}: required")
+            props = sch.get("properties", {})
+            if sch.get("additionalProperties") is False:
+                for k in obj:
+                    if k not in props: fail(f"{path}.{k}: additional property not allowed")
+            for k, v in obj.items():
+                if k in props: check(v, props[k], f"{path}.{k}")
+        elif t == "array":
+            if not isinstance(obj, list): fail(f"{path}: expected array")
+            if "maxItems" in sch and len(obj) > sch["maxItems"]: fail(f"{path}: too many items")
+            it = sch.get("items")
+            if it:
+                for i, el in enumerate(obj): check(el, it, f"{path}[{i}]")
+        elif t == "string":
+            if not isinstance(obj, str): fail(f"{path}: expected string")
+            if "minLength" in sch and len(obj) < sch["minLength"]: fail(f"{path}: too short")
+            if "maxLength" in sch and len(obj) > sch["maxLength"]: fail(f"{path}: too long")
+        elif t == "integer":
+            if not isinstance(obj, int) or isinstance(obj, bool): fail(f"{path}: expected integer")
+            if "minimum" in sch and obj < sch["minimum"]: fail(f"{path}: below minimum")
+        elif t == "number":
+            if not isinstance(obj, (int, float)) or isinstance(obj, bool): fail(f"{path}: expected number")
+            if "minimum" in sch and obj < sch["minimum"]: fail(f"{path}: below minimum")
+            if "maximum" in sch and obj > sch["maximum"]: fail(f"{path}: above maximum")
+        if "const" in sch and obj != sch["const"]: fail(f"{path}: must equal {sch['const']!r}")
+        if "enum" in sch and obj not in sch["enum"]: fail(f"{path}: not in enum {sch['enum']}")
+        if "pattern" in sch and (not isinstance(obj, str) or not re.search(sch["pattern"], obj)):
+            fail(f"{path}: does not match pattern {sch['pattern']}")
+
+    check(event, schema)
+    sys.exit(0)
+PY
+}
+
+emit_status() {
+  local store_count=0
+  [[ -f "${STORE_FILE}" ]] && store_count="$(wc -l < "${STORE_FILE}" | tr -d ' ')"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --arg enabled "${LACP_LEARNING_ENABLED}" \
+      --arg mode "${LACP_LEARNING_MODE}" \
+      --arg store "${STORE_FILE}" \
+      --arg schema "${SCHEMA_FILE}" \
+      --argjson count "${store_count}" \
+      '{schema_version:"1", kind:"learn_capture_status", ok:true,
+        enabled:($enabled=="1"), mode:$mode, store:$store, schema:$schema, event_count:$count,
+        mutates_routing:false}'
+  else
+    log "learning enabled : ${LACP_LEARNING_ENABLED}"
+    log "learning mode    : ${LACP_LEARNING_MODE}"
+    log "store            : ${STORE_FILE}"
+    log "events captured  : ${store_count}"
+    log "mutates routing  : false (shadow capture is observational)"
+  fi
+}
+
+get_provenance_pair() {
+  # Echoes "agent_id<TAB>project_slug" using the agent-id registry when present.
+  local agent_id="unknown" slug="unknown"
+  if [[ -x "${ROOT}/bin/lacp-agent-id" ]]; then
+    local out
+    out="$("${ROOT}/bin/lacp-agent-id" show --json 2>/dev/null || true)"
+    if [[ -n "${out}" ]]; then
+      agent_id="$(echo "${out}" | jq -r '.agent_id // "unknown"' 2>/dev/null || echo unknown)"
+      slug="$(echo "${out}" | jq -r '.project_slug // "unknown"' 2>/dev/null || echo unknown)"
+    fi
+  fi
+  printf '%s\t%s\n' "${agent_id}" "${slug}"
+}
+
+case "${SUB}" in
+  status)
+    emit_status
+    ;;
+
+  validate)
+    [[ -n "${VALIDATE_FILE}" ]] || die "validate requires a file path"
+    require_file "${VALIDATE_FILE}"
+    if validate_event_file "${VALIDATE_FILE}"; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        jq -n --arg f "${VALIDATE_FILE}" '{kind:"learn_validate", ok:true, file:$f, valid:true}'
+      else
+        log "valid: ${VALIDATE_FILE}"
+      fi
+    else
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        jq -n --arg f "${VALIDATE_FILE}" '{kind:"learn_validate", ok:false, file:$f, valid:false}'
+      fi
+      die "schema validation failed: ${VALIDATE_FILE}"
+    fi
+    ;;
+
+  list)
+    if [[ ! -f "${STORE_FILE}" ]]; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then jq -n '{kind:"learn_list", ok:true, events:[]}'; else log "no events captured"; fi
+      exit 0
+    fi
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      tail -n "${LIST_LAST}" "${STORE_FILE}" | jq -s '{kind:"learn_list", ok:true, events:.}'
+    else
+      tail -n "${LIST_LAST}" "${STORE_FILE}" | jq -r '"\(.captured_at) [\(.cli)/\(.event_type)] \(.outcome.status) — \(.task.summary)"'
+    fi
+    ;;
+
+  record)
+    # Kill-switch gates: refuse to capture unless explicitly enabled AND in shadow mode.
+    if [[ "${LACP_LEARNING_ENABLED}" != "1" || "${LACP_LEARNING_MODE}" != "shadow" ]]; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        jq -n --arg mode "${LACP_LEARNING_MODE}" \
+          '{kind:"learn_record", ok:true, captured:false, reason:"disabled_or_non_shadow", mode:$mode, mutates_routing:false}'
+      else
+        log "capture skipped (enabled=${LACP_LEARNING_ENABLED} mode=${LACP_LEARNING_MODE}); no-op"
+      fi
+      exit 0
+    fi
+
+    [[ -n "${TASK}" ]] || die "record requires --task"
+    [[ -n "${STATUS}" ]] || die "record requires --status"
+
+    prov="$(get_provenance_pair)"
+    AGENT_ID="${prov%%	*}"
+    PROJECT_SLUG="${prov##*	}"
+    SESSION_FP="${LACP_SESSION_FINGERPRINT:-${AGENT_ID}-$$}"
+
+    mkdir -p "${STORE_DIR}"
+
+    # Build, hash, validate, then append. The Python step is the single writer so
+    # event_id and source_hash are derived from the exact canonical payload.
+    event_json="$(python3 - <<PY
+import hashlib, json, sys
+from datetime import datetime, timezone
+
+keywords = [k.strip() for k in """${KEYWORDS}""".split(",") if k.strip()]
+
+task = {"summary": """${TASK}""", "repo_trust": "${REPO_TRUST}"}
+if keywords:
+    task["keywords"] = keywords
+
+outcome = {"status": "${STATUS}"}
+score = "${SCORE}"
+if score:
+    outcome["score"] = float(score)
+duration = "${DURATION_MS}"
+if duration:
+    outcome["duration_ms"] = int(duration)
+notes = """${NOTES}"""
+if notes:
+    outcome["notes"] = notes
+
+event = {
+    "schema_version": "1.0",
+    "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "mode": "shadow",
+    "cli": "${CLI}",
+    "event_type": "${EVENT_TYPE}",
+    "task": task,
+    "outcome": outcome,
+    "provenance": {
+        "agent_id": "${AGENT_ID}",
+        "project_slug": "${PROJECT_SLUG}",
+        "session_fingerprint": "${SESSION_FP}",
+    },
+}
+
+# Canonical hash over everything except the fields derived from it.
+canonical = json.dumps(event, sort_keys=True, separators=(",", ":"))
+source_hash = hashlib.sha256(canonical.encode()).hexdigest()
+event["provenance"]["source_hash"] = source_hash
+event["event_id"] = "evt_" + source_hash[:32]
+
+print(json.dumps(event))
+PY
+)"
+
+    # Validate the freshly built event against the schema before persisting.
+    tmp_event="$(mktemp)"
+    trap 'rm -f "${tmp_event}"' EXIT
+    printf '%s\n' "${event_json}" > "${tmp_event}"
+    if ! validate_event_file "${tmp_event}"; then
+      die "internal: built event failed schema validation (refusing to persist)"
+    fi
+
+    printf '%s\n' "${event_json}" >> "${STORE_FILE}"
+
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${event_json}" | jq '{kind:"learn_record", ok:true, captured:true, mutates_routing:false, event:.}'
+    else
+      eid="$(printf '%s' "${event_json}" | jq -r '.event_id')"
+      log "captured ${eid} (shadow) -> ${STORE_FILE}"
+    fi
+    ;;
+
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac

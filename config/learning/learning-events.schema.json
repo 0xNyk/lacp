@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lacp.local/schemas/learning-events.schema.json",
+  "title": "LACP Learning Event",
+  "description": "A single normalized cross-CLI learning event captured in shadow mode. Events are observational only and MUST NOT mutate routing or policy. Phase A (shadow capture).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "captured_at",
+    "mode",
+    "cli",
+    "event_type",
+    "task",
+    "outcome",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version this event validates against."
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt_[0-9a-f]{16,64}$",
+      "description": "Stable, content-derived identifier (evt_ + hex digest)."
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 UTC timestamp when the event was captured."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["shadow"],
+      "description": "Capture mode. Phase A only ever emits 'shadow'. 'enforce' is reserved for later phases and is rejected here."
+    },
+    "cli": {
+      "type": "string",
+      "enum": ["claude", "codex", "hermes", "opencode", "gemini", "goose", "aider", "openclaw", "unknown"],
+      "description": "Source CLI/agent harness the event was observed from."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["route_decision", "task_outcome", "tool_usage", "error_recovery", "verification"],
+      "description": "Category of learning signal."
+    },
+    "task": {
+      "type": "object",
+      "required": ["summary", "repo_trust"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "repo_trust": { "type": "string", "enum": ["trusted", "semi", "untrusted", "unknown"] },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "maxItems": 32
+        }
+      },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["success", "failure", "partial", "aborted"] },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string", "maxLength": 2000 }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Required provenance fields for auditability and reproducibility.",
+      "required": ["agent_id", "project_slug", "session_fingerprint", "source_hash"],
+      "properties": {
+        "agent_id": { "type": "string", "minLength": 1 },
+        "project_slug": { "type": "string", "minLength": 1 },
+        "session_fingerprint": { "type": "string", "minLength": 1 },
+        "source_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the canonical event payload (excluding this field and event_id)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
