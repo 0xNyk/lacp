@@ -151,6 +151,7 @@ for f in "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "
 done
 
 "/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-learning-loop.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-posture.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-shell-and-hooks-hardening.sh"

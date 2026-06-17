@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "description": "Governance thresholds for promoting learned signals from shadow -> advisory -> enforce. Phase A ships this as a stable contract; Phases B and C consume it. No phase reads this to mutate routing automatically without passing every gate below.",
+  "modes": {
+    "off": "Capture disabled. No events written.",
+    "shadow": "Capture only. Events written and validated; zero routing/policy impact. (Phase A)",
+    "advisory": "Bounded, non-authoritative retrieval hints surfaced at preflight. (Phase B)",
+    "enforce": "Promoted signals influence routing/policy. Gated by every threshold below. (Phase C)"
+  },
+  "default_mode": "shadow",
+  "retrieval_caps": {
+    "max_hints": 3,
+    "token_budget": 400,
+    "confidence_floor": 0.70
+  },
+  "promotion_gates": {
+    "min_events": 50,
+    "min_uplift_pct": 10.0,
+    "min_hit_rate": 0.90,
+    "min_mrr": 0.65,
+    "require_verifier_evidence": true,
+    "require_two_person_approval": true,
+    "require_provenance_verification": true
+  },
+  "rollback": {
+    "max_drill_minutes": 5,
+    "auto_freeze_on_gate_failure": true,
+    "reset_mode_on_freeze": "shadow"
+  },
+  "fallback": {
+    "weekly_cycles_before_review": 2,
+    "narrow_scope_if_uplift_below_pct": 10.0,
+    "narrow_scope_target": "learning-packs"
+  }
+}
