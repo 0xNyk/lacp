@@ -259,24 +259,52 @@ case "${SUB}" in
 
     # Build, hash, validate, then append. The Python step is the single writer so
     # event_id and source_hash are derived from the exact canonical payload.
-    event_json="$(python3 - <<PY
-import hashlib, json, sys
+    #
+    # SECURITY (CWE-94): all caller-controlled values are passed as DATA via the
+    # environment and read with os.environ. The heredoc terminator is quoted
+    # (<<'PY') so the shell performs NO expansion inside the script body — user
+    # input can never be interpolated into Python source. Enum/pattern fields are
+    # additionally validated by the schema check below before anything is persisted.
+    event_json="$(
+      LC_ENV_CLI="${CLI}" \
+      LC_ENV_EVENT_TYPE="${EVENT_TYPE}" \
+      LC_ENV_TASK="${TASK}" \
+      LC_ENV_REPO_TRUST="${REPO_TRUST}" \
+      LC_ENV_KEYWORDS="${KEYWORDS}" \
+      LC_ENV_STATUS="${STATUS}" \
+      LC_ENV_SCORE="${SCORE}" \
+      LC_ENV_DURATION_MS="${DURATION_MS}" \
+      LC_ENV_NOTES="${NOTES}" \
+      LC_ENV_AGENT_ID="${AGENT_ID}" \
+      LC_ENV_PROJECT_SLUG="${PROJECT_SLUG}" \
+      LC_ENV_SESSION_FP="${SESSION_FP}" \
+      python3 - <<'PY'
+import hashlib, json, os
 from datetime import datetime, timezone
 
-keywords = [k.strip() for k in """${KEYWORDS}""".split(",") if k.strip()]
+def env(name):
+    return os.environ.get(name, "")
 
-task = {"summary": """${TASK}""", "repo_trust": "${REPO_TRUST}"}
+keywords = [k.strip() for k in env("LC_ENV_KEYWORDS").split(",") if k.strip()]
+
+task = {"summary": env("LC_ENV_TASK"), "repo_trust": env("LC_ENV_REPO_TRUST")}
 if keywords:
     task["keywords"] = keywords
 
-outcome = {"status": "${STATUS}"}
-score = "${SCORE}"
+outcome = {"status": env("LC_ENV_STATUS")}
+score = env("LC_ENV_SCORE")
 if score:
-    outcome["score"] = float(score)
-duration = "${DURATION_MS}"
+    try:
+        outcome["score"] = float(score)
+    except ValueError:
+        raise SystemExit("invalid --score (must be a number)")
+duration = env("LC_ENV_DURATION_MS")
 if duration:
-    outcome["duration_ms"] = int(duration)
-notes = """${NOTES}"""
+    try:
+        outcome["duration_ms"] = int(duration)
+    except ValueError:
+        raise SystemExit("invalid --duration-ms (must be an integer)")
+notes = env("LC_ENV_NOTES")
 if notes:
     outcome["notes"] = notes
 
@@ -284,14 +312,14 @@ event = {
     "schema_version": "1.0",
     "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "mode": "shadow",
-    "cli": "${CLI}",
-    "event_type": "${EVENT_TYPE}",
+    "cli": env("LC_ENV_CLI"),
+    "event_type": env("LC_ENV_EVENT_TYPE"),
     "task": task,
     "outcome": outcome,
     "provenance": {
-        "agent_id": "${AGENT_ID}",
-        "project_slug": "${PROJECT_SLUG}",
-        "session_fingerprint": "${SESSION_FP}",
+        "agent_id": env("LC_ENV_AGENT_ID"),
+        "project_slug": env("LC_ENV_PROJECT_SLUG"),
+        "session_fingerprint": env("LC_ENV_SESSION_FP"),
     },
 }
 

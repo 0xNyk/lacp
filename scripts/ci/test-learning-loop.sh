@@ -87,6 +87,18 @@ echo "${out}" | jq '.event' > "${TMP}/captured.json"
 "${CAPTURE}" validate "${TMP}/captured.json" >/dev/null || fail "captured event fails its own schema"
 assert_pass "shadow capture writes valid, provenance-complete event"
 
+# --- 4b. Injection safety: caller input is stored as inert data, never executed --
+# Regression guard for CWE-94 (the record heredoc must pass values out-of-band).
+marker="${TMP}/INJECTION_MARKER"
+rm -f "${marker}"
+payload='"""+__import__("os").system("touch '"${marker}"'")+"""'
+inj_out="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
+  "${CAPTURE}" record --cli claude --status success --task "${payload}" --json)"
+[[ ! -f "${marker}" ]] || fail "record executed injected code (CWE-94 regression)"
+echo "${inj_out}" | jq -e --arg p "${payload}" '.event.task.summary == $p' >/dev/null \
+  || fail "injected payload was not stored verbatim as inert data"
+assert_pass "injection safety: caller input stored as data, not executed"
+
 # --- 5. Shadow parity: enabling capture does NOT change routing output -----------
 # This is the core safety invariant of Phase A. lacp-route output must be identical
 # whether learning is off or in shadow mode.
