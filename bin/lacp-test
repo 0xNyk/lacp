@@ -131,6 +131,7 @@ if [[ "${QUICK}" -eq 1 ]]; then
   "${ROOT}/bin/lacp-doctor" --json | jq -e '.ok == true' >/dev/null
   "${ROOT}/bin/lacp-knowledge-doctor" --json >/dev/null || true
   "${ROOT}/scripts/ci/test-route-policy.sh"
+  "${ROOT}/scripts/ci/test-learning-loop.sh"
   check_env_guard
   log "Quick suite passed"
   exit 0
@@ -151,6 +152,7 @@ for f in "${ROOT}"/bin/* "${ROOT}"/scripts/*.sh "${ROOT}"/scripts/runners/*.sh "
 done
 
 "/bin/bash" "${ROOT}/scripts/ci/test-route-policy.sh"
+"/bin/bash" "${ROOT}/scripts/ci/test-learning-loop.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-posture.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-mode-and-gates.sh"
 "/bin/bash" "${ROOT}/scripts/ci/test-shell-and-hooks-hardening.sh"

@@ -93,6 +93,12 @@ export LACP_MEMORY_DECAY_IDENTITY="${LACP_MEMORY_DECAY_IDENTITY:-0.1}"
 export LACP_MEMORY_DECAY_KNOWLEDGE="${LACP_MEMORY_DECAY_KNOWLEDGE:-1.0}"
 export LACP_MEMORY_DECAY_OPERATIONS="${LACP_MEMORY_DECAY_OPERATIONS:-3.0}"
 export LACP_DIGEST_MAX_TOKENS="${LACP_DIGEST_MAX_TOKENS:-2000}"
+# Cross-CLI learning loop (Epic A: shadow capture). Disabled by default; shadow mode never mutates routing/policy.
+export LACP_LEARNING_ENABLED="${LACP_LEARNING_ENABLED:-0}"
+export LACP_LEARNING_MODE="${LACP_LEARNING_MODE:-off}"
+export LACP_LEARNING_ROOT="${LACP_LEARNING_ROOT:-${LACP_KNOWLEDGE_ROOT}/data/learning}"
+export LACP_LEARNING_SCHEMA_FILE="${LACP_LEARNING_SCHEMA_FILE:-${LACP_ROOT}/config/learning/learning-events.schema.json}"
+export LACP_LEARNING_POLICY_FILE="${LACP_LEARNING_POLICY_FILE:-${LACP_ROOT}/config/learning/promotion-policy.json}"
 
 log() {
   printf '[lacp] %s\n' "$*"
