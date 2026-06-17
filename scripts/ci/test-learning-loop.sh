@@ -123,6 +123,90 @@ else
   echo "[learn-test] SKIP shadow-parity: bin/lacp-route not found (core invariant NOT verified this run)" >&2
 fi
 
+# ================================================================================
+# Phase B (advisory retrieval) gates — bin/lacp-learn-retrieve
+# ================================================================================
+RETRIEVE="${ROOT}/bin/lacp-learn-retrieve"
+if [[ -x "${RETRIEVE}" ]]; then
+  # Build a small store of relevant + irrelevant events to rank against.
+  export LACP_LEARNING_ROOT="${TMP}/bstore"
+  for i in 1 2 3 4 5; do
+    LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
+      "${CAPTURE}" record --cli claude --task "memory benchmark variant ${i}" \
+      --repo-trust trusted --keywords "memory,benchmark" --status success --score 0.9 >/dev/null
+  done
+  LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
+    "${CAPTURE}" record --cli codex --task "totally unrelated payment refund flow" \
+    --repo-trust trusted --keywords "payment,refund" --status success --score 0.9 >/dev/null
+
+  # B1. Gate: retrieval is inactive unless enabled AND mode=advisory.
+  for combo in "0:off" "1:shadow" "0:advisory"; do
+    c_en="${combo%%:*}"
+    c_mode="${combo##*:}"
+    out="$(LACP_LEARNING_ENABLED="${c_en}" LACP_LEARNING_MODE="${c_mode}" \
+      "${RETRIEVE}" query --task "memory benchmark" --json)"
+    echo "${out}" | jq -e '.active == false and (.hints | length) == 0 and .mutates_routing == false' >/dev/null \
+      || fail "retrieval active outside advisory mode (enabled=${c_en} mode=${c_mode})"
+  done
+  assert_pass "retrieval gate: inactive unless enabled AND advisory"
+
+  # B2. Advisory query returns ranked, relevant hints (and excludes irrelevant ones).
+  qout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --repo-trust trusted --json)"
+  echo "${qout}" | jq -e '.active == true and (.hints | length) > 0' >/dev/null \
+    || fail "advisory query returned no hints"
+  echo "${qout}" | jq -e '[.hints[].summary] | all(test("memory|benchmark"))' >/dev/null \
+    || fail "advisory query returned irrelevant hints"
+  assert_pass "advisory retrieval returns ranked relevant hints"
+
+  # B3. max_hints cap enforced (5 relevant events, cap them to 2).
+  cout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --max-hints 2 --json)"
+  echo "${cout}" | jq -e '(.hints | length) <= 2' >/dev/null || fail "max_hints cap not enforced"
+  assert_pass "retrieval cap: max_hints enforced"
+
+  # B4. confidence_floor enforced (impossibly high floor -> zero hints).
+  fout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --confidence-floor 0.999 --json)"
+  echo "${fout}" | jq -e '(.hints | length) == 0' >/dev/null || fail "confidence_floor not enforced"
+  # All returned hints (at the default policy floor) must clear that floor.
+  echo "${qout}" | jq -e '[.hints[].confidence] | all(. >= 0.70)' >/dev/null \
+    || fail "hints below policy confidence floor leaked through"
+  # A nan floor must NOT bypass the gate (nan would make every `conf < floor` false).
+  nout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --confidence-floor nan --json)"
+  echo "${nout}" | jq -e '[.hints[].confidence] | all(. >= 0.70)' >/dev/null \
+    || fail "nan confidence_floor bypassed the gate"
+  assert_pass "retrieval cap: confidence_floor enforced (incl. nan)"
+
+  # B5. token_budget bounds total hints; the top hint always survives. With ~6-token
+  # summaries and a 5-token budget, exactly one hint is admitted (the guaranteed top).
+  tout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --token-budget 5 --json)"
+  echo "${tout}" | jq -e '(.hints | length) == 1 and .tokens_estimated <= 10' >/dev/null \
+    || fail "token_budget not enforced (expected exactly 1 hint within budget)"
+  assert_pass "retrieval cap: token_budget enforced"
+
+  # B6. Retrieval is read-only — the store must be byte-identical after queries.
+  before="$(shasum "${LACP_LEARNING_ROOT}/events.jsonl" | awk '{print $1}')"
+  LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --json >/dev/null
+  after="$(shasum "${LACP_LEARNING_ROOT}/events.jsonl" | awk '{print $1}')"
+  [[ "${before}" == "${after}" ]] || fail "retrieval mutated the learning store"
+  assert_pass "retrieval is read-only (store unchanged)"
+
+  # B7. Injection safety on the retrieval path (same CWE-94 guard as capture).
+  rmarker="${TMP}/RETRIEVE_INJECTION_MARKER"
+  rm -f "${rmarker}"
+  LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task '"""+__import__("os").system("touch '"${rmarker}"'")+"""' --json >/dev/null 2>&1 || true
+  [[ ! -f "${rmarker}" ]] || fail "retrieval executed injected code (CWE-94 regression)"
+  assert_pass "retrieval injection safety: query input is inert"
+else
+  SKIPPED=$((SKIPPED + 1))
+  echo "[learn-test] SKIP retrieval gates: bin/lacp-learn-retrieve not found" >&2
+fi
+
 if [[ "${SKIPPED}" -gt 0 ]]; then
   echo "[learn-test] ${PASS} checks passed, ${SKIPPED} SKIPPED (see warnings above)"
 else

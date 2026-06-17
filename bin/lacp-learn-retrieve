@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-learn-retrieve query --task SUMMARY [options] [--json]
+  lacp-learn-retrieve caps [--json]
+  lacp-learn-retrieve status [--json]
+
+Cross-CLI learning loop — Phase B (bounded advisory retrieval).
+
+Returns top-k ADVISORY hints from the shadow-captured learning store, ranked by
+relevance to the task and outcome quality. SAFETY: output is non-authoritative.
+This command is READ-ONLY — it never mutates routing, policy, or the store, and
+it cannot make decisions. Hints are bounded by strict caps (max hints, token
+budget, confidence floor) sourced from promotion-policy.json.
+
+Retrieval is gated by LACP_LEARNING_ENABLED=1 AND LACP_LEARNING_MODE=advisory.
+In any other mode it returns zero hints (no-op) unless --force is passed for
+inspection (which still cannot affect routing).
+
+query options:
+  --task SUMMARY        Task description to find hints for (required)
+  --keywords "a,b,c"    Comma-separated keywords to boost relevance
+  --repo-trust LEVEL    trusted|semi|untrusted|unknown (boosts matching events)
+  --max-hints N         Override max hints cap (default: from policy)
+  --token-budget N      Override token budget cap (default: from policy)
+  --confidence-floor F  Override confidence floor 0..1 (default: from policy)
+  --force               Emit hints regardless of mode (inspection only)
+
+Subcommands:
+  query    Return ranked advisory hints for a task
+  caps     Show effective caps (policy file + env/flag overrides)
+  status   Show retrieval configuration and store stats
+EOF
+}
+
+require_cmd jq
+require_cmd python3
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+TASK=""
+KEYWORDS=""
+REPO_TRUST="unknown"
+MAX_HINTS=""
+TOKEN_BUDGET=""
+CONFIDENCE_FLOOR=""
+FORCE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --task) TASK="$2"; shift 2 ;;
+    --keywords) KEYWORDS="$2"; shift 2 ;;
+    --repo-trust) REPO_TRUST="$2"; shift 2 ;;
+    --max-hints) MAX_HINTS="$2"; shift 2 ;;
+    --token-budget) TOKEN_BUDGET="$2"; shift 2 ;;
+    --confidence-floor) CONFIDENCE_FLOOR="$2"; shift 2 ;;
+    --force) FORCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+POLICY_FILE="${LACP_LEARNING_POLICY_FILE}"
+STORE_FILE="${LACP_LEARNING_ROOT}/events.jsonl"
+require_file "${POLICY_FILE}"
+
+# Resolve effective caps: flag > env > policy file. Echoes "max<TAB>budget<TAB>floor".
+resolve_caps() {
+  # Single atomic read of the three policy caps (avoids 3 separate jq reads / TOCTOU).
+  local raw p_max p_budget p_floor
+  raw="$(jq -r '[.retrieval_caps.max_hints, .retrieval_caps.token_budget, .retrieval_caps.confidence_floor] | @tsv' "${POLICY_FILE}")" \
+    || die "cannot read retrieval caps from ${POLICY_FILE}"
+  p_max="$(printf '%s' "${raw}" | cut -f1)"
+  p_budget="$(printf '%s' "${raw}" | cut -f2)"
+  p_floor="$(printf '%s' "${raw}" | cut -f3)"
+  # Precedence: flag > env > policy file.
+  local max="${MAX_HINTS:-${LACP_LEARNING_MAX_HINTS:-${p_max}}}"
+  local budget="${TOKEN_BUDGET:-${LACP_LEARNING_TOKEN_BUDGET:-${p_budget}}}"
+  local floor="${CONFIDENCE_FLOOR:-${LACP_LEARNING_CONFIDENCE_FLOOR:-${p_floor}}}"
+  printf '%s\t%s\t%s\n' "${max}" "${budget}" "${floor}"
+}
+
+emit_caps_json() {
+  local caps max budget floor
+  caps="$(resolve_caps)"
+  max="${caps%%	*}"; floor="${caps##*	}"
+  budget="$(printf '%s' "${caps}" | cut -f2)"
+  jq -n --argjson max "${max}" --argjson budget "${budget}" --argjson floor "${floor}" \
+    --arg policy "${POLICY_FILE}" \
+    '{schema_version:"1", kind:"learn_retrieve_caps", ok:true,
+      max_hints:$max, token_budget:$budget, confidence_floor:$floor, source:$policy}'
+}
+
+case "${SUB}" in
+  status)
+    store_count=0
+    [[ -f "${STORE_FILE}" ]] && store_count="$(wc -l < "${STORE_FILE}" | tr -d ' ')"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --arg enabled "${LACP_LEARNING_ENABLED}" --arg mode "${LACP_LEARNING_MODE}" \
+        --arg store "${STORE_FILE}" --argjson count "${store_count}" \
+        '{schema_version:"1", kind:"learn_retrieve_status", ok:true,
+          enabled:($enabled=="1"), mode:$mode, advisory_active:(($enabled=="1") and ($mode=="advisory")),
+          store:$store, event_count:$count, read_only:true, mutates_routing:false}'
+    else
+      log "learning enabled : ${LACP_LEARNING_ENABLED}"
+      log "learning mode    : ${LACP_LEARNING_MODE}"
+      log "advisory active  : $([[ "${LACP_LEARNING_ENABLED}" == "1" && "${LACP_LEARNING_MODE}" == "advisory" ]] && echo yes || echo no)"
+      log "store            : ${STORE_FILE}"
+      log "events available : ${store_count}"
+      log "read-only        : true (advisory, non-authoritative)"
+    fi
+    ;;
+
+  caps)
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_caps_json || die "caps resolution failed (invalid cap value?)"
+    else
+      caps="$(resolve_caps)"
+      max="${caps%%	*}"; floor="${caps##*	}"
+      budget="$(printf '%s' "${caps}" | cut -f2)"
+      log "max_hints        : ${max}"
+      log "token_budget     : ${budget}"
+      log "confidence_floor : ${floor}"
+      log "source           : ${POLICY_FILE}"
+    fi
+    ;;
+
+  query)
+    [[ -n "${TASK}" ]] || die "query requires --task"
+
+    # Gate: advisory hints only when enabled AND mode=advisory (or --force for inspection).
+    advisory_active=0
+    if [[ "${LACP_LEARNING_ENABLED}" == "1" && "${LACP_LEARNING_MODE}" == "advisory" ]]; then
+      advisory_active=1
+    fi
+    if [[ "${advisory_active}" -eq 0 && "${FORCE}" -eq 0 ]]; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        jq -n --arg mode "${LACP_LEARNING_MODE}" \
+          '{schema_version:"1", kind:"learn_retrieve", ok:true, advisory:true, mutates_routing:false,
+            active:false, reason:"disabled_or_non_advisory", mode:$mode, hints:[]}'
+      else
+        log "retrieval inactive (enabled=${LACP_LEARNING_ENABLED} mode=${LACP_LEARNING_MODE}); 0 hints"
+      fi
+      exit 0
+    fi
+
+    if [[ ! -f "${STORE_FILE}" ]]; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        jq -n '{schema_version:"1", kind:"learn_retrieve", ok:true, advisory:true, mutates_routing:false, active:true, hints:[]}'
+      else
+        log "no learning store yet; 0 hints"
+      fi
+      exit 0
+    fi
+
+    caps="$(resolve_caps)"
+    CAP_MAX="${caps%%	*}"
+    CAP_FLOOR="${caps##*	}"
+    CAP_BUDGET="$(printf '%s' "${caps}" | cut -f2)"
+
+    # Rank + cap. Read-only over the store. All caller input passed out-of-band
+    # via env into a quoted heredoc (CWE-94 safe); the store path is the only file
+    # opened and it is opened read-only.
+    hints_json="$(
+      LR_TASK="${TASK}" \
+      LR_KEYWORDS="${KEYWORDS}" \
+      LR_REPO_TRUST="${REPO_TRUST}" \
+      LR_STORE="${STORE_FILE}" \
+      LR_MAX="${CAP_MAX}" \
+      LR_BUDGET="${CAP_BUDGET}" \
+      LR_FLOOR="${CAP_FLOOR}" \
+      python3 - <<'PY'
+import json, os, re
+
+def env(n, d=""):
+    return os.environ.get(n, d)
+
+def tokenize(s):
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+q_task = env("LR_TASK")
+q_kw = [k.strip().lower() for k in env("LR_KEYWORDS").split(",") if k.strip()]
+q_trust = env("LR_REPO_TRUST")
+q_tokens = tokenize(q_task) | set(q_kw)
+
+import math
+
+def safe_int(name, default, lo, hi):
+    try:
+        v = int(env(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+    return max(lo, min(hi, v))
+
+def safe_floor(name, default):
+    try:
+        v = float(env(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+    # Reject nan/inf (nan would defeat the `confidence < floor` gate entirely)
+    # and clamp to the valid confidence range.
+    if not math.isfinite(v) or not (0.0 <= v <= 1.0):
+        return default
+    return v
+
+max_hints = safe_int("LR_MAX", 3, 0, 1000)
+token_budget = safe_int("LR_BUDGET", 400, 0, 1_000_000)
+floor = safe_floor("LR_FLOOR", 0.70)
+
+scored = []
+with open(env("LR_STORE")) as f:           # read-only
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        task = ev.get("task", {})
+        summary = task.get("summary", "")
+        kws = [k.lower() for k in task.get("keywords", [])]
+        ev_tokens = tokenize(summary) | set(kws)
+        if not ev_tokens or not q_tokens:
+            continue
+        # Relevance: how much of the QUERY this event covers (query coverage),
+        # tempered by the overlap coefficient so a 1-token query can't match
+        # everything. Jaccard is deliberately avoided — it would penalize an event
+        # for carrying detail beyond the query.
+        overlap = q_tokens & ev_tokens
+        if not overlap:
+            continue
+        coverage = len(overlap) / len(q_tokens)
+        overlap_coef = len(overlap) / min(len(q_tokens), len(ev_tokens))
+        relevance = 0.7 * coverage + 0.3 * overlap_coef
+        # Outcome quality: success/partial weighting blended with stored score.
+        status = ev.get("outcome", {}).get("status", "")
+        status_w = {"success": 1.0, "partial": 0.5, "aborted": 0.2, "failure": 0.0}.get(status, 0.0)
+        score = ev.get("outcome", {}).get("score")
+        quality = status_w if score is None else (0.5 * status_w + 0.5 * float(score))
+        # Quality gates relevance MULTIPLICATIVELY so a known failure (quality≈0) is
+        # never surfaced as a confident hint just because its keywords matched — an
+        # advisory hint should reflect what *worked*, not merely what was attempted.
+        # A small floor keeps partials visible without letting failures dominate.
+        quality_gate = 0.15 + 0.85 * quality
+        trust_boost = 0.1 if task.get("repo_trust") == q_trust and q_trust != "unknown" else 0.0
+        confidence = round(min(1.0, relevance * quality_gate + trust_boost * quality), 4)
+        if confidence < floor:
+            continue
+        scored.append({
+            "event_id": ev.get("event_id"),
+            "summary": summary,
+            "cli": ev.get("cli"),
+            "status": status,
+            "confidence": confidence,
+            "captured_at": ev.get("captured_at"),
+        })
+
+# Rank by confidence desc, then recency desc, and apply the hint cap.
+scored.sort(key=lambda h: (h["confidence"], h.get("captured_at") or ""), reverse=True)
+
+# Token budget: ~1 token per 4 chars of summary. Stop once the budget is exhausted.
+hints = []
+spent = 0
+for h in scored:
+    if len(hints) >= max_hints:
+        break
+    cost = max(1, len(h["summary"]) // 4)
+    if spent + cost > token_budget and hints:
+        break
+    spent += cost
+    hints.append(h)
+
+print(json.dumps({"hints": hints, "tokens_estimated": spent,
+                  "caps": {"max_hints": max_hints, "token_budget": token_budget, "confidence_floor": floor}}))
+PY
+)" || die "retrieval failed (python3 exited non-zero)"
+
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${hints_json}" | jq '{schema_version:"1", kind:"learn_retrieve", ok:true,
+        advisory:true, mutates_routing:false, active:true} + .'
+    else
+      n="$(printf '%s' "${hints_json}" | jq -r '.hints | length')"
+      log "${n} advisory hint(s) (non-authoritative):"
+      printf '%s' "${hints_json}" | jq -r '.hints[] | "  [\(.confidence)] \(.cli // "?")/\(.status) — \(.summary)"'
+    fi
+    ;;
+
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac
