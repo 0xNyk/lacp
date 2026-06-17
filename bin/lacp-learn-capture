@@ -116,7 +116,9 @@ with open(schema_path) as f:
 try:
     import jsonschema
     try:
-        jsonschema.validate(event, schema)
+        # FormatChecker so `format: date-time` is actually enforced — jsonschema
+        # ignores `format` by default, which would let malformed timestamps pass.
+        jsonschema.validate(event, schema, format_checker=jsonschema.FormatChecker())
         sys.exit(0)
     except jsonschema.ValidationError as e:
         print(f"schema violation: {e.message}", file=sys.stderr); sys.exit(1)
@@ -148,6 +150,9 @@ except ImportError:
             if not isinstance(obj, str): fail(f"{path}: expected string")
             if "minLength" in sch and len(obj) < sch["minLength"]: fail(f"{path}: too short")
             if "maxLength" in sch and len(obj) > sch["maxLength"]: fail(f"{path}: too long")
+            if sch.get("format") == "date-time" and not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})", obj):
+                fail(f"{path}: not a valid date-time")
         elif t == "integer":
             if not isinstance(obj, int) or isinstance(obj, bool): fail(f"{path}: expected integer")
             if "minimum" in sch and obj < sch["minimum"]: fail(f"{path}: below minimum")
@@ -157,7 +162,9 @@ except ImportError:
             if "maximum" in sch and obj > sch["maximum"]: fail(f"{path}: above maximum")
         if "const" in sch and obj != sch["const"]: fail(f"{path}: must equal {sch['const']!r}")
         if "enum" in sch and obj not in sch["enum"]: fail(f"{path}: not in enum {sch['enum']}")
-        if "pattern" in sch and (not isinstance(obj, str) or not re.search(sch["pattern"], obj)):
+        # re.fullmatch (not re.search) so the whole string must match — correct even
+        # for future patterns that omit ^…$ anchors.
+        if "pattern" in sch and (not isinstance(obj, str) or not re.fullmatch(sch["pattern"], obj)):
             fail(f"{path}: does not match pattern {sch['pattern']}")
 
     check(event, schema)
@@ -331,11 +338,13 @@ event["event_id"] = "evt_" + source_hash[:32]
 
 print(json.dumps(event))
 PY
-)"
+)" || die "event builder failed (python3 exited non-zero)"
+    # Note: `var=$(cmd)` does NOT trip set -e on cmd failure, so the explicit
+    # `|| die` above is required to fail fast and surface python3's stderr.
 
     # Validate the freshly built event against the schema before persisting.
     tmp_event="$(mktemp)"
-    trap 'rm -f "${tmp_event}"' EXIT
+    trap '[[ -n "${tmp_event:-}" ]] && rm -f "${tmp_event}"' EXIT
     printf '%s\n' "${event_json}" > "${tmp_event}"
     if ! validate_event_file "${tmp_event}"; then
       die "internal: built event failed schema validation (refusing to persist)"

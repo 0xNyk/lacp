@@ -11,6 +11,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
 PASS=0
+SKIPPED=0
 assert_pass() { echo "[learn-test] PASS $1"; PASS=$((PASS + 1)); }
 fail() { echo "[learn-test] FAIL $1" >&2; exit 1; }
 
@@ -56,8 +57,9 @@ make_bad bad_enum.json '{"schema_version":"1.0","event_id":"evt_'"${HEX32}"'","c
 make_bad bad_enforce.json '{"schema_version":"1.0","event_id":"evt_'"${HEX32}"'","captured_at":"2026-06-17T00:00:00Z","mode":"enforce","cli":"claude","event_type":"task_outcome","task":{"summary":"x","repo_trust":"trusted"},"outcome":{"status":"success"},"provenance":{"agent_id":"a","project_slug":"p","session_fingerprint":"f","source_hash":"'"${HEX64}"'"}}'
 make_bad bad_missing_prov.json '{"schema_version":"1.0","event_id":"evt_'"${HEX32}"'","captured_at":"2026-06-17T00:00:00Z","mode":"shadow","cli":"claude","event_type":"task_outcome","task":{"summary":"x","repo_trust":"trusted"},"outcome":{"status":"success"}}'
 make_bad bad_additional.json '{"schema_version":"1.0","event_id":"evt_'"${HEX32}"'","captured_at":"2026-06-17T00:00:00Z","mode":"shadow","cli":"claude","event_type":"task_outcome","task":{"summary":"x","repo_trust":"trusted"},"outcome":{"status":"success"},"provenance":{"agent_id":"a","project_slug":"p","session_fingerprint":"f","source_hash":"'"${HEX64}"'"},"evil":"x"}'
+make_bad bad_datetime.json '{"schema_version":"1.0","event_id":"evt_'"${HEX32}"'","captured_at":"NOT A DATE","mode":"shadow","cli":"claude","event_type":"task_outcome","task":{"summary":"x","repo_trust":"trusted"},"outcome":{"status":"success"},"provenance":{"agent_id":"a","project_slug":"p","session_fingerprint":"f","source_hash":"'"${HEX64}"'"}}'
 
-for bad in bad_enum bad_enforce bad_missing_prov bad_additional; do
+for bad in bad_enum bad_enforce bad_missing_prov bad_additional bad_datetime; do
   if "${CAPTURE}" validate "${TMP}/${bad}.json" >/dev/null 2>&1; then
     fail "invalid fixture wrongly accepted: ${bad}"
   fi
@@ -72,8 +74,12 @@ LACP_LEARNING_ENABLED=0 LACP_LEARNING_MODE=off \
 LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=off \
   "${CAPTURE}" record --task "x" --status success --json | jq -e '.captured == false' >/dev/null \
   || fail "record captured while mode!=shadow"
+# Master flag must override even when mode=shadow.
+LACP_LEARNING_ENABLED=0 LACP_LEARNING_MODE=shadow \
+  "${CAPTURE}" record --task "x" --status success --json | jq -e '.captured == false' >/dev/null \
+  || fail "record captured while ENABLED=0 (mode=shadow)"
 [[ ! -f "${TMP}/store/events.jsonl" ]] || fail "store written despite disabled capture"
-assert_pass "kill-switch gating (off + non-shadow are no-ops)"
+assert_pass "kill-switch gating (enabled flag is the master override)"
 
 # --- 4. Shadow capture writes a schema-valid, provenance-complete event ----------
 out="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
@@ -111,7 +117,14 @@ if [[ -x "${ROOT}/bin/lacp-route" ]]; then
   [[ "${off_norm}" == "${shadow_norm}" ]] || fail "shadow mode changed routing output (off != shadow)"
   assert_pass "shadow parity: routing output identical (off == shadow)"
 else
-  echo "[learn-test] SKIP shadow-parity: bin/lacp-route not found"
+  # Loud skip: this is the core safety invariant. If lacp-route ever goes missing,
+  # the summary must surface that the parity gate did NOT run rather than imply it passed.
+  SKIPPED=$((SKIPPED + 1))
+  echo "[learn-test] SKIP shadow-parity: bin/lacp-route not found (core invariant NOT verified this run)" >&2
 fi
 
-echo "[learn-test] all ${PASS} checks passed"
+if [[ "${SKIPPED}" -gt 0 ]]; then
+  echo "[learn-test] ${PASS} checks passed, ${SKIPPED} SKIPPED (see warnings above)"
+else
+  echo "[learn-test] all ${PASS} checks passed"
+fi
