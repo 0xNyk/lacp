@@ -99,6 +99,12 @@ export LACP_LEARNING_MODE="${LACP_LEARNING_MODE:-off}"
 export LACP_LEARNING_ROOT="${LACP_LEARNING_ROOT:-${LACP_KNOWLEDGE_ROOT}/data/learning}"
 export LACP_LEARNING_SCHEMA_FILE="${LACP_LEARNING_SCHEMA_FILE:-${LACP_ROOT}/config/learning/learning-events.schema.json}"
 export LACP_LEARNING_POLICY_FILE="${LACP_LEARNING_POLICY_FILE:-${LACP_ROOT}/config/learning/promotion-policy.json}"
+# Advisory retrieval (Epic B). Non-authoritative hints, bounded by caps below.
+# Caps default to empty so promotion-policy.json is the single source of truth;
+# set these only to override the policy file for a given run.
+export LACP_LEARNING_MAX_HINTS="${LACP_LEARNING_MAX_HINTS:-}"
+export LACP_LEARNING_TOKEN_BUDGET="${LACP_LEARNING_TOKEN_BUDGET:-}"
+export LACP_LEARNING_CONFIDENCE_FLOOR="${LACP_LEARNING_CONFIDENCE_FLOOR:-}"
 
 log() {
   printf '[lacp] %s\n' "$*"
