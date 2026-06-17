@@ -80,10 +80,14 @@ require_file "${POLICY_FILE}"
 
 # Resolve effective caps: flag > env > policy file. Echoes "max<TAB>budget<TAB>floor".
 resolve_caps() {
-  local p_max p_budget p_floor
-  p_max="$(jq -r '.retrieval_caps.max_hints' "${POLICY_FILE}")"
-  p_budget="$(jq -r '.retrieval_caps.token_budget' "${POLICY_FILE}")"
-  p_floor="$(jq -r '.retrieval_caps.confidence_floor' "${POLICY_FILE}")"
+  # Single atomic read of the three policy caps (avoids 3 separate jq reads / TOCTOU).
+  local raw p_max p_budget p_floor
+  raw="$(jq -r '[.retrieval_caps.max_hints, .retrieval_caps.token_budget, .retrieval_caps.confidence_floor] | @tsv' "${POLICY_FILE}")" \
+    || die "cannot read retrieval caps from ${POLICY_FILE}"
+  p_max="$(printf '%s' "${raw}" | cut -f1)"
+  p_budget="$(printf '%s' "${raw}" | cut -f2)"
+  p_floor="$(printf '%s' "${raw}" | cut -f3)"
+  # Precedence: flag > env > policy file.
   local max="${MAX_HINTS:-${LACP_LEARNING_MAX_HINTS:-${p_max}}}"
   local budget="${TOKEN_BUDGET:-${LACP_LEARNING_TOKEN_BUDGET:-${p_budget}}}"
   local floor="${CONFIDENCE_FLOOR:-${LACP_LEARNING_CONFIDENCE_FLOOR:-${p_floor}}}"
@@ -122,7 +126,17 @@ case "${SUB}" in
     ;;
 
   caps)
-    emit_caps_json
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      emit_caps_json || die "caps resolution failed (invalid cap value?)"
+    else
+      caps="$(resolve_caps)"
+      max="${caps%%	*}"; floor="${caps##*	}"
+      budget="$(printf '%s' "${caps}" | cut -f2)"
+      log "max_hints        : ${max}"
+      log "token_budget     : ${budget}"
+      log "confidence_floor : ${floor}"
+      log "source           : ${POLICY_FILE}"
+    fi
     ;;
 
   query)
@@ -183,9 +197,29 @@ q_kw = [k.strip().lower() for k in env("LR_KEYWORDS").split(",") if k.strip()]
 q_trust = env("LR_REPO_TRUST")
 q_tokens = tokenize(q_task) | set(q_kw)
 
-max_hints = int(env("LR_MAX", "3"))
-token_budget = int(env("LR_BUDGET", "400"))
-floor = float(env("LR_FLOOR", "0.70"))
+import math
+
+def safe_int(name, default, lo, hi):
+    try:
+        v = int(env(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+    return max(lo, min(hi, v))
+
+def safe_floor(name, default):
+    try:
+        v = float(env(name, str(default)))
+    except (ValueError, TypeError):
+        return default
+    # Reject nan/inf (nan would defeat the `confidence < floor` gate entirely)
+    # and clamp to the valid confidence range.
+    if not math.isfinite(v) or not (0.0 <= v <= 1.0):
+        return default
+    return v
+
+max_hints = safe_int("LR_MAX", 3, 0, 1000)
+token_budget = safe_int("LR_BUDGET", 400, 0, 1_000_000)
+floor = safe_floor("LR_FLOOR", 0.70)
 
 scored = []
 with open(env("LR_STORE")) as f:           # read-only
@@ -218,9 +252,13 @@ with open(env("LR_STORE")) as f:           # read-only
         status_w = {"success": 1.0, "partial": 0.5, "aborted": 0.2, "failure": 0.0}.get(status, 0.0)
         score = ev.get("outcome", {}).get("score")
         quality = status_w if score is None else (0.5 * status_w + 0.5 * float(score))
-        # Trust boost when the event's repo_trust matches the query's.
+        # Quality gates relevance MULTIPLICATIVELY so a known failure (quality≈0) is
+        # never surfaced as a confident hint just because its keywords matched — an
+        # advisory hint should reflect what *worked*, not merely what was attempted.
+        # A small floor keeps partials visible without letting failures dominate.
+        quality_gate = 0.15 + 0.85 * quality
         trust_boost = 0.1 if task.get("repo_trust") == q_trust and q_trust != "unknown" else 0.0
-        confidence = round(min(1.0, 0.7 * relevance + 0.3 * quality + trust_boost), 4)
+        confidence = round(min(1.0, relevance * quality_gate + trust_boost * quality), 4)
         if confidence < floor:
             continue
         scored.append({

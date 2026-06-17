@@ -169,15 +169,22 @@ if [[ -x "${RETRIEVE}" ]]; then
   fout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
     "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --confidence-floor 0.999 --json)"
   echo "${fout}" | jq -e '(.hints | length) == 0' >/dev/null || fail "confidence_floor not enforced"
+  # All returned hints (at the default policy floor) must clear that floor.
   echo "${qout}" | jq -e '[.hints[].confidence] | all(. >= 0.70)' >/dev/null \
     || fail "hints below policy confidence floor leaked through"
-  assert_pass "retrieval cap: confidence_floor enforced"
+  # A nan floor must NOT bypass the gate (nan would make every `conf < floor` false).
+  nout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
+    "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --confidence-floor nan --json)"
+  echo "${nout}" | jq -e '[.hints[].confidence] | all(. >= 0.70)' >/dev/null \
+    || fail "nan confidence_floor bypassed the gate"
+  assert_pass "retrieval cap: confidence_floor enforced (incl. nan)"
 
-  # B5. token_budget bounds total hints; at least the top hint always survives.
+  # B5. token_budget bounds total hints; the top hint always survives. With ~6-token
+  # summaries and a 5-token budget, exactly one hint is admitted (the guaranteed top).
   tout="$(LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=advisory \
     "${RETRIEVE}" query --task "memory benchmark" --keywords "memory,benchmark" --token-budget 5 --json)"
-  echo "${tout}" | jq -e '(.hints | length) >= 1 and (.hints | length) <= 2' >/dev/null \
-    || fail "token_budget not enforced"
+  echo "${tout}" | jq -e '(.hints | length) == 1 and .tokens_estimated <= 10' >/dev/null \
+    || fail "token_budget not enforced (expected exactly 1 hint within budget)"
   assert_pass "retrieval cap: token_budget enforced"
 
   # B6. Retrieval is read-only — the store must be byte-identical after queries.
