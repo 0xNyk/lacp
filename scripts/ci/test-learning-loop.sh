@@ -249,20 +249,47 @@ if [[ -x "${EVAL}" && -x "${PROMOTE}" && -x "${ROLLBACK}" ]]; then
       | .promotion_gates.min_uplift_pct=10 | .promotion_gates.min_events=50' \
       "${POLICY}" > "${tpol}"
   ev="${TMP}/evidence.txt"; printf 'verifier evidence\n' > "${ev}"
+  # Real provenance verify (no --force) — relies on a valid/empty provenance chain.
   papply="$(LACP_LEARNING_POLICY_FILE="${tpol}" \
-    "${PROMOTE}" apply --verifier-evidence "${ev}" --approver alice --approver bob --force-provenance-ok --json)"
+    "${PROMOTE}" apply --verifier-evidence "${ev}" --approver alice --approver bob --json)"
   echo "${papply}" | jq -e '.promoted == true and .mode == "enforce" and (.record.record_sha256 | length) == 64' >/dev/null \
     || fail "promotion did not apply when all gates passed"
   echo "${papply}" | jq -e '.record.approvers == ["alice","bob"]' >/dev/null \
     || fail "promotion record missing two-person approval"
   assert_pass "promotion applies with full gate satisfaction (-> enforce)"
 
-  # C4. Single approver fails the two-person gate even with evidence.
+  # C3b. Idempotency: re-applying from enforce must be refused (no second promotion
+  #      bypassing a fresh approval cycle).
   if LACP_LEARNING_POLICY_FILE="${tpol}" "${PROMOTE}" apply \
-      --verifier-evidence "${ev}" --approver alice --force-provenance-ok --json >/dev/null 2>&1; then
+      --verifier-evidence "${ev}" --approver alice --approver bob --json >/dev/null 2>&1; then
+    fail "re-promotion from enforce was allowed (missing idempotency guard)"
+  fi
+  assert_pass "promotion refused when already in enforce (idempotency guard)"
+
+  # C3c. apply refuses --force-provenance-ok (it must never advance real state).
+  freshc="${TMP}/cstore_force"; mkdir -p "${freshc}"
+  # Seed the same events into a fresh store so this apply starts from shadow.
+  cp "${LACP_LEARNING_ROOT}/events.jsonl" "${freshc}/events.jsonl"
+  if LACP_LEARNING_ROOT="${freshc}" LACP_LEARNING_POLICY_FILE="${tpol}" "${PROMOTE}" apply \
+      --verifier-evidence "${ev}" --approver alice --approver bob --force-provenance-ok --json >/dev/null 2>&1; then
+    fail "apply accepted --force-provenance-ok (must be check-only)"
+  fi
+  assert_pass "apply refuses --force-provenance-ok (check-only bypass)"
+
+  # C4. Single approver (and duplicate-of-one) fails the two-person gate. Use a
+  #     fresh shadow store so the idempotency guard isn't what trips it.
+  fresh4="${TMP}/cstore_one"; mkdir -p "${fresh4}"
+  cp "${LACP_LEARNING_ROOT}/events.jsonl" "${fresh4}/events.jsonl"
+  if LACP_LEARNING_ROOT="${fresh4}" LACP_LEARNING_POLICY_FILE="${tpol}" "${PROMOTE}" apply \
+      --verifier-evidence "${ev}" --approver alice --json >/dev/null 2>&1; then
     fail "promotion applied with only one approver"
   fi
-  assert_pass "promotion refused with single approver (two-person gate)"
+  # Same name twice must NOT count as two distinct approvers.
+  if LACP_LEARNING_ROOT="${fresh4}" LACP_LEARNING_POLICY_FILE="${tpol}" "${PROMOTE}" apply \
+      --verifier-evidence "${ev}" --approver alice --approver alice --json >/dev/null 2>&1; then
+    fail "duplicate approver counted as two (two-person bypass)"
+  fi
+  assert_pass "promotion refused with single/duplicate approver (two-person gate)"
 
   # C5. Rollback reverts enforce -> shadow and deactivates the promotion.
   rb="$(LACP_LEARNING_POLICY_FILE="${tpol}" "${ROLLBACK}" now --reason "test" --json)"
@@ -284,6 +311,14 @@ if [[ -x "${EVAL}" && -x "${PROMOTE}" && -x "${ROLLBACK}" ]]; then
     "${PROMOTE}" status --json | jq -e '.mode == "shadow"' >/dev/null \
     || fail "fresh store did not default to shadow mode"
   assert_pass "enforcement off by default (fresh store is shadow)"
+
+  # C8. Eval handles an empty store without crashing (no division by zero).
+  emptyroot="${TMP}/cstore_empty"; mkdir -p "${emptyroot}"
+  zero_rep="$(LACP_LEARNING_ROOT="${emptyroot}" "${EVAL}" report --json)" \
+    || fail "eval report crashed on empty store"
+  echo "${zero_rep}" | jq -e '.total_events == 0 and .uplift_pct == 0 and .hit_rate == 0 and .mrr == 0' >/dev/null \
+    || fail "empty store report incorrect"
+  assert_pass "eval report handles empty store correctly"
 else
   SKIPPED=$((SKIPPED + 1))
   echo "[learn-test] SKIP Phase C gates: lacp-learn-eval/promote/rollback not all present" >&2

@@ -127,20 +127,23 @@ case "${SUB}" in
     # Seed a fake "enforce" state to revert.
     printf '%s\n' '{"mode":"enforce","active_promotion":{"record_sha256":"drilltest"},"history":[],"rollbacks":[]}' \
       > "${scratch}/promotion-state.json"
+    max_sec=$(( max_min * 60 ))
     start="$(date +%s)"
     do_rollback "${scratch}/promotion-state.json" "drill" >/dev/null || die "drill rollback failed"
     end="$(date +%s)"
     elapsed=$((end - start))
     final_mode="$(jq -r '.mode' "${scratch}/promotion-state.json")"
-    within=$([[ $((elapsed / 60)) -lt "${max_min}" ]] && echo true || echo false)
+    # Compare in seconds (no lossy minute truncation); budget is inclusive.
+    within=$([[ "${elapsed}" -le "${max_sec}" ]] && echo true || echo false)
     ok=$([[ "${final_mode}" == "shadow" && "${within}" == "true" ]] && echo true || echo false)
     if [[ "${AS_JSON}" -eq 1 ]]; then
-      jq -n --argjson elapsed "${elapsed}" --argjson max_min "${max_min}" \
+      jq -n --argjson elapsed "${elapsed}" --argjson max_min "${max_min}" --argjson max_sec "${max_sec}" \
         --arg final "${final_mode}" --argjson within "${within}" --argjson ok "${ok}" \
         '{schema_version:"1", kind:"learn_rollback_drill", ok:$ok,
-          final_mode:$final, elapsed_seconds:$elapsed, max_drill_minutes:$max_min, within_budget:$within}'
+          final_mode:$final, elapsed_seconds:$elapsed,
+          max_drill_minutes:$max_min, max_drill_seconds:$max_sec, within_budget:$within}'
     else
-      log "drill: reverted to ${final_mode} in ${elapsed}s (budget ${max_min}m) — $([[ "${ok}" == "true" ]] && echo PASS || echo FAIL)"
+      log "drill: reverted to ${final_mode} in ${elapsed}s (budget ${max_sec}s) — $([[ "${ok}" == "true" ]] && echo PASS || echo FAIL)"
     fi
     [[ "${ok}" == "true" ]] || die "rollback drill did not meet criteria"
     ;;

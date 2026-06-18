@@ -17,14 +17,18 @@ Cross-CLI learning loop — Phase C guarded promotion.
 Promotes the learning loop toward "enforce" mode ONLY when every governance gate
 passes. There is no fast path: metric gates (from the eval report) AND manual gates
 (verifier evidence, two-person approval, provenance verification) must all clear.
-A failing gate writes nothing and exits non-zero. On success, a signed promotion
-record is appended to the promotion state and the mode advances to "enforce".
+A failing gate writes nothing and exits non-zero. On success, a content-hashed
+promotion record is appended to the promotion state and the mode advances to
+"enforce". NOTE: the record_sha256 is an integrity checksum (tamper-evidence for
+accidental corruption), NOT a cryptographic signature. The promotion state file is
+a trusted-write-access boundary — protect it with filesystem permissions.
 
 apply options:
   --verifier-evidence FILE   Path to verifier-produced evidence (required)
   --approver NAME            Approver identity; pass twice for two-person approval
-  --force-provenance-ok      Skip the live provenance-verify call (testing only;
-                             recorded in the promotion record as unverified)
+  --force-provenance-ok      Skip the live provenance-verify call. Valid with
+                             'check' ONLY (inspection); 'apply' refuses it so real
+                             promotion always requires a passing provenance verify.
 
 Subcommands:
   check    Dry-run: report every gate's pass/fail without promoting
@@ -80,8 +84,10 @@ evaluate_gates() {
   if [[ -n "${EVIDENCE}" && -s "${EVIDENCE}" ]]; then evidence_ok=true; fi
 
   # Manual gate: two distinct approvers.
+  # Count DISTINCT approvers, trimming surrounding whitespace so "alice" and
+  # "alice " can't be counted as two people.
   local distinct_approvers
-  distinct_approvers="$(printf '%s\n' "${APPROVERS[@]:-}" | sort -u | grep -c . || true)"
+  distinct_approvers="$(printf '%s\n' "${APPROVERS[@]:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u | grep -c . || true)"
 
   # Manual gate: provenance chain verifies (unless explicitly forced for testing).
   prov_ok=false
@@ -144,7 +150,7 @@ case "${SUB}" in
     ;;
 
   check)
-    res="$(evaluate_gates)"
+    res="$(evaluate_gates)" || die "gate evaluation failed"
     if [[ "${AS_JSON}" -eq 1 ]]; then
       printf '%s\n' "${res}" | jq '{schema_version:"1", kind:"learn_promote_check", ok:true} + .'
     else
@@ -155,7 +161,18 @@ case "${SUB}" in
     ;;
 
   apply)
-    res="$(evaluate_gates)"
+    # One-way by design: refuse to re-promote an already-enforced store. The only
+    # path back to a promotable state is an explicit rollback. This prevents a
+    # second apply from bypassing a fresh two-person approval cycle.
+    if [[ "$(current_mode)" == "enforce" ]]; then
+      die "already in enforce mode; run lacp-learn-rollback first to reset before re-promoting"
+    fi
+    # --force-provenance-ok is an inspection aid for `check` only; it must never be
+    # able to advance real state to enforce by skipping the provenance gate.
+    if [[ "${FORCE_PROV}" -eq 1 ]]; then
+      die "--force-provenance-ok is only valid with 'check'; real promotion requires a passing provenance verify"
+    fi
+    res="$(evaluate_gates)" || die "gate evaluation failed"
     go="$(printf '%s' "${res}" | jq -r '.go')"
     if [[ "${go}" != "true" ]]; then
       if [[ "${AS_JSON}" -eq 1 ]]; then
@@ -167,7 +184,7 @@ case "${SUB}" in
       die "promotion gates not satisfied; mode unchanged (still $(current_mode))"
     fi
 
-    # All gates passed — append a signed promotion record and advance to enforce.
+    # All gates passed — append a content-hashed promotion record and advance to enforce.
     mkdir -p "${LACP_LEARNING_ROOT}"
     evidence_hash="$(shasum -a 256 "${EVIDENCE}" | awk '{print $1}')"
     out="$(
@@ -175,12 +192,12 @@ case "${SUB}" in
       LP_STATE="${STATE_FILE}" \
       LP_EVIDENCE="${EVIDENCE}" \
       LP_EVIDENCE_HASH="${evidence_hash}" \
-      LP_APPROVERS="$(printf '%s\n' "${APPROVERS[@]}")" \
+      LP_APPROVERS="$(printf '%s\n' "${APPROVERS[@]:-}")" \
       python3 - <<'PY'
 import hashlib, json, os
 state_path = os.environ["LP_STATE"]
 res = json.loads(os.environ["LP_RES"])
-approvers = sorted({a for a in os.environ["LP_APPROVERS"].splitlines() if a})
+approvers = sorted({a.strip() for a in os.environ["LP_APPROVERS"].splitlines() if a.strip()})
 
 state = {"mode": "shadow", "active_promotion": None, "history": []}
 if os.path.exists(state_path):

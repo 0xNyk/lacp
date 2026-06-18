@@ -58,7 +58,8 @@ done
 
 STORE_FILE="${LACP_LEARNING_ROOT}/events.jsonl"
 POLICY_FILE="${LACP_LEARNING_POLICY_FILE}"
-require_file "${POLICY_FILE}"
+# Note: `report` is policy-independent (pure store stats); only `gate` requires the
+# policy file. require_file is therefore deferred to the gate case below.
 
 # Compute the deterministic report JSON from the store. Echoes a JSON object.
 compute_report() {
@@ -157,7 +158,7 @@ PY
 
 case "${SUB}" in
   report)
-    rep="$(compute_report)"
+    rep="$(compute_report)" || die "eval report failed"
     if [[ "${AS_JSON}" -eq 1 ]]; then
       printf '%s\n' "${rep}" | jq '{schema_version:"1", kind:"learn_eval_report", ok:true, read_only:true} + .'
     else
@@ -172,7 +173,8 @@ case "${SUB}" in
     ;;
 
   gate)
-    rep="$(compute_report)"
+    require_file "${POLICY_FILE}"
+    rep="$(compute_report)" || die "eval report failed"
     # Evaluate against promotion-policy thresholds. Pure comparison; no mutation.
     gate_json="$(
       LE_REPORT="${rep}" LE_POLICY="$(cat "${POLICY_FILE}")" python3 - <<'PY' || die "gate eval failed"
