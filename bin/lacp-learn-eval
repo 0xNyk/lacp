@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-learn-eval report [--split-at N] [--json]
+  lacp-learn-eval gate [--json]
+
+Cross-CLI learning loop — Phase C eval gate.
+
+Produces a DETERMINISTIC baseline-vs-treatment report from the captured learning
+store and decides whether promotion thresholds are met. Pure function of the store
+contents — no timestamps, no randomness — so repeated runs on the same store yield
+byte-identical reports. READ-ONLY: never mutates the store, routing, or policy.
+
+The store is split chronologically (capture order) into a baseline half and a
+treatment half. Metrics computed per half:
+  - success_rate : fraction of events with outcome.status == "success"
+  - hit_rate     : fraction of treatment events whose task is "covered" by a
+                   higher-quality prior baseline event (proxy for advisory help)
+  - mrr          : mean reciprocal rank of the best baseline match per treatment event
+  - uplift_pct   : (treatment success_rate - baseline success_rate) * 100
+
+report options:
+  --split-at N   Use the first N events as baseline (default: half the store)
+
+Subcommands:
+  report   Print the baseline vs treatment metrics report
+  gate     Evaluate metrics against promotion-policy thresholds (GO/NO-GO)
+EOF
+}
+
+require_cmd jq
+require_cmd python3
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+SPLIT_AT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --split-at) SPLIT_AT="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+STORE_FILE="${LACP_LEARNING_ROOT}/events.jsonl"
+POLICY_FILE="${LACP_LEARNING_POLICY_FILE}"
+require_file "${POLICY_FILE}"
+
+# Compute the deterministic report JSON from the store. Echoes a JSON object.
+compute_report() {
+  LE_STORE="${STORE_FILE}" LE_SPLIT="${SPLIT_AT}" python3 - <<'PY' || die "eval failed (python3 exited non-zero)"
+import json, os, re
+
+def tokenize(s):
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+store = os.environ.get("LE_STORE", "")
+events = []
+if os.path.exists(store):
+    with open(store) as f:                 # read-only
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+def quality(ev):
+    status = ev.get("outcome", {}).get("status", "")
+    w = {"success": 1.0, "partial": 0.5, "aborted": 0.2, "failure": 0.0}.get(status, 0.0)
+    score = ev.get("outcome", {}).get("score")
+    return w if score is None else (0.5 * w + 0.5 * float(score))
+
+def success_rate(evs):
+    if not evs:
+        return 0.0
+    s = sum(1 for e in evs if e.get("outcome", {}).get("status") == "success")
+    return round(s / len(evs), 4)
+
+n = len(events)
+split_env = os.environ.get("LE_SPLIT", "")
+if split_env:
+    try:
+        split = max(0, min(n, int(split_env)))
+    except ValueError:
+        split = n // 2
+else:
+    split = n // 2
+
+baseline = events[:split]
+treatment = events[split:]
+
+# hit_rate + MRR: for each treatment event, does a higher-quality baseline event
+# cover its task tokens? Rank baseline matches by quality; reciprocal rank of the
+# first useful (quality >= treatment quality) match.
+hits = 0
+rr_sum = 0.0
+for tev in treatment:
+    t_tokens = tokenize(tev.get("task", {}).get("summary", "")) \
+        | {k.lower() for k in tev.get("task", {}).get("keywords", [])}
+    t_q = quality(tev)
+    matches = []
+    for bev in baseline:
+        b_tokens = tokenize(bev.get("task", {}).get("summary", "")) \
+            | {k.lower() for k in bev.get("task", {}).get("keywords", [])}
+        if not t_tokens or not b_tokens:
+            continue
+        overlap = t_tokens & b_tokens
+        if not overlap:
+            continue
+        coverage = len(overlap) / len(t_tokens)
+        matches.append((coverage, quality(bev)))
+    # Rank by coverage desc, then quality desc (deterministic).
+    matches.sort(key=lambda m: (m[0], m[1]), reverse=True)
+    rank = 0
+    for i, (cov, bq) in enumerate(matches, start=1):
+        if cov >= 0.5 and bq >= t_q:
+            rank = i
+            break
+    if rank:
+        hits += 1
+        rr_sum += 1.0 / rank
+
+hit_rate = round(hits / len(treatment), 4) if treatment else 0.0
+mrr = round(rr_sum / len(treatment), 4) if treatment else 0.0
+base_sr = success_rate(baseline)
+treat_sr = success_rate(treatment)
+uplift = round((treat_sr - base_sr) * 100.0, 4)
+
+print(json.dumps({
+    "total_events": n,
+    "split_at": split,
+    "baseline": {"count": len(baseline), "success_rate": base_sr},
+    "treatment": {"count": len(treatment), "success_rate": treat_sr},
+    "hit_rate": hit_rate,
+    "mrr": mrr,
+    "uplift_pct": uplift,
+}))
+PY
+}
+
+case "${SUB}" in
+  report)
+    rep="$(compute_report)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${rep}" | jq '{schema_version:"1", kind:"learn_eval_report", ok:true, read_only:true} + .'
+    else
+      printf '%s' "${rep}" | jq -r '
+        "events       : \(.total_events) (split @ \(.split_at))",
+        "baseline SR  : \(.baseline.success_rate) (n=\(.baseline.count))",
+        "treatment SR : \(.treatment.success_rate) (n=\(.treatment.count))",
+        "hit_rate     : \(.hit_rate)",
+        "mrr          : \(.mrr)",
+        "uplift_pct   : \(.uplift_pct)"' | while IFS= read -r l; do log "${l}"; done
+    fi
+    ;;
+
+  gate)
+    rep="$(compute_report)"
+    # Evaluate against promotion-policy thresholds. Pure comparison; no mutation.
+    gate_json="$(
+      LE_REPORT="${rep}" LE_POLICY="$(cat "${POLICY_FILE}")" python3 - <<'PY' || die "gate eval failed"
+import json, os
+rep = json.loads(os.environ["LE_REPORT"])
+pol = json.loads(os.environ["LE_POLICY"])["promotion_gates"]
+
+checks = []
+def chk(name, ok, actual, threshold):
+    checks.append({"gate": name, "pass": bool(ok), "actual": actual, "threshold": threshold})
+
+chk("min_events", rep["total_events"] >= pol["min_events"], rep["total_events"], pol["min_events"])
+chk("min_uplift_pct", rep["uplift_pct"] >= pol["min_uplift_pct"], rep["uplift_pct"], pol["min_uplift_pct"])
+chk("min_hit_rate", rep["hit_rate"] >= pol["min_hit_rate"], rep["hit_rate"], pol["min_hit_rate"])
+chk("min_mrr", rep["mrr"] >= pol["min_mrr"], rep["mrr"], pol["min_mrr"])
+
+metrics_pass = all(c["pass"] for c in checks)
+print(json.dumps({
+    "metrics_pass": metrics_pass,
+    "checks": checks,
+    # These gates are NOT decided by metrics — they require human/process evidence
+    # supplied at promotion time. Surfaced here so the GO/NO-GO picture is complete.
+    "manual_gates_required": {
+        "verifier_evidence": pol["require_verifier_evidence"],
+        "two_person_approval": pol["require_two_person_approval"],
+        "provenance_verification": pol["require_provenance_verification"],
+    },
+}))
+PY
+)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${gate_json}" | jq '{schema_version:"1", kind:"learn_eval_gate", ok:true} + .'
+    else
+      pass="$(printf '%s' "${gate_json}" | jq -r '.metrics_pass')"
+      log "metric gates: $([[ "${pass}" == "true" ]] && echo "GO" || echo "NO-GO")"
+      printf '%s' "${gate_json}" | jq -r '.checks[] | "  [\(if .pass then "PASS" else "FAIL" end)] \(.gate): \(.actual) (need \(.threshold))"'
+      log "manual gates still required: verifier evidence, two-person approval, provenance verification"
+    fi
+    ;;
+
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac

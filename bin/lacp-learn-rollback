@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-learn-rollback now [--reason TEXT] [--json]
+  lacp-learn-rollback drill [--json]
+  lacp-learn-rollback status [--json]
+
+Cross-CLI learning loop — Phase C rollback.
+
+One-command safety reversion: resets the learning loop to "shadow" mode and
+deactivates any active promotion. Designed to complete in well under the policy's
+max drill time. The capture store is preserved (observational data is never the
+hazard); only the enforce/promotion STATE is reverted.
+
+now options:
+  --reason TEXT   Free-form reason recorded in the rollback history
+
+Subcommands:
+  now      Execute rollback: mode -> shadow, active_promotion -> null
+  drill    Verify rollback works on a scratch copy without touching real state,
+           and confirm it completes within the policy max_drill_minutes
+  status   Show current mode and whether a promotion is active
+EOF
+}
+
+require_cmd jq
+require_cmd python3
+
+STATE_FILE="${LACP_LEARNING_ROOT}/promotion-state.json"
+POLICY_FILE="${LACP_LEARNING_POLICY_FILE}"
+require_file "${POLICY_FILE}"
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+REASON=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --reason) REASON="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+# Reset the promotion state at the given path to shadow. Echoes resulting JSON.
+do_rollback() {
+  local state_path="$1" reason="$2"
+  RB_STATE="${state_path}" RB_REASON="${reason}" python3 - <<'PY' || return 1
+import json, os
+state_path = os.environ["RB_STATE"]
+reason = os.environ.get("RB_REASON", "")
+
+state = {"mode": "shadow", "active_promotion": None, "history": [], "rollbacks": []}
+if os.path.exists(state_path):
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+prev_mode = state.get("mode", "shadow")
+demoted = state.get("active_promotion")
+state["mode"] = "shadow"
+state["active_promotion"] = None
+state.setdefault("rollbacks", []).append({
+    "from_mode": prev_mode,
+    "reverted_promotion": (demoted or {}).get("record_sha256") if demoted else None,
+    "reason": reason,
+    "seq": len(state.get("rollbacks", [])) + 1,
+})
+
+tmp = state_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(state, f, indent=2)
+os.replace(tmp, state_path)
+print(json.dumps({"from_mode": prev_mode, "mode": "shadow",
+                  "reverted_promotion": state["rollbacks"][-1]["reverted_promotion"]}))
+PY
+}
+
+case "${SUB}" in
+  status)
+    if [[ -f "${STATE_FILE}" ]]; then
+      mode="$(jq -r '.mode // "shadow"' "${STATE_FILE}")"
+      active="$(jq -r 'if .active_promotion then "yes" else "no" end' "${STATE_FILE}")"
+    else
+      mode="shadow"; active="no"
+    fi
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --arg mode "${mode}" --arg active "${active}" \
+        '{schema_version:"1", kind:"learn_rollback_status", ok:true, mode:$mode, promotion_active:($active=="yes")}'
+    else
+      log "mode             : ${mode}"
+      log "promotion active : ${active}"
+    fi
+    ;;
+
+  now)
+    mkdir -p "${LACP_LEARNING_ROOT}"
+    out="$(do_rollback "${STATE_FILE}" "${REASON}")" || die "rollback failed"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${out}" | jq '{schema_version:"1", kind:"learn_rollback", ok:true, rolled_back:true} + .'
+    else
+      log "ROLLED BACK to shadow (was $(printf '%s' "${out}" | jq -r '.from_mode'))"
+    fi
+    ;;
+
+  drill)
+    # Exercise rollback on a scratch copy so real state is untouched, and time it
+    # against the policy's max_drill_minutes budget.
+    max_min="$(jq -r '.rollback.max_drill_minutes' "${POLICY_FILE}")"
+    scratch="$(mktemp -d)"
+    trap 'rm -rf "${scratch}"' EXIT
+    # Seed a fake "enforce" state to revert.
+    printf '%s\n' '{"mode":"enforce","active_promotion":{"record_sha256":"drilltest"},"history":[],"rollbacks":[]}' \
+      > "${scratch}/promotion-state.json"
+    start="$(date +%s)"
+    do_rollback "${scratch}/promotion-state.json" "drill" >/dev/null || die "drill rollback failed"
+    end="$(date +%s)"
+    elapsed=$((end - start))
+    final_mode="$(jq -r '.mode' "${scratch}/promotion-state.json")"
+    within=$([[ $((elapsed / 60)) -lt "${max_min}" ]] && echo true || echo false)
+    ok=$([[ "${final_mode}" == "shadow" && "${within}" == "true" ]] && echo true || echo false)
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --argjson elapsed "${elapsed}" --argjson max_min "${max_min}" \
+        --arg final "${final_mode}" --argjson within "${within}" --argjson ok "${ok}" \
+        '{schema_version:"1", kind:"learn_rollback_drill", ok:$ok,
+          final_mode:$final, elapsed_seconds:$elapsed, max_drill_minutes:$max_min, within_budget:$within}'
+    else
+      log "drill: reverted to ${final_mode} in ${elapsed}s (budget ${max_min}m) — $([[ "${ok}" == "true" ]] && echo PASS || echo FAIL)"
+    fi
+    [[ "${ok}" == "true" ]] || die "rollback drill did not meet criteria"
+    ;;
+
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac

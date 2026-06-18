@@ -207,6 +207,88 @@ else
   echo "[learn-test] SKIP retrieval gates: bin/lacp-learn-retrieve not found" >&2
 fi
 
+# ================================================================================
+# Phase C (guarded promotion + eval + rollback) gates
+# ================================================================================
+EVAL="${ROOT}/bin/lacp-learn-eval"
+PROMOTE="${ROOT}/bin/lacp-learn-promote"
+ROLLBACK="${ROOT}/bin/lacp-learn-rollback"
+if [[ -x "${EVAL}" && -x "${PROMOTE}" && -x "${ROLLBACK}" ]]; then
+  export LACP_LEARNING_ROOT="${TMP}/cstore"
+  # Baseline (1..30): 50% success. Treatment (31..60): 100% success -> +50pp uplift.
+  for i in $(seq 1 30); do
+    st=success; [[ $((i % 2)) -eq 0 ]] && st=failure
+    LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
+      "${CAPTURE}" record --cli claude --task "task ${i}" --keywords "k${i}" --status "${st}" --score 0.9 >/dev/null
+  done
+  for i in $(seq 31 60); do
+    LACP_LEARNING_ENABLED=1 LACP_LEARNING_MODE=shadow \
+      "${CAPTURE}" record --cli claude --task "task ${i}" --keywords "k${i}" --status success --score 0.95 >/dev/null
+  done
+
+  # C1. Eval report is deterministic (pure function of the store).
+  r1="$("${EVAL}" report --json)"
+  r2="$("${EVAL}" report --json)"
+  [[ "${r1}" == "${r2}" ]] || fail "eval report is not deterministic"
+  echo "${r1}" | jq -e '.uplift_pct == 50 and .baseline.success_rate == 0.5 and .treatment.success_rate == 1.0' >/dev/null \
+    || fail "eval report metrics incorrect"
+  assert_pass "eval report is deterministic with correct metrics"
+
+  # C2. Promotion is REFUSED without evidence/approvers (mode stays shadow).
+  if LACP_LEARNING_POLICY_FILE="${POLICY}" "${PROMOTE}" apply --json >/dev/null 2>&1; then
+    fail "promotion applied without required gates"
+  fi
+  mode_after="$(LACP_LEARNING_POLICY_FILE="${POLICY}" "${PROMOTE}" status --json | jq -r '.mode')"
+  [[ "${mode_after}" == "shadow" ]] || fail "mode changed despite refused promotion"
+  assert_pass "promotion refused without verifier evidence + approvals"
+
+  # C3. Promotion SUCCEEDS only when every gate clears (relaxed test policy so the
+  #     metric thresholds are reachable on the synthetic store).
+  tpol="${TMP}/test-policy.json"
+  jq '.promotion_gates.min_hit_rate=0 | .promotion_gates.min_mrr=0
+      | .promotion_gates.min_uplift_pct=10 | .promotion_gates.min_events=50' \
+      "${POLICY}" > "${tpol}"
+  ev="${TMP}/evidence.txt"; printf 'verifier evidence\n' > "${ev}"
+  papply="$(LACP_LEARNING_POLICY_FILE="${tpol}" \
+    "${PROMOTE}" apply --verifier-evidence "${ev}" --approver alice --approver bob --force-provenance-ok --json)"
+  echo "${papply}" | jq -e '.promoted == true and .mode == "enforce" and (.record.record_sha256 | length) == 64' >/dev/null \
+    || fail "promotion did not apply when all gates passed"
+  echo "${papply}" | jq -e '.record.approvers == ["alice","bob"]' >/dev/null \
+    || fail "promotion record missing two-person approval"
+  assert_pass "promotion applies with full gate satisfaction (-> enforce)"
+
+  # C4. Single approver fails the two-person gate even with evidence.
+  if LACP_LEARNING_POLICY_FILE="${tpol}" "${PROMOTE}" apply \
+      --verifier-evidence "${ev}" --approver alice --force-provenance-ok --json >/dev/null 2>&1; then
+    fail "promotion applied with only one approver"
+  fi
+  assert_pass "promotion refused with single approver (two-person gate)"
+
+  # C5. Rollback reverts enforce -> shadow and deactivates the promotion.
+  rb="$(LACP_LEARNING_POLICY_FILE="${tpol}" "${ROLLBACK}" now --reason "test" --json)"
+  echo "${rb}" | jq -e '.from_mode == "enforce" and .mode == "shadow"' >/dev/null \
+    || fail "rollback did not revert to shadow"
+  LACP_LEARNING_POLICY_FILE="${tpol}" "${ROLLBACK}" status --json | jq -e '.mode == "shadow" and .promotion_active == false' >/dev/null \
+    || fail "promotion still active after rollback"
+  assert_pass "rollback reverts enforce -> shadow"
+
+  # C6. Rollback drill completes within the policy budget on scratch state.
+  drill="$(LACP_LEARNING_POLICY_FILE="${POLICY}" "${ROLLBACK}" drill --json)"
+  echo "${drill}" | jq -e '.ok == true and .final_mode == "shadow" and .within_budget == true' >/dev/null \
+    || fail "rollback drill failed or exceeded budget"
+  assert_pass "rollback drill completes within policy budget"
+
+  # C7. Enforcement stays off until gates pass: a fresh store defaults to shadow.
+  freshroot="${TMP}/cstore_fresh"; mkdir -p "${freshroot}"
+  LACP_LEARNING_ROOT="${freshroot}" LACP_LEARNING_POLICY_FILE="${POLICY}" \
+    "${PROMOTE}" status --json | jq -e '.mode == "shadow"' >/dev/null \
+    || fail "fresh store did not default to shadow mode"
+  assert_pass "enforcement off by default (fresh store is shadow)"
+else
+  SKIPPED=$((SKIPPED + 1))
+  echo "[learn-test] SKIP Phase C gates: lacp-learn-eval/promote/rollback not all present" >&2
+fi
+
 if [[ "${SKIPPED}" -gt 0 ]]; then
   echo "[learn-test] ${PASS} checks passed, ${SKIPPED} SKIPPED (see warnings above)"
 else
