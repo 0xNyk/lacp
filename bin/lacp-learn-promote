@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-learn-promote check [--json]
+  lacp-learn-promote apply --verifier-evidence FILE --approver A --approver B [--json]
+  lacp-learn-promote status [--json]
+
+Cross-CLI learning loop — Phase C guarded promotion.
+
+Promotes the learning loop toward "enforce" mode ONLY when every governance gate
+passes. There is no fast path: metric gates (from the eval report) AND manual gates
+(verifier evidence, two-person approval, provenance verification) must all clear.
+A failing gate writes nothing and exits non-zero. On success, a content-hashed
+promotion record is appended to the promotion state and the mode advances to
+"enforce". NOTE: the record_sha256 is an integrity checksum (tamper-evidence for
+accidental corruption), NOT a cryptographic signature. The promotion state file is
+a trusted-write-access boundary — protect it with filesystem permissions.
+
+apply options:
+  --verifier-evidence FILE   Path to verifier-produced evidence (required)
+  --approver NAME            Approver identity; pass twice for two-person approval
+  --force-provenance-ok      Skip the live provenance-verify call. Valid with
+                             'check' ONLY (inspection); 'apply' refuses it so real
+                             promotion always requires a passing provenance verify.
+
+Subcommands:
+  check    Dry-run: report every gate's pass/fail without promoting
+  apply    Promote to enforce if (and only if) all gates pass
+  status   Show current mode and the active promotion record, if any
+EOF
+}
+
+require_cmd jq
+require_cmd python3
+
+STATE_FILE="${LACP_LEARNING_ROOT}/promotion-state.json"
+POLICY_FILE="${LACP_LEARNING_POLICY_FILE}"
+require_file "${POLICY_FILE}"
+
+SUB="${1:-}"
+if [[ -z "${SUB}" || "${SUB}" == "-h" || "${SUB}" == "--help" || "${SUB}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+EVIDENCE=""
+APPROVERS=()
+FORCE_PROV=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --verifier-evidence) EVIDENCE="$2"; shift 2 ;;
+    --approver) APPROVERS+=("$2"); shift 2 ;;
+    --force-provenance-ok) FORCE_PROV=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+current_mode() {
+  if [[ -f "${STATE_FILE}" ]]; then
+    jq -r '.mode // "shadow"' "${STATE_FILE}" 2>/dev/null || echo "shadow"
+  else
+    echo "shadow"
+  fi
+}
+
+# Evaluate all gates. Echoes a JSON object with per-gate results + overall go.
+evaluate_gates() {
+  local metric_gate prov_ok evidence_ok
+  metric_gate="$("${ROOT}/bin/lacp-learn-eval" gate --json)" || die "eval gate failed"
+
+  # Manual gate: verifier evidence file must exist and be non-empty.
+  evidence_ok=false
+  if [[ -n "${EVIDENCE}" && -s "${EVIDENCE}" ]]; then evidence_ok=true; fi
+
+  # Manual gate: two distinct approvers.
+  # Count DISTINCT approvers, trimming surrounding whitespace so "alice" and
+  # "alice " can't be counted as two people.
+  local distinct_approvers
+  distinct_approvers="$(printf '%s\n' "${APPROVERS[@]:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u | grep -c . || true)"
+
+  # Manual gate: provenance chain verifies (unless explicitly forced for testing).
+  prov_ok=false
+  if [[ "${FORCE_PROV}" -eq 1 ]]; then
+    prov_ok=forced
+  elif [[ -x "${ROOT}/bin/lacp-provenance" ]] && "${ROOT}/bin/lacp-provenance" verify --json >/dev/null 2>&1; then
+    prov_ok=true
+  fi
+
+  LP_METRIC="${metric_gate}" \
+  LP_EVIDENCE_OK="${evidence_ok}" \
+  LP_DISTINCT_APPROVERS="${distinct_approvers}" \
+  LP_PROV_OK="${prov_ok}" \
+  LP_POLICY="$(cat "${POLICY_FILE}")" \
+  python3 - <<'PY' || die "gate aggregation failed"
+import json, os
+metric = json.loads(os.environ["LP_METRIC"])
+pol = json.loads(os.environ["LP_POLICY"])["promotion_gates"]
+
+metrics_pass = bool(metric.get("metrics_pass"))
+evidence_ok = os.environ["LP_EVIDENCE_OK"] == "true"
+distinct = int(os.environ.get("LP_DISTINCT_APPROVERS") or 0)
+prov_raw = os.environ["LP_PROV_OK"]
+prov_ok = prov_raw in ("true", "forced")
+
+gates = []
+def g(name, ok, detail):
+    gates.append({"gate": name, "pass": bool(ok), "detail": detail})
+
+g("metric_thresholds", metrics_pass, metric.get("checks"))
+if pol["require_verifier_evidence"]:
+    g("verifier_evidence", evidence_ok, "non-empty evidence file required")
+if pol["require_two_person_approval"]:
+    g("two_person_approval", distinct >= 2, f"{distinct} distinct approver(s)")
+if pol["require_provenance_verification"]:
+    g("provenance_verification", prov_ok, f"provenance verify: {prov_raw}")
+
+go = all(x["pass"] for x in gates)
+print(json.dumps({"go": go, "gates": gates, "provenance_state": prov_raw}))
+PY
+}
+
+case "${SUB}" in
+  status)
+    mode="$(current_mode)"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      if [[ -f "${STATE_FILE}" ]]; then
+        jq '{schema_version:"1", kind:"learn_promote_status", ok:true} + .' "${STATE_FILE}"
+      else
+        jq -n '{schema_version:"1", kind:"learn_promote_status", ok:true, mode:"shadow", active_promotion:null, history:[]}'
+      fi
+    else
+      log "mode             : ${mode}"
+      if [[ -f "${STATE_FILE}" ]]; then
+        log "promotions on record: $(jq '.history | length' "${STATE_FILE}")"
+      else
+        log "promotions on record: 0"
+      fi
+    fi
+    ;;
+
+  check)
+    res="$(evaluate_gates)" || die "gate evaluation failed"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${res}" | jq '{schema_version:"1", kind:"learn_promote_check", ok:true} + .'
+    else
+      go="$(printf '%s' "${res}" | jq -r '.go')"
+      log "promotion: $([[ "${go}" == "true" ]] && echo "GO" || echo "NO-GO")"
+      printf '%s' "${res}" | jq -r '.gates[] | "  [\(if .pass then "PASS" else "FAIL" end)] \(.gate)"'
+    fi
+    ;;
+
+  apply)
+    # One-way by design: refuse to re-promote an already-enforced store. The only
+    # path back to a promotable state is an explicit rollback. This prevents a
+    # second apply from bypassing a fresh two-person approval cycle.
+    if [[ "$(current_mode)" == "enforce" ]]; then
+      die "already in enforce mode; run lacp-learn-rollback first to reset before re-promoting"
+    fi
+    # --force-provenance-ok is an inspection aid for `check` only; it must never be
+    # able to advance real state to enforce by skipping the provenance gate.
+    if [[ "${FORCE_PROV}" -eq 1 ]]; then
+      die "--force-provenance-ok is only valid with 'check'; real promotion requires a passing provenance verify"
+    fi
+    res="$(evaluate_gates)" || die "gate evaluation failed"
+    go="$(printf '%s' "${res}" | jq -r '.go')"
+    if [[ "${go}" != "true" ]]; then
+      if [[ "${AS_JSON}" -eq 1 ]]; then
+        printf '%s\n' "${res}" | jq '{schema_version:"1", kind:"learn_promote_apply", ok:false, promoted:false} + .'
+      else
+        log "promotion REFUSED — one or more gates failed:"
+        printf '%s' "${res}" | jq -r '.gates[] | select(.pass==false) | "  FAIL: \(.gate)"'
+      fi
+      die "promotion gates not satisfied; mode unchanged (still $(current_mode))"
+    fi
+
+    # All gates passed — append a content-hashed promotion record and advance to enforce.
+    mkdir -p "${LACP_LEARNING_ROOT}"
+    evidence_hash="$(shasum -a 256 "${EVIDENCE}" | awk '{print $1}')"
+    out="$(
+      LP_RES="${res}" \
+      LP_STATE="${STATE_FILE}" \
+      LP_EVIDENCE="${EVIDENCE}" \
+      LP_EVIDENCE_HASH="${evidence_hash}" \
+      LP_APPROVERS="$(printf '%s\n' "${APPROVERS[@]:-}")" \
+      python3 - <<'PY'
+import hashlib, json, os
+state_path = os.environ["LP_STATE"]
+res = json.loads(os.environ["LP_RES"])
+approvers = sorted({a.strip() for a in os.environ["LP_APPROVERS"].splitlines() if a.strip()})
+
+state = {"mode": "shadow", "active_promotion": None, "history": []}
+if os.path.exists(state_path):
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+record = {
+    "evidence_file": os.environ["LP_EVIDENCE"],
+    "evidence_sha256": os.environ["LP_EVIDENCE_HASH"],
+    "approvers": approvers,
+    "gates": res["gates"],
+    "provenance_state": res.get("provenance_state"),
+    "seq": len(state.get("history", [])) + 1,
+}
+record["record_sha256"] = hashlib.sha256(
+    json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+state["mode"] = "enforce"
+state["active_promotion"] = record
+state.setdefault("history", []).append(record)
+
+tmp = state_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(state, f, indent=2)
+os.replace(tmp, state_path)
+print(json.dumps({"promoted": True, "mode": "enforce", "record": record}))
+PY
+    )" || die "failed to write promotion record"
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      printf '%s\n' "${out}" | jq '{schema_version:"1", kind:"learn_promote_apply", ok:true} + .'
+    else
+      log "PROMOTED to enforce (record $(printf '%s' "${out}" | jq -r '.record.record_sha256[0:12]'))"
+    fi
+    ;;
+
+  *)
+    die "Unknown subcommand: ${SUB}"
+    ;;
+esac
