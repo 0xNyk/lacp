@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/scripts/lacp-lib.sh"
+
+RUNS_DIR="${HOME}/.lacp/runs"
+RESULTS_FILE="${RUNS_DIR}/results.jsonl"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  lacp-runs list [--limit N] [--json]
+  lacp-runs show <run_id> [--json]
+  lacp-runs status [--json]
+  lacp-runs tail <run_id> [--json]
+
+Query runner result receipts from ~/.lacp/runs/results.jsonl.
+
+Subcommands:
+  list       Show recent runs (default: last 20)
+  show       Show full receipt for a specific run_id
+  status     Aggregate counts by exit_code (completed vs failed)
+  tail       Show stdout_tail from a specific run_id
+EOF
+}
+
+sub="${1:-}"
+if [[ -z "${sub}" || "${sub}" == "-h" || "${sub}" == "--help" || "${sub}" == "help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+AS_JSON=0
+LIMIT=20
+TARGET_RUN_ID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) AS_JSON=1; shift ;;
+    --limit) LIMIT="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      if [[ "${sub}" == "show" || "${sub}" == "tail" ]] && [[ -z "${TARGET_RUN_ID}" ]]; then
+        TARGET_RUN_ID="$1"; shift
+      else
+        die "Unknown argument: $1"
+      fi
+      ;;
+  esac
+done
+
+ensure_results_file() {
+  if [[ ! -f "${RESULTS_FILE}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n '{ok:false,error:"no results file found",path:$path}' --arg path "${RESULTS_FILE}"
+    else
+      echo "No results file found at ${RESULTS_FILE}"
+    fi
+    exit 0
+  fi
+}
+
+list_cmd() {
+  ensure_results_file
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -s \
+      --argjson limit "${LIMIT}" \
+      'if length > $limit then .[(length - $limit):] else . end
+       | {schema_version:"1",kind:"runs_list",ok:true,count:length,runs:.}' \
+      "${RESULTS_FILE}"
+  else
+    echo "Recent runs (last ${LIMIT}):"
+    tail -"${LIMIT}" "${RESULTS_FILE}" | jq -r \
+      '"  " + .run_id + "  runner=" + .runner + "  exit_code=" + (.exit_code|tostring) + "  duration=" + (.duration_ms|tostring) + "ms  " + .started_at'
+  fi
+}
+
+show_cmd() {
+  if [[ -z "${TARGET_RUN_ID}" ]]; then
+    die "Usage: lacp-runs show <run_id> [--json]"
+  fi
+  ensure_results_file
+  local result
+  result="$(jq -s --arg id "${TARGET_RUN_ID}" '.[] | select(.run_id == $id)' "${RESULTS_FILE}")"
+  if [[ -z "${result}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --arg id "${TARGET_RUN_ID}" '{schema_version:"1",kind:"runs_show",ok:false,error:("run_id not found: " + $id)}'
+    else
+      echo "run_id not found: ${TARGET_RUN_ID}" >&2
+    fi
+    exit 1
+  fi
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${result}" | jq '{schema_version:"1",kind:"runs_show",ok:true} + .'
+  else
+    printf '%s\n' "${result}" | jq -r \
+      '"run_id:    " + .run_id,
+       "runner:    " + .runner,
+       "task_id:   " + .task_id,
+       "exit_code: " + (.exit_code|tostring),
+       "duration:  " + (.duration_ms|tostring) + "ms",
+       "started:   " + .started_at,
+       "ended:     " + .ended_at,
+       "agent_id:  " + .agent_id'
+  fi
+}
+
+status_cmd() {
+  ensure_results_file
+  local total completed failed
+  total="$(wc -l < "${RESULTS_FILE}" | tr -d ' ')"
+  completed="$(jq -s '[.[] | select(.exit_code == 0)] | length' "${RESULTS_FILE}")"
+  failed="$(jq -s '[.[] | select(.exit_code != 0)] | length' "${RESULTS_FILE}")"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    jq -n \
+      --argjson total "${total}" \
+      --argjson completed "${completed}" \
+      --argjson failed "${failed}" \
+      '{schema_version:"1",kind:"runs_status",ok:true,total:$total,completed:$completed,failed:$failed}'
+  else
+    echo "Run status:"
+    echo "  total:     ${total}"
+    echo "  completed: ${completed}"
+    echo "  failed:    ${failed}"
+  fi
+}
+
+tail_cmd() {
+  if [[ -z "${TARGET_RUN_ID}" ]]; then
+    die "Usage: lacp-runs tail <run_id> [--json]"
+  fi
+  ensure_results_file
+  local result stdout_tail
+  result="$(jq -s --arg id "${TARGET_RUN_ID}" '.[] | select(.run_id == $id)' "${RESULTS_FILE}")"
+  if [[ -z "${result}" ]]; then
+    if [[ "${AS_JSON}" -eq 1 ]]; then
+      jq -n --arg id "${TARGET_RUN_ID}" '{schema_version:"1",kind:"runs_tail",ok:false,error:("run_id not found: " + $id)}'
+    else
+      echo "run_id not found: ${TARGET_RUN_ID}" >&2
+    fi
+    exit 1
+  fi
+  stdout_tail="$(printf '%s\n' "${result}" | jq -r '.stdout_tail')"
+  if [[ "${AS_JSON}" -eq 1 ]]; then
+    printf '%s\n' "${result}" | jq '{schema_version:"1",kind:"runs_tail",ok:true,run_id:.run_id,stdout_tail:.stdout_tail}'
+  else
+    printf '%s\n' "${stdout_tail}"
+  fi
+}
+
+case "${sub}" in
+  list) list_cmd ;;
+  show) show_cmd ;;
+  status) status_cmd ;;
+  tail) tail_cmd ;;
+  *) die "Unknown subcommand: ${sub}" ;;
+esac
