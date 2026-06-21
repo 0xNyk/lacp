@@ -1,0 +1,119 @@
+/* LACP TUI Stylesheet */
+
+Screen {
+    background: $surface;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 1 2;
+}
+
+/* Dashboard */
+#dashboard-summary {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#dashboard-summary .label {
+    margin-right: 2;
+}
+
+#dashboard-identity {
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* Status colors for labels */
+.status-pass {
+    color: $success;
+}
+
+.status-warn {
+    color: $warning;
+}
+
+.status-fail {
+    color: $error;
+}
+
+/* Detail panes (Doctor + Runs) */
+#doctor-detail, #runs-detail {
+    height: auto;
+    max-height: 10;
+    margin-top: 1;
+    padding: 0 1;
+    border-top: solid $accent;
+}
+
+/* Button rows */
+#doctor-buttons, #brain-buttons {
+    height: auto;
+}
+
+#brain-detail {
+    height: auto;
+    max-height: 8;
+    margin-top: 1;
+    padding: 0 1;
+    border-top: solid $accent;
+}
+
+#brain-stack-summary, #brain-kpi-summary {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+/* Tables */
+DataTable {
+    height: 1fr;
+    margin-top: 1;
+}
+
+/* Buttons */
+Button {
+    margin: 1 1 0 0;
+}
+
+/* Loading */
+LoadingIndicator {
+    height: 3;
+}
+
+/* Confirmation modal */
+#confirm-dialog {
+    align: center middle;
+}
+
+#confirm-dialog-container {
+    width: 60;
+    height: auto;
+    max-height: 20;
+    border: thick $accent;
+    background: $surface;
+    padding: 1 2;
+}
+
+#confirm-dialog-container Label {
+    width: 100%;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+#confirm-dialog-buttons {
+    height: auto;
+    align: center middle;
+}
+
+#confirm-dialog-buttons Button {
+    margin: 0 2;
+}
+
+/* Hooks panel */
+#hooks-controls {
+    height: auto;
+    margin-bottom: 1;
+}
