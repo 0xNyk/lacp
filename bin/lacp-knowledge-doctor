@@ -45,7 +45,7 @@ done
 require_cmd python3
 [[ -d "${SCAN_ROOT}" ]] || die "Knowledge root does not exist: ${SCAN_ROOT}"
 
-result_json="$(python3 - <<'PY' "${SCAN_ROOT}"
+result_json=$(python3 - "${SCAN_ROOT}" <<'PY'
 import json
 import pathlib
 import re
@@ -297,7 +297,7 @@ payload = {
 
 print(json.dumps(payload, indent=2))
 PY
-)"
+)
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   printf '%s\n' "${result_json}"

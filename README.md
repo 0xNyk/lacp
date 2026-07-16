@@ -2,25 +2,30 @@
 
 # LACP
 
-**Control-plane-grade agent harness for Claude, Codex & Hermes.**
+**Local policy, evidence, and recovery controls for coding agents.**
 
-LACP is a harness-first execution framework with policy-gated operations, verification/evidence loops, 5-layer memory, and auditable agent workflows — all local-first, zero external dependencies.
+LACP wraps Claude, Codex, Hermes, and other CLI agents with deterministic routing,
+approval gates, execution records, memory controls, and rollback paths. It runs on your
+machine and keeps remote execution opt-in.
 
-[![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp/network/members)
+[![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Alpha](https://img.shields.io/badge/Status-alpha%20v0.9.0-orange)](https://github.com/0xNyk/lacp/releases)
+[![Main: 0.10.0](https://img.shields.io/badge/main-0.10.0-22B8CF)](version)
+[![Latest release: v0.6.0](https://img.shields.io/badge/release-v0.6.0-E9A23B)](https://github.com/0xNyk/lacp/releases/tag/v0.6.0)
 [![Last commit](https://img.shields.io/github/last-commit/0xNyk/lacp)](https://github.com/0xNyk/lacp/commits/main)
 [![Open issues](https://img.shields.io/github/issues/0xNyk/lacp)](https://github.com/0xNyk/lacp/issues)
 [![Shell](https://img.shields.io/badge/Shell-bash%20%2B%20python3-blue)](https://github.com/0xNyk/lacp)
 
-![LACP Banner](docs/assets/readme-banner.png)
+![LACP routes agent work through policy gates and evidence](docs/assets/lacp-control-plane.jpeg)
 
 </div>
 
 ---
 
-> **Alpha Release** — LACP v0.9.0 is under active development. The native REPL, multi-provider routing, hermes-style tool display, and memory system are functional but evolving fast. APIs and CLI interfaces may change between releases. [Report issues](https://github.com/0xNyk/lacp/issues).
+> **Development status:** `main` reports version 0.10.0. The latest published GitHub and
+> Homebrew release is v0.6.0. Main includes unreleased changes and may alter commands or
+> configuration before the next release. Use the Homebrew package when you need the
+> published release; use `--HEAD` only when you want current development code.
 
 ## Contents
 
@@ -37,28 +42,25 @@ LACP is a harness-first execution framework with policy-gated operations, verifi
 - [Security](#security)
 - [Contributing](#contributing)
 
-### What LACP is (by harness definition)
+## What LACP controls
 
-LACP is an **agent harness** with **control-plane governance**:
-- **Harness layer:** tasks, verification contracts, evidence manifests, replayable run loops
-- **Control-plane layer:** risk tiers, budget gates, context/session contracts, approvals, provenance
+LACP is a local execution wrapper and control plane. The coding-agent host still owns its
+model, tools, session, and interface. LACP owns the contract around a run: where it may
+execute, which risk tier applies, when approval is required, what evidence must be kept,
+and how a failed change is recovered.
 
-This keeps the core value clear: not just generating output, but producing **auditable, policy-compliant outcomes**.
+![The host owns the agent; LACP governs the run contract](docs/assets/host-boundary.jpeg)
 
 <table>
-<tr><td><b>Policy gates</b></td><td>Risk tiers (safe/review/critical), budget ceilings, context contracts, and session fingerprints — every agent invocation is gated and auditable.</td></tr>
-<tr><td><b>5-layer memory</b></td><td>Session memory, Obsidian knowledge graph, ingestion pipeline, code intelligence (GitNexus), and agent identity with hash-chained provenance.</td></tr>
-<tr><td><b>Hook pipeline</b></td><td>Modular Python hooks for Claude Code — session context injection, pretool guards, write validation, and stop quality gates with local LLM eval.</td></tr>
-<tr><td><b>Obsidian brain</b></td><td>First-class vault management, mycelium-inspired memory consolidation, QMD indexing, and config-as-code with auto-optimization.</td></tr>
-<tr><td><b>Multi-agent orchestration</b></td><td>dmux/tmux session management, git worktree isolation, swarm workflows, and Claude native worktree backend.</td></tr>
-<tr><td><b>Local-first security</b></td><td>Zero external CI by default, no secrets in config, environment-driven credentials, TTL approval tokens for remote execution.</td></tr>
-<tr><td><b>Execution tiers</b></td><td>trusted_local, local_sandbox, and remote_sandbox (Daytona/E2B) with policy-driven routing and provider override.</td></tr>
-<tr><td><b>Evidence pipelines</b></td><td>Browser e2e, API e2e, smart-contract e2e harnesses with manifest evidence, auth checks, and PR preflight gates.</td></tr>
+<tr><td><b>Execution</b></td><td>Risk tiers, budgets, context contracts, session fingerprints, and local or remote sandbox routing.</td></tr>
+<tr><td><b>Verification</b></td><td>Browser, API, and contract evidence manifests with PR preflight and release gates.</td></tr>
+<tr><td><b>Memory</b></td><td>Session memory, Obsidian workflows, ingestion, optional code intelligence, and provenance.</td></tr>
+<tr><td><b>Coordination</b></td><td>Worktree isolation, tmux/dmux sessions, swarm manifests, handoffs, and recovery paths.</td></tr>
 </table>
 
 ---
 
-## Quick Start
+## Quick start
 
 ### Install
 
@@ -66,11 +68,13 @@ This keeps the core value clear: not just generating output, but producing **aud
 # Homebrew (recommended)
 brew tap 0xNyk/lacp && brew install lacp
 
-# or cURL bootstrap
-curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+# or inspect and run the bootstrap at a published tag
+curl -fsSLo /tmp/lacp-install.sh \
+  https://raw.githubusercontent.com/0xNyk/lacp/v0.6.0/install.sh
+LACP_REF=v0.6.0 bash /tmp/lacp-install.sh
 ```
 
-### Bootstrap & Verify
+### Bootstrap and verify
 
 ```bash
 lacp bootstrap-system --profile starter --with-verify
@@ -81,7 +85,7 @@ After bootstrap: `.env` is created, dependencies installed, directories scaffold
 
 For the full setup and daily operator flow, start with the [Runbook](docs/runbook.md) and [Local Dev Loop](docs/local-dev-loop.md).
 
-### First Gated Command
+### First gated command
 
 ```bash
 # Route a task through LACP policy gates
@@ -91,12 +95,14 @@ lacp run --task "hello world" --repo-trust trusted -- echo "LACP is working"
 lacp adopt-local --json | jq
 ```
 
+![Intent becomes a routed, approved, evidenced run](docs/assets/execution-contract.jpeg)
+
 ## Why teams adopt LACP
 
-- Predictable execution: every run passes through deterministic policy and budget gates.
-- Auditability by default: artifacts, provenance, and verification logs are first-class outputs.
-- Local-first security posture: remote execution is opt-in and secrets stay environment-scoped.
-- Multi-agent without chaos: worktree/session isolation keeps parallel runs reproducible.
+- Route commands through explicit policy and budget gates.
+- Keep evidence, provenance, and verification results with each run.
+- Leave remote execution disabled until an operator enables it.
+- Isolate parallel agents with sessions and Git worktrees.
 
 ## Use-case recipes
 
@@ -143,7 +149,7 @@ lacp swarm launch --manifest ./swarm.json
 | [Runbook](docs/runbook.md) | Daily operator workflow, command map, troubleshooting entry points |
 | [Local Dev Loop](docs/local-dev-loop.md) | Fast build/test/verify loop for contributors |
 | [Framework Scope](docs/framework-scope.md) | What LACP is, what it is not, and design boundaries |
-| [Implementation Path](docs/implementation-path-2026.md) | Step-by-step rollout plan for full harness adoption |
+| [Implementation Path](docs/implementation-path-2026.md) | Step-by-step rollout plan for full control-plane adoption |
 | [Memory Quality Workflow](docs/memory-quality-workflow.md) | How memory ingestion, expansion, and validation are run safely |
 | [Incident Response](docs/incident-response.md) | Triage and recovery flow when policy gates fail |
 | [Release Checklist](docs/release-checklist.md) | Pre-release, release, and post-release controls |
@@ -151,10 +157,10 @@ lacp swarm launch --manifest ./swarm.json
 
 ### Project health files
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution and PR expectations
-- [SECURITY.md](SECURITY.md) — vulnerability disclosure process
-- [CHANGELOG.md](CHANGELOG.md) — release history
-- [LICENSE](LICENSE) — MIT
+- [CONTRIBUTING.md](CONTRIBUTING.md) - contribution and PR expectations
+- [SECURITY.md](SECURITY.md) - vulnerability disclosure process
+- [CHANGELOG.md](CHANGELOG.md) - release history
+- [LICENSE](LICENSE) - MIT
 
 ---
 
@@ -277,7 +283,7 @@ lacp pr-preflight --changed-files ./changed-files.txt --checks-json ./checks.jso
 
 The installer auto-detects and installs missing dependencies on macOS via Homebrew.
 
-## Install Options
+## Install options
 
 <details>
 <summary><strong>All installation methods</strong></summary>
@@ -286,34 +292,31 @@ The installer auto-detects and installs missing dependencies on macOS via Homebr
 
 ```bash
 brew tap 0xNyk/lacp
-brew install lacp            # stable v0.3.0
-brew install --HEAD lacp     # track main branch
+brew install lacp            # published v0.6.0 release
+brew install --HEAD lacp     # current main, version 0.10.0
 ```
 
 ### cURL Bootstrap
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xNyk/lacp/main/install.sh | bash
+curl -fsSLo /tmp/lacp-install.sh \
+  https://raw.githubusercontent.com/0xNyk/lacp/v0.6.0/install.sh
+LACP_REF=v0.6.0 bash /tmp/lacp-install.sh
 ```
 
-### Verified Release (recommended for production)
-
-```bash
-VERSION="0.3.0"
-curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/lacp-${VERSION}.tar.gz"
-curl -fsSLO "https://github.com/0xNyk/lacp/releases/download/v${VERSION}/SHA256SUMS"
-grep "lacp-${VERSION}.tar.gz" SHA256SUMS | shasum -a 256 -c -
-tar -xzf "lacp-${VERSION}.tar.gz" && cd "lacp-${VERSION}"
-bin/lacp-install --profile starter --with-verify
-```
+Change both references to `main` only when you intend to install unreleased development
+code. The script also accepts `--dir`, `--profile`, and `--with-verify`; run it with
+`--help` before installation to see the full contract.
 
 </details>
 
-## Who It's For
+## Who it is for
 
-LACP is for developers who want **measurable, policy-gated, reproducible** local agent operations with explicit pass/fail gates and artifact-backed records.
+LACP is for developers who need reproducible local agent runs with explicit pass/fail
+gates and artifacts that can be inspected after execution.
 
-LACP is **not** for users looking for a chat UI, managed cloud orchestration, or who don't want to maintain local scripts/config.
+It is a poor fit when you want a managed cloud service, a chat UI, or a setup with no local
+policy and configuration to maintain.
 
 ## Testing
 
@@ -363,7 +366,7 @@ scripts/ci/smoke.sh
 | `lacp brain-stack` | Initialize/audit 5-layer memory stack |
 | `lacp brain-ingest` | Ingest text/audio/video/URLs into Obsidian |
 | `lacp brain-expand` | Full brain expansion loop |
-| `lacp brain-doctor` | Brain ecosystem health checks |
+| `lacp brain-doctor` | Memory-system health checks |
 | `lacp obsidian` | Vault config management (audit/apply/optimize) |
 | `lacp repo-research-sync` | Mirror repo research into knowledge graph |
 
@@ -416,7 +419,7 @@ scripts/ci/smoke.sh
 
 ## Security
 
-- No secrets in repo config — environment-driven via `.env`
+- No secrets in repo config; credentials come from the environment or local `.env`
 - Zero external CI by default (`LACP_NO_EXTERNAL_CI=true`)
 - Remote execution disabled by default (`LACP_ALLOW_EXTERNAL_REMOTE=false`)
 - Risk-tier gating with TTL approval tokens
@@ -443,7 +446,7 @@ If you find this project useful, consider supporting the open-source work:
 
 **Need agent infrastructure, trading systems, or Solana applications built for your team?**
 
-[Builderz](https://builderz.dev) ships production AI systems — 32+ products across 15 countries.
+[Builderz](https://builderz.dev) ships production AI systems across 32+ products in 15 countries.
 
 [Get in touch](https://builderz.dev) | [@nyk_builderz](https://x.com/nyk_builderz)
 

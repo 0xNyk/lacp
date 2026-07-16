@@ -50,7 +50,8 @@ name: ci
 on: [push]
 jobs: {}
 EOF
-  git add leak.txt path.txt email.txt .env .github/workflows/ci.yml
+  git add leak.txt path.txt email.txt .github/workflows/ci.yml
+  git add -f .env
 )
 
 dirty_json="$(/bin/bash "${ROOT}/scripts/ci/security-hygiene-audit.sh" --repo-root "${DIRTY_REPO}" --json || true)"

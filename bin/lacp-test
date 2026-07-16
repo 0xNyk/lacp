@@ -43,6 +43,7 @@ enable_isolated_roots() {
   export LACP_KNOWLEDGE_ROOT="${tmp_root}/knowledge"
   export LACP_DRAFTS_ROOT="${tmp_root}/drafts"
   export LACP_SESSIONS_ROOT="${tmp_root}/sessions"
+  export LACP_PROVENANCE_ROOT="${tmp_root}/provenance"
   export LACP_OBSIDIAN_VAULT="${tmp_root}/obsidian-vault"
   export LACP_KNOWLEDGE_GRAPH_ROOT="${LACP_KNOWLEDGE_ROOT}"
   export LACP_REMOTE_APPROVAL_FILE="${LACP_KNOWLEDGE_ROOT}/data/approvals/remote-approval.json"
@@ -60,6 +61,7 @@ enable_isolated_roots() {
     "${LACP_KNOWLEDGE_ROOT}" \
     "${LACP_DRAFTS_ROOT}" \
     "${LACP_SESSIONS_ROOT}" \
+    "${LACP_PROVENANCE_ROOT}" \
     "${LACP_OBSIDIAN_VAULT}"
 }
 
