@@ -208,6 +208,8 @@ Agent invocation
 
 Every command routes through risk tiers (`safe` → `review` → `critical`), budget ceilings per tier, and context contracts that validate host, working directory, git branch, and remote targets before execution.
 
+![LACP routes safe, review, and critical work through different execution gates](docs/assets/risk-tier-routing.jpeg)
+
 ### 5-Layer Memory Stack
 
 | Layer | Purpose |
@@ -272,6 +274,8 @@ lacp api-e2e smoke --workdir . --init-template --command "npx schemathesis run -
 lacp contract-e2e smoke --workdir . --init-template --command "forge test -vv"
 lacp pr-preflight --changed-files ./changed-files.txt --checks-json ./checks.json
 ```
+
+![Evidence determines whether LACP promotes a result or restores known state](docs/assets/evidence-recovery-loop.jpeg)
 
 ---
 
