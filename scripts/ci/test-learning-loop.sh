@@ -9,6 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
+export LACP_PROVENANCE_ROOT="${TMP}/provenance"
 
 PASS=0
 SKIPPED=0

@@ -175,7 +175,7 @@ case "${SUB}" in
     # Rank + cap. Read-only over the store. All caller input passed out-of-band
     # via env into a quoted heredoc (CWE-94 safe); the store path is the only file
     # opened and it is opened read-only.
-    hints_json="$(
+    hints_json=$(
       LR_TASK="${TASK}" \
       LR_KEYWORDS="${KEYWORDS}" \
       LR_REPO_TRUST="${REPO_TRUST}" \
@@ -288,7 +288,7 @@ for h in scored:
 print(json.dumps({"hints": hints, "tokens_estimated": spent,
                   "caps": {"max_hints": max_hints, "token_budget": token_budget, "confidence_floor": floor}}))
 PY
-)" || die "retrieval failed (python3 exited non-zero)"
+) || die "retrieval failed (python3 exited non-zero)"
 
     if [[ "${AS_JSON}" -eq 1 ]]; then
       printf '%s\n' "${hints_json}" | jq '{schema_version:"1", kind:"learn_retrieve", ok:true,
