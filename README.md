@@ -439,7 +439,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 If you find this project useful, consider supporting the open-source work:
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nyk_builderz)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nykdotdev)
 
 **Solana:** `2k1oq9U99mwy4gm8P2hXPJoZusoXQCpFs35EEf5Ve73y`
 
@@ -452,7 +452,7 @@ If you find this project useful, consider supporting the open-source work:
 
 [Builderz](https://builderz.dev) ships production AI systems across 32+ products in 15 countries.
 
-[Get in touch](https://builderz.dev) | [@nyk_builderz](https://x.com/nyk_builderz)
+[Get in touch](https://builderz.dev) | [@nykdotdev](https://x.com/nykdotdev)
 
 </div>
 
