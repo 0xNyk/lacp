@@ -218,8 +218,20 @@ check_cmd rg
 check_cmd jq
 check_cmd curl
 check_cmd git
-check_cmd ollama
-check_cmd docker
+
+# Ollama (optional - for local AI models)
+if command -v ollama >/dev/null 2>&1; then
+  add_check "cmd:ollama" "PASS" "$(command -v ollama)"
+else
+  add_check "cmd:ollama" "WARN" "not installed (optional, for local AI model support)"
+fi
+
+# Docker (optional - for containerized workflows)
+if command -v docker >/dev/null 2>&1; then
+  add_check "cmd:docker" "PASS" "$(command -v docker)"
+else
+  add_check "cmd:docker" "WARN" "not installed (optional, for containerized workflows)"
+fi
 
 # Obsidian CLI (official, 1.12+)
 if command -v obsidian >/dev/null 2>&1; then
