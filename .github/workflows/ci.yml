@@ -1,0 +1,228 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck jq
+
+      - name: Shell syntax checks
+        run: |
+          set -euo pipefail
+          for f in bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh; do
+            [[ -f "$f" ]] || continue
+            if head -n 1 "$f" | grep -Eq '^#!.*\b(bash|sh)\b'; then
+              bash -n "$f"
+            fi
+          done
+
+      - name: Shellcheck
+        run: |
+          set -euo pipefail
+          targets=()
+          for f in bin/* scripts/*.sh scripts/runners/*.sh scripts/ci/*.sh; do
+            [[ -f "$f" ]] || continue
+            if head -n 1 "$f" | grep -Eq '^#!.*\b(bash|sh)\b'; then
+              targets+=("$f")
+            fi
+          done
+          if [[ "${#targets[@]}" -gt 0 ]]; then
+            shellcheck "${targets[@]}"
+          fi
+
+      - name: Workflow cost policy tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-workflow-cost-policy.sh
+          ./scripts/ci/test-workflow-cost-policy.sh
+
+      - name: Smoke tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/smoke.sh
+          ./scripts/ci/smoke.sh
+
+      - name: Route policy tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-route-policy.sh
+          ./scripts/ci/test-route-policy.sh
+
+      - name: Mode and gate unit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-mode-and-gates.sh
+          ./scripts/ci/test-mode-and-gates.sh
+
+      - name: Knowledge doctor tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-knowledge-doctor.sh
+          ./scripts/ci/test-knowledge-doctor.sh
+
+      - name: Install workflow tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-install.sh
+          ./scripts/ci/test-install.sh
+
+      - name: Ops command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-ops-commands.sh
+          ./scripts/ci/test-ops-commands.sh
+
+      - name: Security controls tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-security-controls.sh
+          ./scripts/ci/test-security-controls.sh
+
+      - name: Security hygiene audit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-security-hygiene-audit.sh
+          ./scripts/ci/test-security-hygiene-audit.sh
+
+      - name: Cache audit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-cache-audit.sh
+          ./scripts/ci/test-cache-audit.sh
+
+      - name: Cache guard tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-cache-guard.sh
+          ./scripts/ci/test-cache-guard.sh
+
+      - name: Auto deps dry-run tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-auto-deps.sh
+          ./scripts/ci/test-auto-deps.sh
+
+      - name: Canary gate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-canary.sh
+          ./scripts/ci/test-canary.sh
+
+      - name: Canary baseline tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-canary-baseline.sh
+          ./scripts/ci/test-canary-baseline.sh
+
+      - name: Auto rollback tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-auto-rollback.sh
+          ./scripts/ci/test-auto-rollback.sh
+
+      - name: Skill audit tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-skill-audit.sh
+          ./scripts/ci/test-skill-audit.sh
+
+      - name: Adopt local wrapper tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-adopt-local.sh
+          ./scripts/ci/test-adopt-local.sh
+
+      - name: Harness contracts tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-harness-contracts.sh
+          ./scripts/ci/test-harness-contracts.sh
+
+      - name: Harness validate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-harness-validate.sh
+          ./scripts/ci/test-harness-validate.sh
+
+      - name: Harness run tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-harness-run.sh
+          ./scripts/ci/test-harness-run.sh
+
+      - name: Browser evidence validation tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-browser-evidence-validate.sh
+          ./scripts/ci/test-browser-evidence-validate.sh
+
+      - name: PR preflight tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-pr-preflight.sh
+          ./scripts/ci/test-pr-preflight.sh
+
+      - name: Worktree command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-worktree.sh
+          ./scripts/ci/test-worktree.sh
+
+      - name: Swarm command tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-swarm.sh
+          ./scripts/ci/test-swarm.sh
+
+      - name: Orchestrate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-orchestrate.sh
+          ./scripts/ci/test-orchestrate.sh
+
+      - name: Release gate tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-release-gate.sh
+          ./scripts/ci/test-release-gate.sh
+
+      - name: Workflow run tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-workflow-run.sh
+          ./scripts/ci/test-workflow-run.sh
+
+      - name: Scheduled health tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-schedule-health.sh
+          ./scripts/ci/test-schedule-health.sh
+
+      - name: Policy pack tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-policy-pack.sh
+          ./scripts/ci/test-policy-pack.sh
+
+      - name: Release prepare tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-release-prepare.sh
+          ./scripts/ci/test-release-prepare.sh
+
+      - name: CLI wrapper and isolated env guard tests
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/test-cli-and-isolated-env-guard.sh
+          ./scripts/ci/test-cli-and-isolated-env-guard.sh
