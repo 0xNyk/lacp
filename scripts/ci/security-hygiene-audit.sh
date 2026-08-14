@@ -166,7 +166,12 @@ else
 fi
 
 if [[ "${workflows_count}" -gt 0 ]]; then
-  append_check "policy:active_external_ci_workflows" "FAIL" "active .github/workflows YAML files detected" "${workflows_count}" "${workflows_matches}"
+  # When LACP_NO_EXTERNAL_CI=false, CI workflows are explicitly allowed
+  if [[ "${LACP_NO_EXTERNAL_CI:-true}" == "false" ]]; then
+    append_check "policy:active_external_ci_workflows" "PASS" "external CI explicitly enabled (LACP_NO_EXTERNAL_CI=false)" 0 "${workflows_matches}"
+  else
+    append_check "policy:active_external_ci_workflows" "FAIL" "active .github/workflows YAML files detected" "${workflows_count}" "${workflows_matches}"
+  fi
 else
   append_check "policy:active_external_ci_workflows" "PASS" "no active .github/workflows YAML files detected" 0 "${workflows_matches}"
 fi
