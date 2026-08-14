@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LACP_NO_EXTERNAL_CI="false"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASS=0

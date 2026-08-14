@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LACP_NO_EXTERNAL_CI="false"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
@@ -26,6 +27,7 @@ run_expect_rc() {
   assert_eq "${rc}" "${expected_rc}" "rc:$*"
 }
 
+export LACP_NO_EXTERNAL_CI="false"
 export LACP_SKIP_DOTENV="1"
 # Unset recursion guard so sandbox-run exercises actual gate logic
 unset LACP_SANDBOX_RECURSION_GUARD LACP_SANDBOX_DEPTH 2>/dev/null || true
