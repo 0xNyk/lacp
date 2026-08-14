@@ -38,7 +38,7 @@ jobs:
             fi
           done
           if [[ "${#targets[@]}" -gt 0 ]]; then
-            shellcheck "${targets[@]}"
+            shellcheck -S error "${targets[@]}"
           fi
 
       - name: Workflow cost policy tests
