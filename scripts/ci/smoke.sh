@@ -32,6 +32,7 @@ export LACP_KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT}"
 export LACP_DRAFTS_ROOT="${DRAFTS_ROOT}"
 export LACP_SANDBOX_POLICY_FILE="${ROOT}/config/sandbox-policy.json"
 export LACP_SKIP_DOTENV="1"
+export LACP_NO_EXTERNAL_CI="false"
 export LACP_REMOTE_APPROVAL_FILE="${TMP}/remote-approval.json"
 INPUT_CONTRACT='{"source":"smoke-test","intent":"exercise sandbox routes safely","allowed_actions":["echo","python3 -V"],"denied_actions":["delete prod data"],"confidence":0.95}'
 
