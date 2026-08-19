@@ -278,7 +278,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _self_test() -> None:
-    assert note_slug_from_name("x-article-factory") == "x-article-factory"
+    assert note_slug_from_name("example-skill-name") == "example-skill-name"
     assert note_slug_from_name("Repo Name!") == "repo-name"
     exts = parse_top_extensions(["a.py", "b.py", "README", "src/main.rs"])
     assert exts[0][0] in {".py", ".rs", "<no-ext>"}

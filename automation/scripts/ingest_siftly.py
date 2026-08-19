@@ -17,8 +17,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
-import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -214,8 +214,10 @@ def load_siftly_export(file_path: str | None, from_url: str | None) -> list[dict
         raw = Path(file_path).read_text(encoding="utf-8")
     elif from_url:
         url = from_url.rstrip("/") + "/api/export?type=json"
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
+        raw = subprocess.check_output(
+            ["curl", "-fsS", "--max-time", "30", url],
+            text=True,
+        )
     else:
         raise SystemExit("error: provide --file or --from-url")
 

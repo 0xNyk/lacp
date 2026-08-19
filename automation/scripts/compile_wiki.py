@@ -217,7 +217,7 @@ categories: {len(by_category)}
 > Auto-compiled by LACP brain-expand. {len(articles)} articles across {len(by_category)} categories.
 > Last compiled: {generated_at}
 
-{"".join(chr(10) + s + chr(10) for s in sections)}
+{"\n".join(f"\n{s}\n" for s in sections)}
 """
 
 

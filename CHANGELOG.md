@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Token-boundary task keyword matching so short tokens (`rl`, `prod`) cannot match inside `world` / `product`.
+- Route JSON now emits `sandbox_mode`, `approval_policy`, and `remote_allowed` (Codex-style split: venue vs approval vs remote).
+- `hardened-exec` logs Claude `SubagentStart` / `SubagentStop` via `hooks/isolation_guard.py`.
+- `docs/runtime-isolation.md` — worktrees isolate files, not ports.
+- OSS intake: `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue/PR templates.
+- `lacp-skill-audit` defaults to this repository (`plugin/`, `hooks/`), not `~/.agents/skills`.
+- `adopt-local` wraps `claude`+`codex` only; `--with-hermes` / `--with-grok` are opt-in.
+
+### Changed
+- `open-source-check` treats missing `dist/SHA256SUMS` as WARN on source checkouts.
+- Doctor treats an unwrapped `hermes` as PASS (wrapping PATH hermes double-gates crons).
+- Disabled GitHub Action templates pin `actions/checkout` to SHA v4.2.2.
+
+### Removed
+- Operator-only Builderz client disk scripts from the public tree.
+
+## [0.10.1] - 2026-08-19
+
+Same as Unreleased at cut time. GitHub "Latest" remains v0.6.0 until `lacp release-publish`.
+
+## [0.10.0] - 2026-07-17
+
+
+### Added
 - **Thinking-partner system** — five-part "thinking partnership" layer for AI sessions (#27):
   - `bin/lacp-focus` CLI (`init`, `show`, `edit`, `age`, `check`) — living focus brief with 4-question template (current problem, beliefs/uncertainties, open decisions, 30-day goal). Auto-injected at session start with staleness warnings.
   - `config/context-modes/` — three context modes (`thinking-partner`, `implementation`, `review`) loaded via `LACP_CONTEXT_MODE` env var. Activates existing `session_start.py` plumbing.

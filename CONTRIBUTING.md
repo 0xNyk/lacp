@@ -64,7 +64,5 @@ contributor remains responsible for provenance, licensing, behavior, and verific
 
 ## Conduct
 
-Be specific, technical, and respectful. Do not publish credentials, private logs, exploit
-details, or another person's identifying data in an issue or pull request. Maintainers may
-remove content or restrict participation when a contribution creates safety or harassment
-risk.
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SUPPORT.md](SUPPORT.md).
+Security reports go through [SECURITY.md](SECURITY.md), not public issues.

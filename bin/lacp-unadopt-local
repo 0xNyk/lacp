@@ -82,6 +82,7 @@ restore_one() {
 restore_one "claude"
 restore_one "codex"
 restore_one "hermes"
+restore_one "grok"
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \

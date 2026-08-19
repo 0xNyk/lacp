@@ -38,19 +38,27 @@ chmod +x "${BIN_DIR}/claude"
   --bin-dir "${BIN_DIR}" \
   --claude-native "${NATIVE_DIR}/claude" \
   --codex-native "${NATIVE_DIR}/codex" \
-  --hermes-native "${NATIVE_DIR}/hermes" \
   --force \
   --json | jq -e '.ok == true' >/dev/null
 
 [[ -x "${BIN_DIR}/claude" ]] || { echo "[adopt-local-test] FAIL missing claude wrapper" >&2; exit 1; }
 [[ -x "${BIN_DIR}/codex" ]] || { echo "[adopt-local-test] FAIL missing codex wrapper" >&2; exit 1; }
-[[ -x "${BIN_DIR}/hermes" ]] || { echo "[adopt-local-test] FAIL missing hermes wrapper" >&2; exit 1; }
+[[ ! -e "${BIN_DIR}/hermes" ]] || { echo "[adopt-local-test] FAIL default adopt must not wrap hermes" >&2; exit 1; }
 [[ -x "${BIN_DIR}/claude.native" ]] || { echo "[adopt-local-test] FAIL missing claude backup" >&2; exit 1; }
 [[ ! -e "${BIN_DIR}/codex.native" ]] || { echo "[adopt-local-test] FAIL unexpected codex backup" >&2; exit 1; }
-[[ ! -e "${BIN_DIR}/hermes.native" ]] || { echo "[adopt-local-test] FAIL unexpected hermes backup" >&2; exit 1; }
 
 rg -q 'LACP_MANAGED_WRAPPER=1' "${BIN_DIR}/claude"
 rg -q 'LACP_MANAGED_WRAPPER=1' "${BIN_DIR}/codex"
+
+"${ROOT}/bin/lacp-adopt-local" \
+  --bin-dir "${BIN_DIR}" \
+  --claude-native "${NATIVE_DIR}/claude" \
+  --codex-native "${NATIVE_DIR}/codex" \
+  --hermes-native "${NATIVE_DIR}/hermes" \
+  --with-hermes \
+  --force \
+  --json | jq -e '.ok == true' >/dev/null
+[[ -x "${BIN_DIR}/hermes" ]] || { echo "[adopt-local-test] FAIL missing hermes wrapper after --with-hermes" >&2; exit 1; }
 rg -q 'LACP_MANAGED_WRAPPER=1' "${BIN_DIR}/hermes"
 
 # Bypass should call native binary immediately.

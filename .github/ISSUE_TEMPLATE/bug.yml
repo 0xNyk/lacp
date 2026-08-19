@@ -1,0 +1,32 @@
+name: Bug
+description: Something in LACP routing, hooks, install, or evidence is wrong.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Expected vs actual. Redact secrets, hostnames, and private paths.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LACP version or commit
+      placeholder: "0.10.1 or git SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Commands only. Paste `lacp doctor --json` summary if useful.
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: This is not a vulnerability
+      options:
+        - label: I am not reporting a security issue (those go to SECURITY.md)
+          required: true

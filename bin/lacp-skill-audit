@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 usage() {
   cat <<'EOF'
 Usage: lacp-skill-audit [--path DIR]... [--json] [--no-fail-on-high]
@@ -8,9 +10,11 @@ Usage: lacp-skill-audit [--path DIR]... [--json] [--no-fail-on-high]
 Audit local skill directories for high-risk supply-chain patterns.
 By default exits non-zero when high-risk findings are detected.
 
-Defaults:
-  --path ~/.agents/skills
-  --path ~/.codex/skills
+Defaults (repo-local, not the operator skill farm):
+  --path <lacp-root>/plugin
+  --path <lacp-root>/hooks
+  Override with --path DIR (repeatable) or LACP_SKILL_AUDIT_PATHS (colon-separated).
+  Do not default-scan scripts/ci; those files contain detector fixtures.
 EOF
 }
 
@@ -43,8 +47,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${#PATHS[@]}" -eq 0 && -n "${LACP_SKILL_AUDIT_PATHS:-}" ]]; then
+  IFS=':' read -r -a PATHS <<<"${LACP_SKILL_AUDIT_PATHS}"
+fi
 if [[ "${#PATHS[@]}" -eq 0 ]]; then
-  PATHS=("$HOME/.agents/skills" "$HOME/.codex/skills")
+  PATHS=("${ROOT}/plugin" "${ROOT}/hooks")
 fi
 
 python3 - <<'PY' "${AS_JSON}" "${FAIL_ON_HIGH}" "${PATHS[@]}"

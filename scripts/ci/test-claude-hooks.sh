@@ -170,6 +170,14 @@ hardened_json="$("${ROOT}/bin/lacp-claude-hooks" apply-profile --claude-dir "${C
   echo "[claude-hooks-test] FAIL expected ConfigChange managed command hook" >&2
   exit 1
 }
+[[ -f "${CLAUDE_DIR}/lacp-hooks/isolation_guard.py" ]] || {
+  echo "[claude-hooks-test] FAIL missing isolation_guard.py after hardened-exec apply" >&2
+  exit 1
+}
+[[ "$(jq -r '.hooks.SubagentStart[-1].hooks[0].command' "${CLAUDE_DIR}/settings.json")" == *"lacp-hooks/isolation_guard.py"* ]] || {
+  echo "[claude-hooks-test] FAIL expected SubagentStart isolation hook" >&2
+  exit 1
+}
 
 # --- quality-gate profile ---
 

@@ -43,3 +43,4 @@ the affected scope and fix are understood; no fixed response-time promise is mad
 - Prefer `--dry-run` for new remote setup changes.
 - Keep remote execution provider explicit (`daytona` or `e2b`) and auditable.
 - Treat untrusted code paths as `local_sandbox` or `remote_sandbox`.
+- Do not wrap production Hermes/cron CLIs with `lacp adopt-local` unless you pass `--with-hermes` on purpose.

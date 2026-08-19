@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/0xNyk/lacp/security/advisories/new
+    about: Private vulnerability reporting. Do not file public issues for security bugs.
+  - name: Support boundary
+    url: https://github.com/0xNyk/lacp/blob/main/SUPPORT.md
+    about: What maintainers will and will not support.

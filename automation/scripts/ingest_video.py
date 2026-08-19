@@ -612,7 +612,7 @@ def main() -> None:
         # Show first 30 lines
         for line in content.split("\n")[:30]:
             print(f"  {line}")
-        print(f"  ... ({len(content.split(chr(10)))} total lines)")
+        print(f"  ... ({len(content.splitlines())} total lines)")
         print(f"\n  Re-run with --apply to write to inbox")
 
 

@@ -10,7 +10,7 @@ machine and keeps remote execution opt-in.
 
 [![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Main: 0.10.0](https://img.shields.io/badge/main-0.10.0-22B8CF)](version)
+[![Main: 0.10.1](https://img.shields.io/badge/main-0.10.1-22B8CF)](version)
 [![Latest release: v0.6.0](https://img.shields.io/badge/release-v0.6.0-E9A23B)](https://github.com/0xNyk/lacp/releases/tag/v0.6.0)
 [![Last commit](https://img.shields.io/github/last-commit/0xNyk/lacp)](https://github.com/0xNyk/lacp/commits/main)
 [![Open issues](https://img.shields.io/github/issues/0xNyk/lacp)](https://github.com/0xNyk/lacp/issues)
@@ -22,10 +22,10 @@ machine and keeps remote execution opt-in.
 
 ---
 
-> **Development status:** `main` reports version 0.10.0. The latest published GitHub and
-> Homebrew release is v0.6.0. Main includes unreleased changes and may alter commands or
-> configuration before the next release. Use the Homebrew package when you need the
-> published release; use `--HEAD` only when you want current development code.
+> **Development status:** `main` is 0.10.1. The latest GitHub/Homebrew *published*
+> release is still v0.6.0 until a maintainer runs `lacp release-publish`. Use Homebrew
+> for the last published tarball; use this checkout or `brew install --HEAD` for current
+> code. Git worktrees isolate files, not ports — see [Runtime isolation](docs/runtime-isolation.md).
 
 ## Contents
 
@@ -110,7 +110,7 @@ lacp adopt-local --json | jq
 
 ```bash
 lacp bootstrap-system --profile starter --with-verify
-lacp adopt-local --json | jq
+lacp adopt-local --json | jq   # wraps claude + codex only; Hermes stays native
 lacp posture --strict
 ```
 
@@ -154,6 +154,7 @@ lacp swarm launch --manifest ./swarm.json
 | [Incident Response](docs/incident-response.md) | Triage and recovery flow when policy gates fail |
 | [Release Checklist](docs/release-checklist.md) | Pre-release, release, and post-release controls |
 | [Troubleshooting](docs/troubleshooting.md) | Common errors, doctor diagnostics, fix hints |
+| [Runtime isolation](docs/runtime-isolation.md) | Worktrees vs ports vs Claude host isolation |
 
 ### Project health files
 
@@ -238,6 +239,8 @@ Modular Python hooks enforcing quality at every session stage:
 | `stop_quality_gate.py` | Stop | 3-tier eval: heuristics, test verification, local LLM rationalization detection |
 
 Profiles: `minimal-stop`, `balanced`, `hardened-exec`, `quality-gate-v2`. Apply with `lacp claude-hooks apply-profile <profile>`.
+`hardened-exec` also logs `SubagentStart` / `SubagentStop`. It does **not** install a
+`WorktreeCreate` hook (that event replaces Claude's git worktree creation).
 
 ### Mycelium Network Memory
 
@@ -382,7 +385,7 @@ scripts/ci/smoke.sh
 | `lacp orchestrate` | dmux/tmux/worktree orchestration adapter |
 | `lacp worktree` | Git worktree lifecycle management |
 | `lacp swarm` | Batch swarm workflow (plan/launch/status) |
-| `lacp adopt-local` | Install LACP routing wrappers for claude/codex |
+| `lacp adopt-local` | Wrap claude/codex (optional `--with-hermes` / `--with-grok`) |
 
 ### Security & Policy
 
