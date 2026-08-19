@@ -275,7 +275,7 @@ def _self_test() -> None:
     assert slugify("Repo Name!") == "repo-name"
     assert infer_category("docs/research/design/ui-patterns.md") == "design"
     assert infer_category("docs/elsewhere/readme.md") == "general-research"
-    slug = make_slug("~/repos/demo", "docs/research/a.md")
+    slug = make_slug("/Users/example/repos/demo", "docs/research/a.md")
     assert slug.startswith("repo-research-")
 
 

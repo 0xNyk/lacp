@@ -34,7 +34,6 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -68,11 +67,7 @@ from sync_research_knowledge import (  # noqa: E402
 
 def is_url(s: str) -> bool:
     """Check if string looks like a URL."""
-    try:
-        r = urlparse(s)
-        return r.scheme in ("http", "https") and bool(r.netloc)
-    except Exception:
-        return False
+    return s.startswith("http://") or s.startswith("https://")
 
 
 def download_audio(url: str, output_dir: str) -> tuple[str, dict[str, Any]]:
@@ -270,16 +265,16 @@ def extract_knowledge(
     }
 
     print(f"  Extracting knowledge with {model}...")
-    import urllib.request
-
-    req = urllib.request.Request(
-        f"{OLLAMA_HOST}/api/generate",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    raw_http = subprocess.check_output(
+        [
+            "curl", "-fsS", "--max-time", "120",
+            "-H", "Content-Type: application/json",
+            "--data-binary", json.dumps(payload),
+            f"{OLLAMA_HOST}/api/generate",
+        ],
+        text=True,
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        body = json.loads(resp.read().decode())
+    body = json.loads(raw_http)
 
     raw = body.get("response", "")
 
@@ -612,7 +607,7 @@ def main() -> None:
         # Show first 30 lines
         for line in content.split("\n")[:30]:
             print(f"  {line}")
-        print(f"  ... ({len(content.split(chr(10)))} total lines)")
+        print(f"  ... ({len(content.splitlines())} total lines)")
         print(f"\n  Re-run with --apply to write to inbox")
 
 

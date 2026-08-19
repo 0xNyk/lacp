@@ -18,10 +18,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -53,15 +52,16 @@ def ollama_generate(prompt: str, model: str = COMPILE_MODEL, max_tokens: int = 1
         "stream": False,
         "options": {"temperature": 0.3, "num_predict": max_tokens},
     }
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url=url, data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            raw = resp.read().decode("utf-8")
+        raw = subprocess.check_output(
+            [
+                "curl", "-fsS", "--max-time", "180",
+                "-H", "Content-Type: application/json",
+                "--data-binary", json.dumps(payload),
+                url,
+            ],
+            text=True,
+        )
         return json.loads(raw).get("response", "").strip()
     except Exception as e:
         return f"[LLM error: {e}]"
@@ -217,7 +217,7 @@ categories: {len(by_category)}
 > Auto-compiled by LACP brain-expand. {len(articles)} articles across {len(by_category)} categories.
 > Last compiled: {generated_at}
 
-{"".join(chr(10) + s + chr(10) for s in sections)}
+{"\n".join(f"\n{s}\n" for s in sections)}
 """
 
 

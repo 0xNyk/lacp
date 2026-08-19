@@ -144,4 +144,16 @@ model_hint5="$(echo "${model_out5}" | jq -r '.model_hint')"
 assert_eq "${model_slot5}" "subagent" "model-routing-default:model_slot"
 assert_eq "${model_hint5}" "sonnet" "model-routing-default:model_hint"
 
+# Case 11: short remote keyword "rl" must not match inside "world".
+hello_out="$("${ROOT}/bin/lacp-route" --task "hello world" --repo-trust trusted --json)"
+assert_eq "$(echo "${hello_out}" | jq -r '.route')" "trusted_local" "hello-world:route"
+assert_eq "$(echo "${hello_out}" | jq -r '.sandbox_mode')" "workspace-write" "hello-world:sandbox_mode"
+assert_eq "$(echo "${hello_out}" | jq -r '.approval_policy')" "on-request" "hello-world:approval_policy"
+
+# Case 12: "prod" must not match "product"; production still critical.
+product_out="$("${ROOT}/bin/lacp-route" --task "improve the product page" --repo-trust trusted --json)"
+assert_eq "$(echo "${product_out}" | jq -r '.risk_tier')" "safe" "product-not-prod:risk_tier"
+prod_out="$("${ROOT}/bin/lacp-route" --task "touch prod wallet" --repo-trust trusted --json)"
+assert_eq "$(echo "${prod_out}" | jq -r '.risk_tier')" "critical" "prod-token:risk_tier"
+
 echo "[route-test] all route policy tests passed"

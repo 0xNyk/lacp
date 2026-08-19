@@ -9,13 +9,20 @@ usage() {
   cat <<'EOF'
 Usage: lacp-adopt-local [options]
 
-Install local wrapper commands for `claude`, `codex`, and `hermes` so sessions route through `lacp run` by default.
+Install local wrapper commands so interactive coding sessions route through `lacp run`.
+
+Default targets: `claude` and `codex`.
+`hermes` is opt-in (`--with-hermes`) so production cron CLIs are not double-gated.
+`grok` is opt-in (`--with-grok`). Claude-format hooks already apply to Grok when installed.
 
 Options:
   --bin-dir <dir>        Wrapper target directory (default: $HOME/.local/bin)
   --claude-native <path> Explicit native claude binary path
   --codex-native <path>  Explicit native codex binary path
   --hermes-native <path> Explicit native hermes binary path
+  --grok-native <path>   Explicit native grok binary path
+  --with-hermes          Also wrap `hermes` (off by default)
+  --with-grok            Also wrap `grok` (off by default)
   --force                Overwrite existing wrappers even without LACP marker
   --dry-run              Print actions only
   --json                 Emit JSON summary
@@ -31,6 +38,9 @@ BIN_DIR="${HOME}/.local/bin"
 CLAUDE_NATIVE=""
 CODEX_NATIVE=""
 HERMES_NATIVE=""
+GROK_NATIVE=""
+WITH_HERMES=0
+WITH_GROK=0
 FORCE=0
 DRY_RUN=0
 AS_JSON=0
@@ -40,7 +50,10 @@ while [[ $# -gt 0 ]]; do
     --bin-dir) BIN_DIR="$2"; shift 2 ;;
     --claude-native) CLAUDE_NATIVE="$2"; shift 2 ;;
     --codex-native) CODEX_NATIVE="$2"; shift 2 ;;
-    --hermes-native) HERMES_NATIVE="$2"; shift 2 ;;
+    --hermes-native) HERMES_NATIVE="$2"; WITH_HERMES=1; shift 2 ;;
+    --grok-native) GROK_NATIVE="$2"; WITH_GROK=1; shift 2 ;;
+    --with-hermes) WITH_HERMES=1; shift ;;
+    --with-grok) WITH_GROK=1; shift ;;
     --force) FORCE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) AS_JSON=1; shift ;;
@@ -220,7 +233,14 @@ fi
 
 adopt_one "claude" "${CLAUDE_NATIVE}"
 adopt_one "codex" "${CODEX_NATIVE}"
-adopt_one "hermes" "${HERMES_NATIVE}"
+if [[ "${WITH_HERMES}" -eq 1 ]]; then
+  adopt_one "hermes" "${HERMES_NATIVE}"
+else
+  log_event "skip_hermes_default:pass --with-hermes to wrap production cron CLIs"
+fi
+if [[ "${WITH_GROK}" -eq 1 ]]; then
+  adopt_one "grok" "${GROK_NATIVE}"
+fi
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
   jq -n \

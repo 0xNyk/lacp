@@ -106,12 +106,26 @@ jq empty "${LACP_SANDBOX_POLICY_FILE}" >/dev/null
 
 task_lc="$(printf '%s' "${TASK}" | tr '[:upper:]' '[:lower:]')"
 
+# Tokenize so short keywords like "rl" or "prod" cannot match inside "world" / "product".
+normalize_tokens() {
+  printf ' %s ' "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ' | tr -s ' ')"
+}
+
+task_tokens="$(normalize_tokens "${TASK}")"
+
+task_has_keyword() {
+  local kw_tokens
+  kw_tokens="$(normalize_tokens "$1")"
+  [[ "${kw_tokens}" == "  " || "${kw_tokens}" == " " ]] && return 1
+  [[ "${task_tokens}" == *"${kw_tokens}"* ]]
+}
+
 has_keyword_match() {
   local key="$1"
   local kw
   while IFS= read -r kw; do
     [[ -z "${kw}" ]] && continue
-    if [[ "${task_lc}" == *"${kw}"* ]]; then
+    if task_has_keyword "${kw}"; then
       return 0
     fi
   done < <(jq -r ".routing.${key}[]?" "${LACP_SANDBOX_POLICY_FILE}")
@@ -139,7 +153,7 @@ task_matches_critical_keywords() {
   local kw
   while IFS= read -r kw; do
     [[ -z "${kw}" ]] && continue
-    if [[ "${task_lc}" == *"${kw}"* ]]; then
+    if task_has_keyword "${kw}"; then
       return 0
     fi
   done < <(jq -r '.routing.critical_signals.task_keywords[]? // empty' "${LACP_SANDBOX_POLICY_FILE}")
@@ -220,7 +234,7 @@ resolve_model_slot() {
     [[ -z "${slot}" ]] && continue
     while IFS= read -r kw; do
       [[ -z "${kw}" ]] && continue
-      if [[ "${task_lc}" == *"${kw}"* ]]; then
+      if task_has_keyword "${kw}"; then
         model_slot="${slot}"
         model_hint="$(jq -r --arg s "${slot}" '.model_routing.slots[$s].hint // "sonnet"' "${LACP_SANDBOX_POLICY_FILE}")"
         return 0
@@ -235,6 +249,28 @@ if jq -e '.model_routing' "${LACP_SANDBOX_POLICY_FILE}" >/dev/null 2>&1; then
 fi
 if ! [[ "${cost_ceiling_usd}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   die "Invalid cost ceiling for risk_tier=${risk_tier}: ${cost_ceiling_usd}"
+fi
+
+sandbox_mode="workspace-write"
+approval_policy="on-request"
+case "${route}" in
+  trusted_local)
+    sandbox_mode="workspace-write"
+    ;;
+  local_sandbox)
+    sandbox_mode="workspace-write"
+    ;;
+  remote_sandbox)
+    sandbox_mode="remote"
+    ;;
+esac
+case "${risk_tier}" in
+  safe) approval_policy="on-request" ;;
+  review|critical) approval_policy="required" ;;
+esac
+remote_allowed="false"
+if [[ "${LACP_ALLOW_EXTERNAL_REMOTE:-false}" == "true" ]]; then
+  remote_allowed="true"
 fi
 
 if [[ "${AS_JSON}" -eq 1 ]]; then
@@ -253,6 +289,9 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
     --arg policy_file "${LACP_SANDBOX_POLICY_FILE}" \
     --arg model_slot "${model_slot}" \
     --arg model_hint "${model_hint}" \
+    --arg sandbox_mode "${sandbox_mode}" \
+    --arg approval_policy "${approval_policy}" \
+    --argjson remote_allowed "${remote_allowed}" \
     --argjson reasons "$(printf '%s\n' "${reasons[@]}" | jq -R . | jq -s .)" \
     '{
       route: $route,
@@ -267,6 +306,9 @@ if [[ "${AS_JSON}" -eq 1 ]]; then
       },
       reasons: $reasons,
       risk_tier: $risk_tier,
+      sandbox_mode: $sandbox_mode,
+      approval_policy: $approval_policy,
+      remote_allowed: $remote_allowed,
       cost_ceiling_usd: $cost_ceiling_usd,
       remote_provider: (if $remote_provider == "" then null else $remote_provider end),
       model_slot: (if $model_slot == "" then null else $model_slot end),
@@ -279,6 +321,7 @@ else
   echo "repo_trust=${REPO_TRUST} internet=${INTERNET} external_code=${EXTERNAL_CODE} sensitive_data=${SENSITIVE_DATA} cpu_heavy=${CPU_HEAVY} long_run=${LONG_RUN}"
   echo "remote_provider=${remote_provider:-<n/a>}"
   echo "risk_tier=${risk_tier}"
+  echo "sandbox_mode=${sandbox_mode} approval_policy=${approval_policy} remote_allowed=${remote_allowed}"
   echo "cost_ceiling_usd=${cost_ceiling_usd}"
   echo "model_slot=${model_slot:-<n/a>} model_hint=${model_hint:-<n/a>}"
   echo "policy_file=${LACP_SANDBOX_POLICY_FILE}"

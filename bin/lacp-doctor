@@ -696,7 +696,7 @@ else
   add_check "hygiene:orphan_sandbox_procs" "PASS" "${orphan_sandbox_procs} lacp-sandbox-run processes"
 fi
 
-for wrapper_cmd in claude codex hermes; do
+for wrapper_cmd in claude codex; do
   wrapper_state="$(lacp_wrapper_managed_state "${wrapper_cmd}")"
   case "${wrapper_state}" in
     managed)
@@ -712,6 +712,16 @@ for wrapper_cmd in claude codex hermes; do
       ;;
   esac
 done
+hermes_state="$(lacp_wrapper_managed_state hermes)"
+case "${hermes_state}" in
+  managed)
+    add_check "wrapper:hermes_managed" "WARN" "${LACP_WRAPPER_BIN_DIR}/hermes wraps PATH hermes (cron catchup risk; unadopt or LACP_BYPASS=1)"
+    add_hint "Leave Hermes unwrapped unless you passed --with-hermes on purpose: bin/lacp unadopt-local"
+    ;;
+  *)
+    add_check "wrapper:hermes_managed" "PASS" "hermes not wrapped (default; avoids double-gating crons)"
+    ;;
+esac
 
 if command -v claude >/dev/null 2>&1; then
   hook_audit="$("${LACP_ROOT}/bin/lacp-claude-hooks" audit --json 2>/dev/null || true)"

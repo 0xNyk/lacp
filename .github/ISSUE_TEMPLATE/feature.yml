@@ -1,0 +1,18 @@
+name: Feature
+description: Propose a bounded control-plane change.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: What fails today without this? Keep it local-first.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest change
+      description: Commands, policy files, or hooks. LACP is not a new agent runtime.
+    validations:
+      required: true

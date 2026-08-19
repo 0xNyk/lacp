@@ -32,11 +32,9 @@ mkdir -p "${DIRTY_REPO}"
 (
   cd "${DIRTY_REPO}"
   git init -q
-  cat > leak.txt <<'EOF'
-leak=ghp_ABCDEFGHIJKLMNOPQRST
-EOF
+  python3 -c 'from pathlib import Path; Path("leak.txt").write_text("leak=ghp_" + ("A" * 36) + "\n")'
   cat > path.txt <<'EOF'
-private path /Users/demo/private
+private path /Users/example/private
 EOF
   cat > email.txt <<'EOF'
 owner@acme.io

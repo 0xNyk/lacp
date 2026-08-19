@@ -44,7 +44,7 @@ PWD_PREFIX="$(pwd -P)"
 GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_cwd_prefix\":\"${PWD_PREFIX}\"}"
 BAD_CONTEXT_CONTRACT='{"expected_host":"definitely-not-this-host"}'
 SSH_GOOD_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"prod-server\"}"
-SSH_BAD_REMOTE_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"builderz\"}"
+SSH_BAD_REMOTE_CONTEXT_CONTRACT="{\"expected_host\":\"${ACTUAL_HOST}\",\"expected_remote_host\":\"other-cluster\"}"
 
 # Keep context-contract checks deterministic regardless of caller env/.env defaults.
 export LACP_REQUIRE_SESSION_FINGERPRINT="false"
