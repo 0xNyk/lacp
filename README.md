@@ -11,7 +11,7 @@ machine and keeps remote execution opt-in.
 [![GitHub stars](https://img.shields.io/github/stars/0xNyk/lacp?style=social)](https://github.com/0xNyk/lacp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Main: 0.10.1](https://img.shields.io/badge/main-0.10.1-22B8CF)](version)
-[![Latest release: v0.6.0](https://img.shields.io/badge/release-v0.6.0-E9A23B)](https://github.com/0xNyk/lacp/releases/tag/v0.6.0)
+[![Latest release: v0.10.1](https://img.shields.io/badge/release-v0.10.1-E9A23B)](https://github.com/0xNyk/lacp/releases/tag/v0.10.1)
 [![Last commit](https://img.shields.io/github/last-commit/0xNyk/lacp)](https://github.com/0xNyk/lacp/commits/main)
 [![Open issues](https://img.shields.io/github/issues/0xNyk/lacp)](https://github.com/0xNyk/lacp/issues)
 [![Shell](https://img.shields.io/badge/Shell-bash%20%2B%20python3-blue)](https://github.com/0xNyk/lacp)
@@ -22,10 +22,9 @@ machine and keeps remote execution opt-in.
 
 ---
 
-> **Development status:** `main` is 0.10.1. The latest GitHub/Homebrew *published*
-> release is still v0.6.0 until a maintainer runs `lacp release-publish`. Use Homebrew
-> for the last published tarball; use this checkout or `brew install --HEAD` for current
-> code. Git worktrees isolate files, not ports — see [Runtime isolation](docs/runtime-isolation.md).
+> **Development status:** `main` and the GitHub release are v0.10.1. Homebrew's last
+> bottled release may lag until the tap is updated; `brew install --HEAD` tracks `main`.
+> Git worktrees isolate files, not ports — see [Runtime isolation](docs/runtime-isolation.md).
 
 ## Contents
 
@@ -70,8 +69,8 @@ brew tap 0xNyk/lacp && brew install lacp
 
 # or inspect and run the bootstrap at a published tag
 curl -fsSLo /tmp/lacp-install.sh \
-  https://raw.githubusercontent.com/0xNyk/lacp/v0.6.0/install.sh
-LACP_REF=v0.6.0 bash /tmp/lacp-install.sh
+  https://raw.githubusercontent.com/0xNyk/lacp/v0.10.1/install.sh
+LACP_REF=v0.10.1 bash /tmp/lacp-install.sh
 ```
 
 ### Bootstrap and verify
@@ -299,16 +298,16 @@ The installer auto-detects and installs missing dependencies on macOS via Homebr
 
 ```bash
 brew tap 0xNyk/lacp
-brew install lacp            # published v0.6.0 release
-brew install --HEAD lacp     # current main, version 0.10.0
+brew install lacp            # published v0.10.1 release (tap may lag)
+brew install --HEAD lacp     # current main
 ```
 
 ### cURL Bootstrap
 
 ```bash
 curl -fsSLo /tmp/lacp-install.sh \
-  https://raw.githubusercontent.com/0xNyk/lacp/v0.6.0/install.sh
-LACP_REF=v0.6.0 bash /tmp/lacp-install.sh
+  https://raw.githubusercontent.com/0xNyk/lacp/v0.10.1/install.sh
+LACP_REF=v0.10.1 bash /tmp/lacp-install.sh
 ```
 
 Change both references to `main` only when you intend to install unreleased development

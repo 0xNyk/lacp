@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-19
+
 ### Added
 - Token-boundary task keyword matching so short tokens (`rl`, `prod`) cannot match inside `world` / `product`.
 - Route JSON now emits `sandbox_mode`, `approval_policy`, and `remote_allowed` (Codex-style split: venue vs approval vs remote).
@@ -20,10 +22,6 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 - Operator-only Builderz client disk scripts from the public tree.
-
-## [0.10.1] - 2026-08-19
-
-Same as Unreleased at cut time. GitHub "Latest" remains v0.6.0 until `lacp release-publish`.
 
 ## [0.10.0] - 2026-07-17
 
@@ -271,5 +269,6 @@ Same as Unreleased at cut time. GitHub "Latest" remains v0.6.0 until `lacp relea
 - Structured input-contract gate for risky sandbox runs (`--input-contract`, exit code `11` on violation).
 - Release workflow no longer depends on third-party actions; uses `gh release` with repository `GITHUB_TOKEN`.
 
+[0.10.1]: https://github.com/0xNyk/lacp/releases/tag/v0.10.1
 [0.3.0]: https://github.com/0xNyk/lacp/releases/tag/v0.3.0
 [0.1.0]: https://github.com/0xNyk/lacp/releases/tag/v0.1.0
