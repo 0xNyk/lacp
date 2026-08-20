@@ -193,7 +193,12 @@ check_latest_file_age_hours() {
     add_check "${label}" "WARN" "missing"
     return 0
   fi
-  latest_epoch="$(stat -f %m "${latest_file}" 2>/dev/null || echo 0)"
+  # Portable stat: macOS uses -f %m, Linux uses -c %Y
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    latest_epoch="$(stat -f %m "${latest_file}" 2>/dev/null || echo 0)"
+  else
+    latest_epoch="$(stat -c %Y "${latest_file}" 2>/dev/null || echo 0)"
+  fi
   now_epoch="$(date -u +%s)"
   if [[ "${latest_epoch}" -le 0 ]]; then
     add_check "${label}" "WARN" "${latest_file} (unable to read mtime)"
@@ -213,8 +218,20 @@ check_cmd rg
 check_cmd jq
 check_cmd curl
 check_cmd git
-check_cmd ollama
-check_cmd docker
+
+# Ollama (optional - for local AI models)
+if command -v ollama >/dev/null 2>&1; then
+  add_check "cmd:ollama" "PASS" "$(command -v ollama)"
+else
+  add_check "cmd:ollama" "WARN" "not installed (optional, for local AI model support)"
+fi
+
+# Docker (optional - for containerized workflows)
+if command -v docker >/dev/null 2>&1; then
+  add_check "cmd:docker" "PASS" "$(command -v docker)"
+else
+  add_check "cmd:docker" "WARN" "not installed (optional, for containerized workflows)"
+fi
 
 # Obsidian CLI (official, 1.12+)
 if command -v obsidian >/dev/null 2>&1; then
@@ -321,8 +338,14 @@ if files:
 PY
 )"
     if [[ -n "${canonical_latest}" && -n "${legacy_latest}" ]]; then
-      canonical_epoch="$(stat -f %m "${canonical_latest}" 2>/dev/null || echo 0)"
-      legacy_epoch="$(stat -f %m "${legacy_latest}" 2>/dev/null || echo 0)"
+      # Portable stat: macOS uses -f %m, Linux uses -c %Y
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        canonical_epoch="$(stat -f %m "${canonical_latest}" 2>/dev/null || echo 0)"
+        legacy_epoch="$(stat -f %m "${legacy_latest}" 2>/dev/null || echo 0)"
+      else
+        canonical_epoch="$(stat -c %Y "${canonical_latest}" 2>/dev/null || echo 0)"
+        legacy_epoch="$(stat -c %Y "${legacy_latest}" 2>/dev/null || echo 0)"
+      fi
       if [[ "${legacy_epoch}" -gt "${canonical_epoch}" ]]; then
         add_check "drift:drafts_root" "WARN" "legacy path newer than canonical; review sync source (${LEGACY_DRAFTS_ROOT})"
       else

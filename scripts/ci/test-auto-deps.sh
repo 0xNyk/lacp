@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LACP_NO_EXTERNAL_CI="false"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
+export LACP_NO_EXTERNAL_CI="false"
 export LACP_SKIP_DOTENV=1
 export LACP_AUTOMATION_ROOT="${TMP}/automation"
 export LACP_KNOWLEDGE_ROOT="${TMP}/knowledge"

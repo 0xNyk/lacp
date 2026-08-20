@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LACP_NO_EXTERNAL_CI="false"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
@@ -38,6 +39,7 @@ DRAFTS_ROOT="${TMP}/drafts"
 
 mkdir -p "${AUTOMATION_ROOT}" "${KNOWLEDGE_ROOT}" "${DRAFTS_ROOT}"
 
+export LACP_NO_EXTERNAL_CI="false"
 export LACP_SKIP_DOTENV="1"
 export LACP_AUTOMATION_ROOT="${AUTOMATION_ROOT}"
 export LACP_KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT}"
