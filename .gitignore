@@ -7,8 +7,6 @@
 Thumbs.db
 
 # Local environment overrides
-.env
-.env.*
 !.env.example
 !config/lacp.env.example
 .env.sentinel.backup*
@@ -40,7 +38,6 @@ dist/
 .claude/
 .gitnexus/
 .idea/
-.vscode/
 
 # Editor / agent scratch state
 .collaborator/
@@ -50,3 +47,4 @@ dist/
 # Local-only personal automation (machine-specific paths)
 automation/scripts/fieldtheory_*.py
 Entities/
+config.bat
