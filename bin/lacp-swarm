@@ -125,6 +125,7 @@ cmd_plan() {
 from __future__ import annotations
 
 import json
+import posixpath
 import subprocess
 import sys
 from pathlib import Path
@@ -190,10 +191,11 @@ reservation_index: list[dict] = []
 def normalize_reservation(value: str) -> str:
     token = (value or "").strip()
     token = token.replace("\\", "/")
-    token = token.lstrip("./")
-    while "//" in token:
-        token = token.replace("//", "/")
-    return token.rstrip("/")
+    # Normalize complete path components, not just a leading './'. A pair of
+    # reservations with 'dir/../dir/file' and 'dir/file' own the same path.
+    # POSIX semantics are intentional because manifest paths use '/' on all hosts.
+    normalized = posixpath.normpath(token)
+    return "" if normalized == "." else normalized.lstrip("/")
 
 def reservations_overlap(a: str, b: str) -> bool:
     if not a or not b:

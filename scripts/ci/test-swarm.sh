@@ -104,6 +104,28 @@ echo "${collision_plan}" | jq -e '.collaboration.reservations_total == 2' >/dev/
 echo "${collision_plan}" | jq -e '.collaboration.collisions_total >= 1' >/dev/null
 echo "${collision_plan}" | jq -e '.warnings | length >= 1' >/dev/null
 
+# A nested path alias refers to the same claimed file. The third path only
+# shares a textual prefix and must not create a false collision.
+cat > "${TMP}/alias-collision.json" <<'JSON'
+{
+  "version": "1",
+  "name": "alias-collision-test",
+  "defaults": {"backend": "dmux", "repo_trust": "trusted", "dry_run": true},
+  "jobs": [
+    {"task": "writer a", "session": "a", "command": "codex --help", "reservations": ["src/shared/file.ts"]},
+    {"task": "writer b", "session": "b", "command": "claude --help", "reservations": ["src/shared/../shared/file.ts"]},
+    {"task": "writer c", "session": "c", "command": "claude --help", "reservations": ["src/sharedfile/file.ts"]}
+  ]
+}
+JSON
+alias_plan="$("${ROOT}/bin/lacp-swarm" plan --manifest "${TMP}/alias-collision.json" --json)"
+echo "${alias_plan}" | jq -e '.ok == true and .collaboration.reservations_total == 3' >/dev/null
+echo "[swarm-test] checking nested reservation alias against the real planner" >&2
+if ! echo "${alias_plan}" | jq -e '.collaboration.collisions_total == 1 and .collaboration.collisions[0].type == "exact"' >/dev/null; then
+  echo "[swarm-test] FAIL: equivalent nested paths were not reported as one exact collision" >&2
+  exit 1
+fi
+
 collision_launch="$("${ROOT}/bin/lacp-swarm" launch --manifest "${TMP}/collision.json" --json)"
 collision_artifact="$(echo "${collision_launch}" | jq -r '.artifact')"
 [[ -f "${collision_artifact}" ]] || { echo "[swarm-test] FAIL missing collision artifact file" >&2; exit 1; }
